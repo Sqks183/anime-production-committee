@@ -1,0 +1,32 @@
+{
+  "name": "anime-production-committee",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace @anime/web",
+    "build": "npm run build:wasm && npm run build:web",
+    "build:web": "npm run build --workspace @anime/web",
+    "build:wasm": "node scripts/build-core.mjs wasm",
+    "build:native": "node scripts/build-core.mjs native",
+    "preview": "npm run preview --workspace @anime/web",
+    "typecheck": "npm run typecheck --workspace @anime/web",
+    "test": "npm run test:unit && npm run test:wasm && npm run test:native",
+    "test:unit": "npm run test --workspace @anime/web",
+    "test:wasm": "npm run build:wasm && node --test scripts/wasm.test.mjs",
+    "test:native": "node scripts/build-core.mjs test",
+    "test:browser": "npm run build && node --test scripts/browser.test.mjs",
+    "verify:dist": "node scripts/verify-dist.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.65.1"
+  }
+}

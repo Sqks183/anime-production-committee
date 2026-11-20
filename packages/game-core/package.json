@@ -1,0 +1,11 @@
+{
+  "name": "@anime/game-core",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build:wasm": "node ../../scripts/build-core.mjs wasm",
+    "build:native": "node ../../scripts/build-core.mjs native",
+    "test:native": "node ../../scripts/build-core.mjs test",
+    "test:wasm": "node --test tests/wasm.test.mjs"
+  }
+}
