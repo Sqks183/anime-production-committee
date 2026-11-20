@@ -1,0 +1,82 @@
+name: 开发任务
+description: 为已确认的工作定义负责人、文件边界、依赖与验收标准。
+title: "[任务] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        开工前确认范围与接口。每个任务一名主要负责人；跨模块改动先协调，不把示例数值当作正式规则。
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标与交付物
+      description: 完成后用户或其他成员能做什么？不要只列技术步骤。
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 主要模块
+      options:
+        - 前端页面与组件
+        - 状态、服务与本地存档
+        - C++ 核心规则
+        - WASM、接口与集成
+        - 构建、测试与部署
+        - 产品、文档与协作
+    validations:
+      required: true
+  - type: input
+    id: ownership
+    attributes:
+      label: 负责人及评审人
+      description: 填写 GitHub 用户名；待认领时写“待认领”，开工前补充 Assignee。
+      placeholder: "负责人：@用户名；评审人：@用户名"
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 工作范围与文件边界
+      description: 写清包含、不包含，以及预计修改的目录；共享文件需协调。
+      value: |
+        包含：
+        不包含：
+        预计修改的目录或文件：
+        需要协调的共享文件：
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 前置依赖与接口约定
+      description: 关联前置 Issue，说明谁确认接口。涉及 JSON 时提供输入、成功输出、错误和种子约定；不涉及则说明。
+      placeholder: |
+        依赖：#编号 / 无
+        前置任务是否完成：
+        输入、输出及错误约定：
+        接口确认人：
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 使用可逐项验证的清单，覆盖正常路径和相关边界；不能只写“功能完成”。
+      placeholder: |
+        - [ ] 指定操作产生预期结果
+        - [ ] 非法输入或失败不会破坏原状态
+        - [ ] 适用测试通过，文档与实现一致
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: 验证方式与预计工作量
+      description: 列出实际 npm 脚本、浏览器步骤或文档检查；写明预计工作量和已知阻碍。
+      placeholder: |
+        命令与操作：
+        预计工作量：
+        已知阻碍：无 / 具体说明
+    validations:
+      required: true

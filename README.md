@@ -1,8 +1,24 @@
 # 动画制作委员会
 
-ANIME PRODUCTION COMMITTEE · 浏览器经营模拟游戏工程基础 · v0.1.0
+ANIME PRODUCTION COMMITTEE · 浏览器经营模拟游戏最小纵向切片 · v2 状态协议
 
-本仓库只建立可运行工程，不是完整游戏。React 通过 Emscripten 的真实 WebAssembly 调用 C++ 规则；没有用 TypeScript 伪造核心计算，也没有独立后端。
+当前范围是初始化公司、选择企划、安排团队、推进制作、处理事件、结算并接取下一部的最小循环，不是完整游戏或最终平衡版本。React 通过 Emscripten 的真实 WebAssembly 调用 C++ 六接口；没有用 TypeScript 伪造核心计算，也没有独立后端。
+
+## 当前可玩内容
+
+```text
+新开公司 → 接手企划 → 排班 / 方针 / 外包 / 加班 → 推进一天
+                         ↑                         ↓
+                         └──── 处理制作事件 ──────┘
+制作完成 / 截止强制交付 / 破产 → 结算 → 继承公司状态接取下一部
+```
+
+- 固定 4 名员工、3 个报价和 3 类制作事件；前期、中期、后期流水线展示进度、质量与士气影响。
+- C++ 负责费用、制作、事件、结算及确定性随机数；TypeScript 传入 seed，只负责交互、协议校验和状态展示。
+- 支持单槽手动存档、刷新后恢复、核心加载失败重试；不提供旧版 v1 存档迁移。
+- 2026-11-21 本地验收通过：前端 204、原生 44、真实 WASM 10、浏览器 8 项；构建与产物检查通过，不代表数值已最终平衡或已上线。
+
+六个 JSON 接口依次为 `initialize_game`、`start_project`、`apply_decision`、`advance_day`、`resolve_event`、`calculate_result`；输入、输出、错误与阶段限制见 [API.md](docs/API.md)。
 
 ## 技术栈与版本
 
@@ -22,7 +38,7 @@ ANIME PRODUCTION COMMITTEE · 浏览器经营模拟游戏工程基础 · v0.1.0
 | JSON | nlohmann/json 3.12.0 |
 | 原生测试 | GoogleTest 1.17.0 |
 
-npm 精确版本由 package-lock.json 锁定。TypeScript 类型包版本见 apps/web/package.json。Node 要求 >=22.12，npm >=10；本机实际编译工具版本与验收结果见下文的验证记录。
+npm 精确版本由 package-lock.json 锁定。TypeScript 类型包版本见 apps/web/package.json。Node 要求 >=22.12，npm >=10；编译工具要求和验证入口见下文，验收结论以实际执行结果为准。
 
 ## 目录
 
@@ -34,7 +50,7 @@ packages/game-core/
   include/ src/ bindings/ tests/ CMakeLists.txt
 scripts/                     # 原生/WASM 构建、集成测试、产物检查
 docs/
-  PRODUCT.md ARCHITECTURE.md GAME_RULES.md API.md
+  PRODUCT.md ARCHITECTURE.md GAME_DESIGN.md DATA_MODEL.md GAME_RULES.md API.md
 package.json                 # npm workspaces: apps/*、packages/*
 ```
 
@@ -68,11 +84,13 @@ npm run build:wasm
 npm run dev
 ```
 
-Vite 绑定 127.0.0.1，默认端口 5173；如果被占用，以控制台输出为准。打开首页，待 C++ / WASM 就绪后，点击「开始经营」和「推进一次制作进度」。第一次应得到 95000 / 25，以及 C++ 返回的中文消息。
+Vite 绑定 127.0.0.1，默认端口 5173；如果被占用，以控制台输出为准。用 `http://127.0.0.1:5173/?seed=12345` 可固定新局种子。打开首页，待 C++ / WASM 就绪后新开公司，选择已解锁企划，调整排班、方针、外包或加班，再推进今天。触发事件时先选选项，企划结束后结算，再接取下一部。
+
+前端 `game` 初始为 null，初始化数据必须来自真实 `initialize_game`。当前初始资金 2000000、声望 0、固定 4 员工，每轮相同 3 报价；movie 声望 20 解锁。这些是暂定参数，不再使用旧的预算/进度三字段夹具。
 
 修改前端会热更新。修改 C++ 后重新运行 `npm run build:wasm` 并刷新浏览器，避免仍使用已经实例化的旧模块。未编译 WASM 时页面会明确提示加载失败，不会启用替代计算。
 
-「保存进度」写入单一 IndexedDB 存档槽；「读取存档」恢复完整状态和 seed。存档只属于当前浏览器和源，不会在 localhost、不同端口或已部署域名之间自动共享。
+「保存进度」写入单一 IndexedDB 手动存档槽；「读取存档」恢复完整 GameState 和 seed。记录版本与 state.version 均为 2，DB schema 仍为 1；拒绝 v1 并提示新开，无旧版迁移。只存游戏状态，不存日结 report 或结算 result，重载后不恢复历史结算展示。存档只属于当前浏览器和源，不会在 localhost、不同端口或已部署域名之间自动共享，清理浏览器数据会丢失存档。
 
 ## C++ / WASM 编译
 
@@ -94,9 +112,45 @@ npm run typecheck
 npm run test:browser    # 完整构建后，用本机 Edge 进行实际点击与截图
 ```
 
-浏览器测试默认使用已安装的 Microsoft Edge。也可设置 `BROWSER_CHANNEL=chrome`，或用 `BROWSER_EXECUTABLE` 指向兼容浏览器的绝对路径。截图输出至 build/browser-tests。测试自动启动仅监听回环地址的临时静态服务器，使用隔离的浏览器上下文，结束时自动关闭；不会修改用户的浏览器配置。它验证真实 WASM、模块与二进制加载失败后的重试、存档刷新恢复、资金不足、完成边界和 375/768/1440px 页面。
+浏览器测试默认使用已安装的 Microsoft Edge。也可设置 `BROWSER_CHANNEL=chrome`，或用 `BROWSER_EXECUTABLE` 指向兼容浏览器的绝对路径。截图输出至 build/browser-tests。测试自动启动仅监听回环地址的临时静态服务器，使用隔离的浏览器上下文，结束时自动关闭；不会修改用户的浏览器配置。
 
-store 单元测试通过模拟服务隔离状态逻辑，不能作为 WASM 证据。scripts/wasm.test.mjs 会检查 WASM 魔数、WebAssembly.validate、真实模块加载、示例结果、确定性、错误和边界；不存在二进制时直接失败。
+store 单元测试通过模拟服务隔离状态逻辑，不能作为 WASM 证据。scripts/wasm.test.mjs 用于检查 WASM 魔数、WebAssembly.validate、真实模块加载与跨语言契约；不存在二进制时直接失败。原生、真实 WASM、前端与浏览器检查各自负责不同边界，不能互相替代。
+
+v2 验收范围（2026-11-21 本地验收已通过）：
+
+- 六接口从真实初始化、接取、安排、推进、事件选择到结算、下一企划走通，不能仅测旧示例扣款。
+- 相同 seed 和决策序列可重放；非法完整状态、目录/阶段错误被拒绝，调用失败保留旧状态。
+- 外包/加班推进前可撤销，日结才扣款并清除；流水线、返工、士气和整数边界符合核心公式。
+- 截止日当天日结后强制交付，终局丢弃当日事件；破产不扣款、不推进日或 seed；收入与声望正确结算。
+- 单槽 v2 存档刷新恢复、旧 v1 拒绝、损坏存档不覆盖会话；report/result 不承诺刷新恢复。
+- 真实模块与二进制加载失败后可重试，busy 防重复操作，375/768/1440px 页面可操作；构建包包含独立 WASM。
+
+### 实际执行结果（2026-11-21）
+
+环境：Windows、本机 Edge、Node 24.22.1、Emscripten 4.0.23。
+
+| 命令 | 实际结果 |
+| --- | --- |
+| `npm test` | 前端 204/204、真实 WASM 10/10、C++ 原生 44/44 通过 |
+| `npm run typecheck` | 通过 |
+| `npm run test:browser` | 完整 WASM / TypeScript / Vite 构建成功；Edge 8/8 通过 |
+| `npm run verify:dist` | 通过；独立模块 31561 字节、WASM 269808 字节，二进制校验成功 |
+| `git diff --check` | 通过，无空白错误；仅 Windows 换行提示 |
+
+浏览器验收覆盖真实二进制响应、完整经营、同种子重放、下一企划、存档刷新恢复、模块/二进制加载失败重试、事件阻塞、破产、截止强制交付、损坏及 v1 存档拒绝，以及 375/768px 布局与操作；桌面完整流程使用 1440px。开发服务器也已在浏览器中实际操作到结算。首次浏览器测试有两项终局文案断言失败，统一文案后全量重跑通过，未放宽断言。
+
+可复现样例：`seed=12345`，接取 OVA，正常方针与默认排班、不外包或加班，事件选第二项；经历 17 次日结、1 次事件，第 18 日结算。质量 79 / A，成本 5100000，收入 6320000，利润 1220000，声望 +10，结算资金 11220000，最终 seed 为 1702883732；同种子、相同操作重放的完整状态与结果一致。
+
+### 本次纵向切片修改文件
+
+- C++ 核心：[接口声明](packages/game-core/include/game_core.hpp)、[规则与暂定参数](packages/game-core/include/game_rules.hpp)（新增）、[六接口实现](packages/game-core/src/game_core.cpp)。
+- 前端数据链路：[v2 类型与校验](apps/web/src/types/game.ts)、[WASM 服务](apps/web/src/services/gameCore.ts)、[存档服务](apps/web/src/services/saveGame.ts)、[状态层](apps/web/src/stores/gameStore.ts)。
+- 前端界面：[应用入口](apps/web/src/App.tsx)、[首页](apps/web/src/pages/HomePage.tsx)、[制作与结算页](apps/web/src/pages/StudioPage.tsx)、[样式](apps/web/src/styles/index.css)。
+- 前端测试：[协议夹具](apps/web/src/test/fixtures.ts)（新增）、[类型校验测试](apps/web/src/types/game.test.ts)、[WASM 服务测试](apps/web/src/services/gameCore.test.ts)、[存档测试](apps/web/src/services/saveGame.test.ts)、[状态层测试](apps/web/src/stores/gameStore.test.ts)、[首页测试](apps/web/src/pages/HomePage.test.tsx)、[应用测试](apps/web/src/App.test.tsx)。
+- 核心与端到端测试：[原生测试](packages/game-core/tests/game_core_test.cpp)、[真实 WASM 测试](packages/game-core/tests/wasm.test.mjs)、[根 WASM 测试入口](scripts/wasm.test.mjs)、[浏览器测试](scripts/browser.test.mjs)。
+- 文档：[README](README.md)、[接口](docs/API.md)、[规则](docs/GAME_RULES.md)、[数据模型](docs/DATA_MODEL.md)、[架构](docs/ARCHITECTURE.md)、[产品范围](docs/PRODUCT.md)、[经营循环](docs/GAME_DESIGN.md)。
+
+仓库同步包含上述实现与测试，以及关联的贡献指南、Issue / PR 模板、素材目录占位和来源记录；素材来源记录不代表图片已入库或授权已确认。没有修改构建配置、依赖、CI 工作流或 `.gitignore`，没有执行线上部署；生成图片、工具链、依赖和构建产物不随 Git 提交。
 
 ## 生产构建
 
@@ -122,15 +176,23 @@ npm run preview
 
 Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 ZIP 不超过平台 50 MiB 限制。本项目使用小型独立 WASM，不改变架构来绕过限制。实际托管 MIME、访问策略与 WASM 加载必须在发布后验证，不能仅凭本地成功下结论。
 
-当前会话根目录为 E:/，Sites 的 get_context 返回 `sites_document_scan_limit`。这阻止了本次云端上下文确认，不代表 WASM 文件不被支持。解决方式：以本仓库为工作区根目录重新打开会话，复用已有设计入口，执行正常 prepare / publish / status 验证；无需移动源文件或更换技术架构。
+若以 E:/ 等过宽路径作为工作区根目录，Sites 的 get_context 可能返回 `sites_document_scan_limit`；这不代表 WASM 文件不被支持。应以本仓库为工作区根目录，复用已有设计入口，执行正常 prepare / publish / status 验证；无需移动源文件或更换技术架构。本地文档更新不代表已经发布或完成线上验证。
 
 ## 文档
 
+- [贡献与协作指南](CONTRIBUTING.md)
 - [产品定位](docs/PRODUCT.md)
 - [技术架构](docs/ARCHITECTURE.md)
-- [规则原则](docs/GAME_RULES.md)
-- [接口协议](docs/API.md)
+- [最小经营循环](docs/GAME_DESIGN.md)
+- [统一数据模型](docs/DATA_MODEL.md)
+- [规则与暂定参数](docs/GAME_RULES.md)
+- [六接口协议与同步流程](docs/API.md)
 
-## 当前范围
+## 当前范围与未完项
 
-只有 advance_day 实现验证用规则。initialize_game、start_project、apply_decision、resolve_event、calculate_result 是明确返回 NOT_IMPLEMENTED 的预留接口。资金 100000、进度 20、每次 5000 / 5 都是工程夹具，不是正式平衡数值。
+- 六接口均实现；协议使用 snake_case、完整 GameState v2 往返，每次动作由 C++ 严格校验状态，错误包括 INVALID_PHASE，无前端规则兜底。
+- 外包/加班只安排今天，推进前可撤销；截止日当天结算后仍未完成就强制交付/违约，不无限拖到做完。
+- 所有数值和公式以 `packages/game-core/src/game_core.cpp` 与 `packages/game-core/include/game_rules.hpp` 为准，尚未最终平衡；体验时长与策略质量需实测。
+- 开工资金加上拨款，草案利润 `profit = revenue - spent` 不含拨款，付费事件计入 spent；此经济口径待团队复核。
+- 不做复杂事件库、员工成长、招聘解雇、市场/发行、多企划并行；不做多存档槽、自动保存、旧版迁移或历史结算持久化。
+- 本地真实 WASM 与浏览器完整循环已按上述记录验证；没有执行线上部署，托管后的 MIME、资源加载和访问策略仍需发布后单独验收。

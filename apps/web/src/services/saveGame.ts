@@ -5,7 +5,7 @@ const databaseName = 'anime-production-committee'
 const storeName = 'saves'
 
 interface SaveRecord {
-  version: 1
+  version: 2
   savedAt: string
   state: GameState
 }
@@ -33,7 +33,7 @@ export async function saveGame(state: GameState): Promise<void> {
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(storeName, 'readwrite')
-      transaction.objectStore(storeName).put({ version: 1, savedAt: new Date().toISOString(), state } satisfies SaveRecord, 'current')
+      transaction.objectStore(storeName).put({ version: 2, savedAt: new Date().toISOString(), state } satisfies SaveRecord, 'current')
       transaction.oncomplete = () => resolve()
       transaction.onabort = () => reject(transaction.error ?? new Error('保存失败'))
       transaction.onerror = () => reject(transaction.error ?? new Error('保存失败'))
@@ -59,7 +59,12 @@ export async function loadGame(): Promise<GameState | null> {
     database.close()
   }
   if (record === undefined) return null
-  if (typeof record !== 'object' || record === null || !('version' in record) || record.version !== 1 || !('state' in record) || !isGameState(record.state)) {
+  if (typeof record === 'object' && record !== null && 'version' in record && record.version === 1) {
+    throw new Error('v1 存档是旧版工程验证数据，不支持载入。请新开游戏；旧存档未被覆盖。')
+  }
+  if (typeof record !== 'object' || record === null || !('version' in record) || record.version !== 2
+    || !('savedAt' in record) || typeof record.savedAt !== 'string' || !Number.isFinite(Date.parse(record.savedAt))
+    || !('state' in record) || !isGameState(record.state)) {
     throw new Error('存档损坏或版本不受支持，当前数据未改变。')
   }
   return record.state

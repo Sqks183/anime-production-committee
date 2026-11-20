@@ -1,5 +1,5 @@
-import { isGameState } from '../types/game'
-import type { AdvanceDayResult, CoreErrorCode, CoreMethod, CoreModule, GameState } from '../types/game'
+import { isAdvanceDayResult, isCalculateResultResponse, isGameMessageResponse, isGameStateResponse } from '../types/game'
+import type { AdvanceDayResult, CalculateResultResponse, CoreErrorCode, CoreMethod, CoreModule, Decision, GameMessageResponse, GameState, GameStateResponse } from '../types/game'
 
 export class GameCoreError extends Error {
   constructor(public readonly code: CoreErrorCode, message: string, options?: ErrorOptions) {
@@ -23,7 +23,10 @@ export function loadGameCore(): Promise<CoreModule> {
         const module: CoreModule = await createGameCore({
           locateFile: (file: string) => new URL(file, moduleUrl).href,
         })
-        if (typeof module.advance_day !== 'function') throw new Error('WASM 缺少 advance_day 导出')
+        const methods: CoreMethod[] = ['initialize_game', 'start_project', 'apply_decision', 'advance_day', 'resolve_event', 'calculate_result']
+        for (const method of methods) {
+          if (typeof module?.[method] !== 'function') throw new Error(`WASM 缺少 ${method} 导出`)
+        }
         return module
       } catch (cause) {
         throw new GameCoreError('LOAD_FAILED', '游戏核心加载失败，请确认 WASM 已编译并可访问，然后重试。', { cause })
@@ -37,7 +40,7 @@ export function loadGameCore(): Promise<CoreModule> {
   return modulePromise
 }
 
-const errorCodes: CoreErrorCode[] = ['INVALID_INPUT', 'INSUFFICIENT_BUDGET', 'NOT_IMPLEMENTED', 'INTERNAL_ERROR']
+const errorCodes: CoreErrorCode[] = ['INVALID_INPUT', 'INSUFFICIENT_BUDGET', 'INVALID_PHASE', 'INTERNAL_ERROR']
 
 export async function callCore(method: CoreMethod, input: unknown): Promise<unknown> {
   const module = await loadGameCore()
@@ -49,11 +52,12 @@ export async function callCore(method: CoreMethod, input: unknown): Promise<unkn
   }
   let result: unknown
   try {
+    if (typeof raw !== 'string') throw new Error('核心响应不是 JSON 字符串')
     result = JSON.parse(raw)
   } catch (cause) {
     throw new GameCoreError('INVALID_RESPONSE', 'C++ 返回了无效 JSON。', { cause })
   }
-  if (typeof result !== 'object' || result === null) {
+  if (typeof result !== 'object' || result === null || Array.isArray(result)) {
     throw new GameCoreError('INVALID_RESPONSE', 'C++ 返回的数据结构无效。')
   }
   if ('error' in result) {
@@ -66,10 +70,32 @@ export async function callCore(method: CoreMethod, input: unknown): Promise<unkn
   return result
 }
 
-export async function advanceDay(state: GameState): Promise<AdvanceDayResult> {
-  const result = await callCore('advance_day', state) as Partial<AdvanceDayResult>
-  if (!isGameState({ ...result, seed: state.seed }) || typeof result.message !== 'string') {
-    throw new GameCoreError('INVALID_RESPONSE', 'C++ 返回的经营数据无效。')
-  }
-  return result as AdvanceDayResult
+async function checkedCall<T>(method: CoreMethod, input: unknown, validate: (value: unknown) => value is T): Promise<T> {
+  const response = await callCore(method, input)
+  if (!validate(response)) throw new GameCoreError('INVALID_RESPONSE', 'C++ 返回的经营数据无效。')
+  return response
+}
+
+export function initializeGame(seed: number): Promise<GameStateResponse> {
+  return checkedCall('initialize_game', { seed }, isGameStateResponse)
+}
+
+export function startProject(state: GameState, projectId: string): Promise<GameMessageResponse> {
+  return checkedCall('start_project', { state, project_id: projectId }, isGameMessageResponse)
+}
+
+export function applyDecision(state: GameState, decision: Decision): Promise<GameMessageResponse> {
+  return checkedCall('apply_decision', { state, decision }, isGameMessageResponse)
+}
+
+export function advanceDay(state: GameState): Promise<AdvanceDayResult> {
+  return checkedCall('advance_day', { state }, isAdvanceDayResult)
+}
+
+export function resolveEvent(state: GameState, optionId: string): Promise<GameMessageResponse> {
+  return checkedCall('resolve_event', { state, option_id: optionId }, isGameMessageResponse)
+}
+
+export function calculateResult(state: GameState): Promise<CalculateResultResponse> {
+  return checkedCall('calculate_result', { state }, isCalculateResultResponse)
 }
