@@ -182,7 +182,16 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 
 最小纵向切片已合入 `main`，后续不从零重做员工、制作、事件或结算系统。请先阅读 [当前任务认领池](CONTRIBUTING.md#当前任务认领池)，其中六项候选任务分别说明现状、修改目录、接口依赖、交付物、验收与前置条件；所有任务当前待认领，不预设成员已经接单。
 
-优先评审结算经济口径、改善制作台可读性，再根据试玩证据选择规则验证或调参任务；核心共享文件按序修改，三图素材需先明确授权与共享范围。GitHub 议题尚待发布，认领池中的 T01–T06 不是远程 Issue 编号。
+优先评审结算经济口径、改善制作台可读性，再根据试玩证据选择规则验证或调参任务；核心共享文件按序修改，三图素材需先明确授权与共享范围。前往 [GitHub 认领池总览 #1](https://github.com/zhengmin486/anime-production-committee/issues/1) 选择任务，在对应子议题评论认领并等待负责人确认；实时分工以议题评论和 Assignee 为准。
+
+| 优先级 | 待认领任务 |
+| --- | --- |
+| P0 | [T01 · 结算与经济口径评审 #2](https://github.com/zhengmin486/anime-production-committee/issues/2) |
+| P1 | [T02 · 员工与排班取舍验证 #3](https://github.com/zhengmin486/anime-production-committee/issues/3) |
+| P1 | [T03 · 制作策略与流水线验证 #4](https://github.com/zhengmin486/anime-production-committee/issues/4) |
+| P1 | [T04 · 事件取舍与恢复验证 #5](https://github.com/zhengmin486/anime-production-committee/issues/5) |
+| P1 | [T05 · 制作台信息与操作体验 #6](https://github.com/zhengmin486/anime-production-committee/issues/6) |
+| P2 | [T06 · 初期三图授权与接入准备 #7](https://github.com/zhengmin486/anime-production-committee/issues/7) |
 
 ## 文档
 
