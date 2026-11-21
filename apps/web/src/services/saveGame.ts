@@ -1,5 +1,7 @@
 import { isGameState } from '../types/game'
 import type { GameState } from '../types/game'
+import { isGameState as isV3GameState } from '../types/gameV3'
+import type { GameState as V3GameState } from '../types/gameV3'
 
 const databaseName = 'anime-production-committee'
 const storeName = 'saves'
@@ -43,7 +45,7 @@ export async function saveGame(state: GameState): Promise<void> {
   }
 }
 
-export async function loadGame(): Promise<GameState | null> {
+async function readSaveRecord(): Promise<unknown> {
   const database = await openDatabase()
   let record: unknown
   try {
@@ -58,6 +60,11 @@ export async function loadGame(): Promise<GameState | null> {
   } finally {
     database.close()
   }
+  return record
+}
+
+export async function loadGame(): Promise<GameState | null> {
+  const record = await readSaveRecord()
   if (record === undefined) return null
   if (typeof record === 'object' && record !== null && 'version' in record && record.version === 1) {
     throw new Error('v1 存档是旧版工程验证数据，不支持载入。请新开游戏；旧存档未被覆盖。')
@@ -68,4 +75,22 @@ export async function loadGame(): Promise<GameState | null> {
     throw new Error('存档损坏或版本不受支持，当前数据未改变。')
   }
   return record.state
+}
+
+export function decodeV3SaveRecord(record: unknown): V3GameState | null {
+  if (record === undefined) return null
+  if (typeof record === 'object' && record !== null && 'version' in record
+    && (record.version === 1 || record.version === 2)) {
+    throw new Error(`v${record.version} 存档不兼容周制经营 v3，请新开游戏；旧存档未被覆盖。`)
+  }
+  if (typeof record !== 'object' || record === null || Array.isArray(record) || !('version' in record) || record.version !== 3
+    || !('savedAt' in record) || typeof record.savedAt !== 'string' || !Number.isFinite(Date.parse(record.savedAt))
+    || !('state' in record) || !isV3GameState(record.state)) {
+    throw new Error('存档损坏或版本不受支持，当前数据未改变。')
+  }
+  return record.state
+}
+
+export async function loadGameV3(): Promise<V3GameState | null> {
+  return decodeV3SaveRecord(await readSaveRecord())
 }

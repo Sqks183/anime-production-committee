@@ -1,5 +1,73 @@
 # 前端与 C++ 接口协议
 
+## V3.1 M0 冻结接口（目标，不是当前 WASM 实现）
+
+2026-11-21，议题 #2 的目标契约见 [gameV3.ts](../apps/web/src/types/gameV3.ts) 的 CoreRequests/CoreResponses 与 [DATA_MODEL](DATA_MODEL.md)。M0 提供类型、边界校验、静态夹具、只读 v3 存档入口；规则实现属于 #3/#4/#6/#7/#8。下面六个目标导出应在真实实现接入时同步替换，不将 advance_week 指向 advance_day，也不导出返回成功的空函数。
+
+保持同步 JSON 字符串输入/输出、无核心全局会话、TS 持有完整状态、成功后整体替换的架构。以下请求中的 state 均为完整 v3 GameState，初始化除外；所有字段必填，仅标 `?` 的字段可省略。
+
+| 导出 | 请求 | 成功响应 | 条件 |
+| --- | --- | --- | --- |
+| initialize_game | `{seed}` | `{state,message}` | 根据 seed 创建新公司，week=0、running/idle、四企划；返回生成后的 seed |
+| start_project | `{state,offer_id,mode,investment_percent}` | `{state,message}` | running idle；报价必须在当前四选项中。contract 投资 0；committee 投资整数 10–100；原创只能 committee |
+| apply_decision | `{state,decision}` | `{state,message}` | 按下表分支校验，不存在通用任意改字段接口 |
+| advance_week | `{state}` | `{state,report}` | running idle，或 producing 且当前阶段 active；推进恰一周，费用不足转关闭成功响应，不伪造已完成一周 |
+| resolve_event | `{state,option_id,configuration?}` | `{state,message}` | running event_pending；只能选择当前可用选项，仅 allows_reconfigure=true 的选项可附配置；此选项必须附完整配置，其他选项禁止附配置 |
+| calculate_result | `{state,scope}` | `{state,scope,result}` | scope=project 仅 project_ready；scope=company 仅 closing 且项目已结清。分别返回 WorkRecord/CompanyResult |
+
+错误统一 `{error:{code,message}}`，不含可采用的新状态。code：INVALID_INPUT（结构/值/引用错误）、INVALID_PHASE（状态不允许）、INSUFFICIENT_BUDGET（可选支出不足）、STAGE_LOCKED（阶段中改常规配置）、MODE_NOT_ALLOWED（原创承制或承制延期）、CAPACITY_EXCEEDED（外包专业/剩余产能不匹配）、COMPANY_ENDED（关闭后经营动作）、INTERNAL_ERROR。WASM 加载/JSON 响应错误仍由服务层处理，不冒充核心业务码。
+
+验证顺序：完整结构与引用 → 公司关闭锁 → 当前 phase → 动作专用条件 → 资金/产能 → 原子应用。失败时状态、资金、种子均保持；错误 message 解释具体原因。类型校验不是规则授权，校验器通过不等于 C++ 必须接受动作。
+
+## V3.2 决策清单与合法时点
+
+| decision.type | 其他必填字段 | 可调用状态与语义 |
+| --- | --- | --- |
+| configure_stage | stage, configuration | running producing，stage=current_stage 且 ready；一次提交完整 assignments/policy/overtime，转 active；重复在 active 修改返回 STAGE_LOCKED |
+| hire_temporary | candidate_id | running producing、当前阶段 ready；候选必须 temporary；支付项目费并从招聘池转入项目；后续阶段继续可用，结算释放 |
+| hire_core | candidate_id | running idle 或 project_settled；候选必须 core，从池转入核心名册；从下一次周结算起支付周薪，不添加签约谈判 |
+| outsource | supplier_id, stage, ability, workload, mode | running producing、当前阶段 ready；正工作量、已解锁供应商、专业与剩余产能匹配；支付确认报价并建立任务。ready 可选择普通或应急；阶段内应急调整只能通过事件受控通路，不能借此在 active 周周调整 |
+| request_extension | 无 | running producing，committee、延期未用、尚未结算截止周；资金足够则一次性支付延期费、延长固定周数、增加项目压力。contract 返回 MODE_NOT_ALLOWED |
+| raise_salary | staff_id, weekly_salary | running idle 或 project_settled；仅核心员工，新周薪高于当前值；不立即重复收工资，新工资从下次周结算使用；改善士气参数待定 |
+| return_to_market | 无 | running project_settled；清 last_project_id，生成四企划后 idle；不推进周，不重复发放任何结算收入 |
+| end_company | 无 | running 的任意非终局 phase；不推进周，锁 closing/voluntary；有未交付项目先进入 project_ready，已完成或已待交付的成果保留其交付原因 |
+
+休整不另开人事子系统：空闲周或阶段未安排的人员按周恢复；核心工资照付。事件受控改配通过 resolve_event，而非放开 configure_stage。事件导致的外包/改配由核心复用同一费用、匹配与产能规则。事件库尚未开题，不在 M0 造完整触发器。
+
+## V3.3 状态机
+
+公司 status 与流程 phase 分开；project_ready 是“待交付结算”，project_settled 是“已结算展示”，不能合成一个状态重复入账。
+
+| 起点 | 动作/条件 | 终点及可继续动作 |
+| --- | --- | --- |
+| running idle | start_project | producing，首阶段 ready；配置/临时招募/外包，不可直接推进 |
+| running idle | advance_week 且未到终局 | 扣一周核心工资与运营费，week+1、四企划刷新，仍 idle |
+| producing ready | configure_stage | producing active；方案锁定后可 advance_week |
+| producing active | advance_week，阶段未完成且无事件 | producing active，保留配置 |
+| producing active | 非末阶段完成 | producing，下一阶段 ready；不能同周接着生产下一阶段，多余工作量不跨阶段转移 |
+| producing active | 触发适用状态事件 | event_pending；只能 resolve_event 或 end_company，不能推进 |
+| event_pending | resolve_event | 回 producing；若选择直接导致交付/关闭则 project_ready；不再扣一周工资或增加周数 |
+| producing | 全部完成或截止交付 | project_ready；等待 calculate_result(project)，不接受排班/推进/新项目 |
+| project_ready | calculate_result(project) | 项目净收入/扣罚一次入账、记录历史与团队、释放临时和任务、清 project，进入 project_settled |
+| running project_settled | return_to_market | idle；接下一部、等待刷新，或 end_company |
+| 任意 running | end_company 或周结算终局 | 公司 closing；有项目进入 project_ready，无项目保持 idle/project_settled；报价/事件/预览清空，只允许结清 |
+| closing project_ready | calculate_result(project) | closing project_settled；即使商业回款改善资金，也不解除关闭锁 |
+| closing 且 project=null | calculate_result(company) | ended/company_ended，永久总结；不能接企划、推进或再次结算 |
+
+关闭状态的优先级见 GAME_RULES。company_ended 只能由 UI 保存/读取/返回首页/明确新开公司；这些不是修改终局的核心经营动作。纯函数核心无法阻止调用者重放旧快照，但同一返回状态不可二次结算，store 仍须 busy 防重复并整体替换。
+
+## V3.4 跨端样例与交接
+
+v3IdleState/v3ProducingState/v3EventState/v3ReadyState/v3SettledState/v3EndedState/v3WeekReport 是静态协议夹具，供 #5 隔离展示与 #3/#4 输出结构对照；不能通过 TS 推进它们来冒充核心规则。v3SettledState 的承制与 10% 委员会账例详见 GAME_RULES。
+
+迁移调用链：C++ game_core.hpp/实现 → bindings/embind.cpp → gameV3.ts 对应的方法名单与校验 → services/gameCore.ts → store → UI/存档 → 原生/WASM/浏览器用例。#3 修改声明/导出必须与真实实现同提交；#5 接真实响应后整体切换，移除 v2 类型和存档入口，不维持双版本运行路线。
+
+M0 的校验器验证结构与状态关联，不执行产能、付款或阶段推进。类型检查/夹具测试通过只表示 M0 契约可用，不能用作 #3–#8 的规则实现验收。
+
+---
+
+## V2 实际接口（仅供迁移核对）
+
 本文记录最小纵向切片的 v2 实际核心契约，是前后端语言边界的联调依据。完整状态与响应类型见 [DATA_MODEL.md](DATA_MODEL.md)，暂定规则与公式见 [GAME_RULES.md](GAME_RULES.md)。模块职责见 [ARCHITECTURE.md](ARCHITECTURE.md)，产品范围见 [PRODUCT.md](PRODUCT.md)，协议变更流程见 [CONTRIBUTING.md](../CONTRIBUTING.md)。v2 指状态 schema，不代表最终平衡版本或端到端验收已通过。
 
 ## 传输方式

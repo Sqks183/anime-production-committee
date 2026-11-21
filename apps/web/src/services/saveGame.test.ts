@@ -1,6 +1,6 @@
 import { beforeEach, expect, it } from 'vitest'
-import { eventState, idleState, producingState } from '../test/fixtures'
-import { loadGame, saveGame } from './saveGame'
+import { eventState, idleState, producingState, v3IdleState, v3ProducingState, v3EventState, v3ReadyState, v3SettledState, v3EndedState } from '../test/fixtures'
+import { decodeV3SaveRecord, loadGame, loadGameV3, saveGame } from './saveGame'
 
 beforeEach(async () => {
   await new Promise<void>((resolve, reject) => {
@@ -30,6 +30,35 @@ async function rawRecord(value?: unknown): Promise<{ record: unknown; version: n
 
 it('不存在存档时返回 null', async () => {
   expect(await loadGame()).toBeNull()
+  expect(await loadGameV3()).toBeNull()
+})
+
+it.each([1, 2])('v3 读取拒绝旧 v%s 信封且不覆盖原记录', async (version) => {
+  const record = { version, savedAt: '2026-11-21T00:00:00.000Z', state: idleState() }
+  await rawRecord(record)
+  await expect(loadGameV3()).rejects.toThrow(`v${version} 存档不兼容周制经营 v3，请新开游戏；旧存档未被覆盖。`)
+  expect((await rawRecord()).record).toEqual(record)
+})
+
+it('v3 读取完整恢复事件、作品与终局，DB schema 不变且没有写操作', async () => {
+  for (const state of [v3IdleState(), v3ProducingState(), v3EventState(), v3ReadyState(), v3SettledState(), v3EndedState()]) {
+    const record = { version: 3, savedAt: '2026-11-21T00:00:00.000Z', state }
+    await rawRecord(record)
+    expect(await loadGameV3()).toEqual(state)
+    expect(await rawRecord()).toEqual({ record, version: 1 })
+  }
+})
+
+it('v3 拒绝信封/状态版本错配、缺失字段和损坏记录，原档保持不变', async () => {
+  const valid = { version: 3, savedAt: '2026-11-21T00:00:00.000Z', state: v3IdleState() }
+  for (const record of [null, {}, Object.assign([], valid), { ...valid, version: 99 }, { ...valid, savedAt: 'invalid' },
+    { ...valid, savedAt: 42 }, { version: 3, state: valid.state }, { version: 3, savedAt: valid.savedAt },
+    { ...valid, state: idleState() }, { ...valid, state: { ...valid.state, company: null } }]) {
+    await rawRecord(record)
+    await expect(loadGameV3()).rejects.toThrow('存档损坏或版本不受支持')
+    expect((await rawRecord()).record).toEqual(record)
+  }
+  expect(decodeV3SaveRecord(undefined)).toBeNull()
 })
 
 it('IndexedDB 事务保存完整 v2 状态与 savedAt，数据库仍为 version 1', async () => {

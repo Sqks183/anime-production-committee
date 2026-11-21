@@ -126,7 +126,7 @@ git switch -c feat/12-project-flow
 
 - 现有 `main` 是最小纵向切片（v2）：日推进、三工序、固定 4 人、3 报价、3 事件。技术链路（C++→WASM→React、确定性种子、Zustand 锁、IndexedDB、三层测试）保留，规则与数据模型按 V1.0 重做。
 - 差距与里程碑见 [docs/V1_GAP_REVIEW.md](docs/V1_GAP_REVIEW.md)；本轮分工与顺序见 [docs/TEAM_PLAN.md](docs/TEAM_PLAN.md)。
-- **M0 契约冻结（#2）未完成前，不允许改契约字段、C++ 状态结构或存档版本**，只允许读现状、写结构草案、补对照样例。
+- **M0 契约冻结（#2）评审合入前，不允许后续任务改契约字段、C++ 状态结构或存档版本**，只允许读现状、写结构草案、补对照样例。M0 本地目标模块为 `types/gameV3.ts`，交付与集成切换说明见 TEAM_PLAN；当前 v2 运行时仍保留，不能将文档目标当作已实现。
 - 规则只在 C++；单元测试里的模拟服务不能代替真实 WASM 验收。
 - 所有任务初始待认领，未指定真实 Assignee 或 Reviewer。每项最多一名主负责人、至少一名其他成员评审。
 - `game_rules.hpp`、`game_core.cpp`、核心测试由核心负责人独占；`scripts/browser.test.mjs` 由契约负责人独占；共享类型由契约负责人统一合入。

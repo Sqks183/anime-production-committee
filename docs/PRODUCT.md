@@ -1,5 +1,7 @@
 # 产品定位与玩法范围
 
+> 下文描述现行 v2 切片，不是 V1.0 范围排除清单。V1.0 的周制、招聘成长、企划市场、委员会、作品历史与经营结局以总案为准；M0 目标契约见 [DATA_MODEL](DATA_MODEL.md)、[API](API.md)、[GAME_RULES](GAME_RULES.md) 的 V3 部分。目标协议不代表玩法已经实现。
+
 本文定义“做什么、暂时不做什么”。工程边界见 [ARCHITECTURE.md](ARCHITECTURE.md)，当前接口见 [API.md](API.md)，协作流程见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 
 ## 产品定位

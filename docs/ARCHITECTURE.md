@@ -1,5 +1,7 @@
 # 工程架构与模块边界
 
+> 分层与技术栈继续复用；下文 v2 字段、存档与流程是运行现状。M0 的 v3 目标契约在 [DATA_MODEL](DATA_MODEL.md) 和 [API](API.md) 单独标识，并由 `types/gameV3.ts` 提供类型/校验；不新增规则后端，不伪造 WASM 导出，M1 接入真实核心后整体切换。
+
 本文描述最小纵向切片的分层与 v2 状态契约，不把后续系统规划或未运行的验收当作已完成。产品范围见 [PRODUCT.md](PRODUCT.md)，JSON 契约见 [API.md](API.md)，开发流程见 [CONTRIBUTING.md](../CONTRIBUTING.md)，环境与工具链命令见 [README](../README.md)。
 
 ## 技术选型
