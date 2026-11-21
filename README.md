@@ -4,6 +4,8 @@ ANIME PRODUCTION COMMITTEE · 浏览器经营模拟游戏最小纵向切片 · v
 
 当前范围是初始化公司、选择企划、安排团队、推进制作、处理事件、结算并接取下一部的最小循环，不是完整游戏或最终平衡版本。React 通过 Emscripten 的真实 WebAssembly 调用 C++ 六接口；没有用 TypeScript 伪造核心计算，也没有独立后端。
 
+> **V1.0 迁移进行中。** 下面的玩法、协议与验收描述的是已合入的 v2 纵向切片，仍然准确，但不是目标形态。《游戏设计总案 V1.0》要求周制经营、五阶段、企划市场、委员会投资、六能力用工与公司终局，差距见 [docs/V1_GAP_REVIEW.md](docs/V1_GAP_REVIEW.md)，本轮分工与顺序见 [docs/TEAM_PLAN.md](docs/TEAM_PLAN.md)，任务在 [议题 #1](https://github.com/zhengmin486/anime-production-committee/issues/1) 与 #2–#9。
+
 ## 当前可玩内容
 
 ```text
@@ -204,6 +206,7 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 - [规则与暂定参数](docs/GAME_RULES.md)
 - [六接口协议与同步流程](docs/API.md)
 - [V1.0 差距审查与迁移计划](docs/V1_GAP_REVIEW.md)
+- [本轮分工（V1.0 迁移）](docs/TEAM_PLAN.md)
 
 ## 当前范围与未完项
 

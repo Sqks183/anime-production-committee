@@ -120,79 +120,29 @@ git switch -c feat/12-project-flow
 
 ## 当前任务认领池
 
-更新日期：2026-11-21。基线为已合入 `main` 的最小纵向切片 `7651e21`；[GitHub 认领池总览 #1](https://github.com/zhengmin486/anime-production-committee/issues/1) 和六个子任务已发布。T01–T06 是认领池编号，实际议题编号见下表；实时认领与进展以子议题评论及 Assignee 为准，避免重复开题。
+更新日期：2026-11-21。基线 `main@94be77a`；[里程碑总览 #1](https://github.com/zhengmin486/anime-production-committee/issues/1) 与八个子任务（#2–#9）已按《游戏设计总案 V1.0》重写。**议题正文是任务的唯一详细来源**，本文只保留分工原则、归属边界和认领流程，避免两处描述不一致。
 
 ### 现状与分工原则
 
-- 员工名册、排班、工资扣除、三段制作、三类事件、首页/制作台及经营结算已经实现，不再按“从零开发六个系统”分工。
-- 现行 v2 六接口与完整状态往返作为联调基线，规则只在 C++；单元测试中的模拟服务不能代替真实 WASM 验收。
-- 当前固定 4 人、3 个报价、3 类事件。招聘、成长、市场、多企划、新存档版本、完整海报库不在本轮任务中。
-- 所有任务初始均为“待认领”，未指定真实 Assignee 或 Reviewer。每项最多一名主负责人，至少一名其他成员评审；建议负责人统筹 T01 和集成，C++ 成员按序处理 T02/T03/T04，前端成员优先 T05，T06 可先做授权核查。
-- 三人一周不要求同时完成六项：优先 T01、T05，再根据试玩证据选择最有价值的规则问题；其余留在候选池，不当作交付承诺。
-- `game_rules.hpp`、`game_core.cpp`、原生测试和真实 WASM 测试是共享文件。T02/T03/T04 默认串行；确需并行时先拆分文件边界，禁止各自整文件重写。T01 的评审结论先落地，涉及数值或利润公式的修改才可开工；现状验证可先行。
+- 现有 `main` 是最小纵向切片（v2）：日推进、三工序、固定 4 人、3 报价、3 事件。技术链路（C++→WASM→React、确定性种子、Zustand 锁、IndexedDB、三层测试）保留，规则与数据模型按 V1.0 重做。
+- 差距与里程碑见 [docs/V1_GAP_REVIEW.md](docs/V1_GAP_REVIEW.md)；本轮分工与顺序见 [docs/TEAM_PLAN.md](docs/TEAM_PLAN.md)。
+- **M0 契约冻结（#2）未完成前，不允许改契约字段、C++ 状态结构或存档版本**，只允许读现状、写结构草案、补对照样例。
+- 规则只在 C++；单元测试里的模拟服务不能代替真实 WASM 验收。
+- 所有任务初始待认领，未指定真实 Assignee 或 Reviewer。每项最多一名主负责人、至少一名其他成员评审。
+- `game_rules.hpp`、`game_core.cpp`、核心测试由核心负责人独占；`scripts/browser.test.mjs` 由契约负责人独占；共享类型由契约负责人统一合入。
 
-| 编号 | 优先级 | GitHub 议题 | 发布时状态 | 主要交付 |
-| --- | --- | --- | --- | --- |
-| T01 | P0 | [结算与经济口径评审 #2](https://github.com/zhengmin486/anime-production-committee/issues/2) | 待认领 | 口径决议、核算样例、必要的核心回归测试 |
-| T02 | P1 | [员工与排班取舍验证 #3](https://github.com/zhengmin486/anime-production-committee/issues/3) | 待认领 | 固定名册验证、排班/休息/加班对照结果 |
-| T03 | P1 | [制作策略与流水线验证 #4](https://github.com/zhengmin486/anime-production-committee/issues/4) | 待认领 | 可复现策略对照、瓶颈/返工边界回归 |
-| T04 | P1 | [事件取舍与恢复验证 #5](https://github.com/zhengmin486/anime-production-committee/issues/5) | 待认领 | 三事件六选项覆盖、费用与恢复边界验证 |
-| T05 | P1 | [制作台信息与操作体验 #6](https://github.com/zhengmin486/anime-production-committee/issues/6) | 待认领 | 聚焦反馈可读性的 React 改进、浏览器证据 |
-| T06 | P2 | [初期三图授权与接入准备 #7](https://github.com/zhengmin486/anime-production-committee/issues/7) | 待认领 | 来源/授权结论、三图整理包或明确阻碍 |
+| 里程碑 | 议题 | 归属 | 主要交付 |
+| --- | --- | --- | --- |
+| M0 | [#2 冻结 v3 契约](https://github.com/zhengmin486/anime-production-committee/issues/2) | 契约与集成 | 状态/动作/账目/周结算顺序/旧档拒绝策略 |
+| M1 | [#3 核心：周制与公司终局](https://github.com/zhengmin486/anime-production-committee/issues/3) | 核心 | `advance_week`、idle 周成本、三种终局 |
+| M1 | [#4 核心：五阶段与阶段首配置](https://github.com/zhengmin486/anime-production-committee/issues/4) | 核心 | 五阶段推进、方针、有限质量传递 |
+| M1 | [#5 前端：周制与五阶段界面](https://github.com/zhengmin486/anime-production-committee/issues/5) | 前端 | 主线流程重做、存档升 v3 |
+| M2 | [#6 企划市场与委员会分账](https://github.com/zhengmin486/anime-production-committee/issues/6) | 核心 | 4 企划、来源×规模、投资与商业分成 |
+| M2 | [#7 用工与外包](https://github.com/zhengmin486/anime-production-committee/issues/7) | 核心 | 六能力、临时人员、供应商池 |
+| M3 | [#8 成长、履历与结局](https://github.com/zhengmin486/anime-production-committee/issues/8) | 核心 + 前端 | 潜力揭示、疲劳预警、续作、结局 |
+| 并行 | [#9 三图授权与接入](https://github.com/zhengmin486/anime-production-committee/issues/9) | 任意 | 授权结论与获准三图，不挡主线 |
 
-### T01 · 结算与经济口径评审
-
-- **现状与工作**：现有 `start_project` 将拨款计入资金，`calculate_result` 的 `profit = revenue - spent` 不含拨款；这仍是待团队复核的草案，不先假定应改成哪种算法。核对开工、每日支出、付费事件、收入和下一企划之间的资金账，以及质量评级与经营成败的区别。
-- **修改目录**：优先 `docs/GAME_RULES.md`、`docs/GAME_DESIGN.md`、`docs/DATA_MODEL.md`、`docs/API.md`；如确认改规则，再修改 `packages/game-core/src/game_core.cpp`、`include/game_rules.hpp` 及 `tests/`。响应含义变化时先协调前端，不单方面改字段。
-- **接口依赖**：`start_project`、`advance_day`、`resolve_event`、`calculate_result`；`GameState.funds`、`Project.budget/spent`、`ProjectResult.revenue/cost/profit/reputation_delta/grade`。
-- **交付物**：明确保留或调整现有口径的评审结论；至少一组可逐步核算的资金账；如调整，提交同步后的 C++、协议文档和回归测试，不能仅改页面显示。
-- **验收**：覆盖完成、截止、破产三种结算、付费事件入账、超预算声望、质量评级含义及下一企划继承；同种子相同操作结果一致。规则改动执行原生、真实 WASM 和浏览器完整循环；纯评审需列出实算输入输出，不能声称实现已变更。
-- **前置与范围**：由负责人组织、至少另一成员确认结论；不新增市场或发行系统。确认前阻塞 T02/T03/T04 中的调参和公式变更，不阻塞基线测试。
-
-### T02 · 员工与排班取舍验证
-
-- **现状与工作**：固定 4 人已有岗位、技能、士气、排班、加班和统一工资；验证擅长工序、跨工序、休息与加班是否形成可理解的取舍。发现问题先给重现记录，不新增招聘、薪酬谈判、岗位树或成长系统。
-- **修改目录**：`packages/game-core/include/game_rules.hpp`、`src/game_core.cpp`、`tests/game_core_test.cpp`、`tests/wasm.test.mjs`；公式或暂定参数变化同步 `docs/GAME_RULES.md`，避免另建 TypeScript 员工规则。
-- **接口依赖**：`initialize_game`、`apply_decision` 的 `assign/overtime`、`advance_day`；`Staff.role/skill/morale/assignment/overtime` 与日报变化。
-- **交付物**：固定 seed 和明确操作序列的排班对照表、员工边界测试；仅在 T01 及团队确认后提交必要的参数修正与对应文档。
-- **验收**：验证休息仍付工资/消耗工期、士气恢复上限、休息不可加班、改休息清除加班、启用时不扣款、日结统一扣费/清除标记、资金不足不破坏状态；原生和真实 WASM 测试通过，相同输入重复执行结果一致。
-- **前置与范围**：依赖 v2 契约；调参依赖 T01，和 T03/T04 共享核心文件时串行。不得在前端新增一套费用或员工效率计算。
-
-### T03 · 制作策略与流水线验证
-
-- **现状与工作**：已有前期→中期→后期流水线、三方针、外包和返工；用现有报价对照正常、赶工、精修、休息和投入组合，找出瓶颈与可能的支配策略。记录实测时长，不把 5–10 分钟目标写成已达到。
-- **修改目录**：`packages/game-core/include/game_rules.hpp`、`src/game_core.cpp`、`tests/`；结果与获批公式变化写入 `docs/GAME_RULES.md`，体验结论同步 `docs/GAME_DESIGN.md`。
-- **接口依赖**：`start_project`、`apply_decision` 的 `assign/policy/outsource/overtime`、`advance_day`、`resolve_event`、`calculate_result`；`Project.stages/policy/deadline_day`、`DayReport`。
-- **交付物**：至少 3 组完整可重放的策略记录，列明 seed、企划、每日动作、事件选择及成本/质量/天数/结局；流水线与返工边界测试，必要时附待评审的调参建议。
-- **验收**：验证下游不超过上游、上游堵塞时工作量处理、低质量返工、外包质量合成、截止日交付、完成优先于截止及终局优先于事件；原生/真实 WASM 通过，在浏览器跑至少一次完整策略。有限样本只能报告观察，不能据此宣称不存在支配策略。
-- **前置与范围**：调参依赖 T01；T02 的核心修改合并后再改相同文件。不新增第四工序、多企划并行或前端模拟器。
-
-### T04 · 事件取舍与恢复验证
-
-- **现状与工作**：三类确定性事件、每类两选项及费用/工期/质量/士气效果已实现；补齐每个选项的取舍说明与边界覆盖，验证事件阻塞、保存恢复和失败重试，不扩充复杂事件库。
-- **修改目录**：`packages/game-core/include/game_rules.hpp` 中事件目录、`src/game_core.cpp`、`tests/`、`docs/GAME_RULES.md`；涉及真实保存恢复场景时协调 `scripts/browser.test.mjs`，不同时改前端页面。
-- **接口依赖**：`advance_day`、`resolve_event`，`GameState.seed/pending_event/phase`、`GameEvent.options/effect`；沿用前端现有 v2 单槽存档。
-- **交付物**：三事件六选项的固定 seed/操作或合法边界状态、期望结果和自动化用例；如需调整选项，附取舍理由并先评审资金口径。
-- **验收**：覆盖确定性触发、加班概率关联、非法选项/伪造事件拒绝、付费选项计入 `spent`、资金不足保留事件与旧状态、免费选项可继续、终局不再弹事件，以及待事件存档刷新恢复；原生、真实 WASM 和相关浏览器用例通过。
-- **前置与范围**：费用或数值变更依赖 T01；与 T02/T03 的核心改动串行，不增加新的随机数源或未定义的事件效果字段。
-
-### T05 · 制作台信息与操作体验
-
-- **现状与工作**：首页、报价、制作台、员工安排、事件、日报和结算页已有可用链路；重点让玩家看懂“今天安排了什么、何时扣款、为何不能推进、质量评级不等于经营成功”。先记录至少 3 个真实试玩困惑点，再做聚焦改进，不重做整体风格。
-- **修改目录**：`apps/web/src/pages/`、`components/`、`styles/` 及相关测试；必要的状态/反馈修正可涉及 `stores/gameStore.ts`、`services/`，共享类型修改须先协调；浏览器验证在 `scripts/browser.test.mjs`。
-- **接口依赖**：沿用 `services/gameCore.ts` 六个封装、Zustand 动作、`GameState/DayReport/ProjectResult` 和 v2 保存/读取；预计今日支出使用 C++ 决策回执，不自行按人数重算。
-- **交付物**：对应问题的 React 改进、组件测试、375/768/1440px 截图与操作记录；需要新增核心字段时先开接口讨论，不用假数据填补。
-- **验收**：正常路径覆盖新开→选择→至少一种决策→推进→事件→结算→下一部；异常路径覆盖 busy 防重复、核心加载失败重试、事件/待结算阻塞、无存档/损坏/v1 拒绝，失败不覆盖旧状态；键盘可操作、无横向溢出，无新增控制台错误，typecheck/单元/构建/真实浏览器测试通过。
-- **前置与范围**：可与核心基线验证并行；涉及利润文案待 T01 定义确认。不新增自动保存、历史结算持久化、账户或其他非本轮功能。
-
-### T06 · 初期三图授权与接入准备
-
-- **现状与工作**：办公室、制作人头像、单张制作示意已有本地评估图，但未正式入库/接入页面，适用输出授权仍待核查；素材目录占位和记录已入库，不代表同事克隆后能拿到图片。不重新扩展完整素材库或批量生成海报。
-- **修改目录**：`docs/ASSET_CATALOG.md`、`docs/asset_prompts.json`；授权和共享范围确认后，才向 `apps/web/public/assets/backgrounds/`、`characters/`、`production/` 加入获准的三图。实际 UI 接入在 T05 合并后协调 `apps/web/src/pages/` 或 `components/`，不修改 `.gitignore` 上传整个 `.tools/`。
-- **接口依赖**：无新增核心接口；只依赖现有场景/员工/制作展示位置、静态资源 URL 及图片许可。不得假设固定名册中的员工与“制作人”头像一一对应，岗位映射需确认。
-- **交付物**：逐图来源、适用条款、商用/修改/分发/署名条件及是否允许本仓库公开共享的结论；获准后提供尺寸/格式/体积核对过的三图及清单。拿不到原图或无法确认条款时，交付具体阻碍和替代建议，保持未接入状态。
-- **验收**：不把 AI 生成等同 CC0 或已可商用；正式资源可从仓库取得且不含私有临时链接，三图风格与尺寸核对、无明显水印/IP/拉伸，保留必要许可声明；如接入 UI，375/768/1440px 浏览器检查及生产构建通过，原经营功能无回归。
-- **前置与范围**：依赖素材持有人提供受控共享方式和可核对的条款；授权明确前仅可做核查，不承诺接入。其余六张备用图及海报/音频不在本轮。
+旧认领池 T01–T06（结算口径评审、排班验证、流水线验证、六选项覆盖、制作台微调）已作废：它们的验证对象是旧规则，在 V1.0 下不再存在。历史内容见议题编辑记录。
 
 ### 认领、拆分与完成标准
 
