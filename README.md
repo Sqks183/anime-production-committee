@@ -51,6 +51,7 @@ packages/game-core/
 scripts/                     # 原生/WASM 构建、集成测试、产物检查
 docs/
   PRODUCT.md ARCHITECTURE.md GAME_DESIGN.md DATA_MODEL.md GAME_RULES.md API.md
+  V1_GAP_REVIEW.md           # V1.0 差距审查与迁移计划
 package.json                 # npm workspaces: apps/*、packages/*
 ```
 
@@ -202,6 +203,7 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 - [统一数据模型](docs/DATA_MODEL.md)
 - [规则与暂定参数](docs/GAME_RULES.md)
 - [六接口协议与同步流程](docs/API.md)
+- [V1.0 差距审查与迁移计划](docs/V1_GAP_REVIEW.md)
 
 ## 当前范围与未完项
 
