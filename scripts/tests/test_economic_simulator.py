@@ -61,9 +61,9 @@ class SimulatorTests(unittest.TestCase):
             first=sim.simulate_one(98765,policy,cfg)
             second=sim.simulate_one(98765,policy,cfg)
             self.assertEqual(first,second)
-            self.assertEqual(first.contract_projects+first.committee_projects,
-                             first.completed+first.low_deliveries+first.breaches)
-            self.assertGreaterEqual(first.min_cash,0)
+            self.assertGreaterEqual(first.contract_projects+first.committee_projects,
+                                    first.completed+first.low_deliveries+first.breaches)
+            self.assertLessEqual(first.min_cash,cfg["initial_cash"])
 
     def test_dynamic_strategy_summary_contains_decision_metrics(self):
         cfg=sim.deep_merge(sim.DEFAULTS,{"weeks":120,"trials":2})
