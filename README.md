@@ -227,13 +227,14 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 
 ## 经济模拟器（实验版）
 
-已加入可复现的 520 周经济模拟器，用于比较承制/委员会现金流，并测试延期压力与违约处罚参数。它是独立的 Python 实验工具，不是游戏运行时，也不代表数值已经定案。
+已加入可复现的 520 周经济模拟器，用于比较承制/委员会现金流，并测试动态工作量、五阶段合格线、延期压力与违约处罚。它是独立的 Python 实验工具，不是游戏运行时，也不代表数值已经定案。
 
 - [模拟器说明与运行方式](scripts/README.md)
 - [模拟器源码](scripts/economic_simulator.py)
 - [参数示例](scripts/simulation_config.example.json)
 - [敏感性实验脚本](scripts/run_sensitivity.py)
-- [V0.3 基线报告](docs/ECONOMIC_SIMULATION_REPORT_V0.3.md)
+- [V0.3 随机工期基线报告](docs/ECONOMIC_SIMULATION_REPORT_V0.3.md)
+- [V0.4 动态工作量首轮报告](docs/ECONOMIC_SIMULATION_REPORT_V0.4.md)
 
 在仓库根目录运行：
 
@@ -243,4 +244,4 @@ python scripts/run_sensitivity.py
 python -m unittest discover -s scripts/tests -v
 ```
 
-当前工期仍由可配置随机分布模拟；真实五阶段动态工作量、员工产能与外包模型接入后，需重新校准所有结果。
+当前模型已按五阶段工作量和动态合格线推进，但周产能、打磨概率、低完成度交付线仍是实验占位参数；员工能力、疲劳、外包、加班和实际制作成本接入后，必须重新校准。
