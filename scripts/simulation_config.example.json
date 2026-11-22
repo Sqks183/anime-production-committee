@@ -1,0 +1,13 @@
+{
+  "trials": 2000,
+  "seed": 20261123,
+  "breach_penalty_ratio": 0.5,
+  "committee_extension_ratio": 0.2,
+  "extension_pressure_per_week": 10,
+  "pressure_reputation_thresholds": [20, 40, 60, 80],
+  "pressure_reputation_penalties": [2, 4, 7, 10],
+  "minimum_low_delivery_ratio": 0.7,
+  "production_cost_ratio": 0.0,
+  "non_bd_gross_per_budget_per_channel": 0.0,
+  "committee_channel_count": 0
+}
