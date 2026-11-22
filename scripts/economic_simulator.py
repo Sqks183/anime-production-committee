@@ -38,7 +38,6 @@ DEFAULTS: dict[str, Any] = {
     "pressure_reputation_thresholds":[20,40,60,80],
     "pressure_reputation_penalties":[2,4,7,10],
     "low_delivery_reputation_penalty":10, "breach_penalty_ratio":0.50,
-    "production_cost_per_work_unit":0.0,
     "strategies":["contract","committee_10","committee_50","committee_100"]
 }
 
