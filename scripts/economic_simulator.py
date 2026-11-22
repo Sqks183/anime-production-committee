@@ -87,7 +87,7 @@ def dynamic_offer_decision(cash:float, offers:list[dict], cfg:dict, policy:str):
         project=max(offers,key=lambda p:(p["budget"]*p["target_quality"],p["budget"]))
         reserve=max(cfg["initial_cash"]*0.10,burn*8)
         cap=100
-    affordable_pct=max(0,int((cash-reserve)/(2.0*float(project["budget"]))*10)*10)
+    affordable_pct=max(0,int((cash-reserve)/(cfg["committee_investment_multiple"]*float(project["budget"]))*10)*10)
     pct=min(cap,affordable_pct)
     return project, ("committee" if pct>=10 else "contract"), pct
 
@@ -167,7 +167,7 @@ def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
             if not affordable:
                 weekly_cost=cfg["weekly_fixed_cost"]+weekly_payroll
                 if cash<weekly_cost: bankrupt=True; break
-                cash-=weekly_cost; min_cash=min(min_cash,cash); total_payroll+=weekly_payroll; week+=1; min_cash=min(min_cash,cash); continue
+                cash-=weekly_cost; min_cash=min(min_cash,cash); total_payroll+=weekly_payroll; week+=1; continue
             project,investment=rng.choice(affordable)
             mode="contract" if strategy=="contract" else "committee"
         budget=float(project["budget"])
