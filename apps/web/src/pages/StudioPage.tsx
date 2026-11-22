@@ -17,6 +17,8 @@ const deliveryNames = { completed: '制作完成', deadline: '截止违约交付
 const endReasonNames = { time_limit: '十年经营期满', bankrupt: '资金破产', voluntary: '主动结束经营' } as const
 const ratingNames = { renowned: '业界知名', stable: '稳定经营', small: '小型工作室', failed: '经营失败' } as const
 const policyNames: Record<Policy, string> = { quality: '质量优先', balanced: '均衡推进', deadline: '赶工交付' }
+const eventCategoryNames = { personnel: '人员异常', quality: '质量异常', budget: '预算异常', schedule: '工期异常' } as const
+const eventMetricNames: Record<string, string> = { max_fatigue: '最高疲劳', quality_deficit: '质量缺口', weeks_in_project: '开工周数', deadline_pressure: '工期压力' }
 const money = (value: number) => value.toLocaleString('zh-CN')
 const signed = (value: number) => `${value > 0 ? '+' : ''}${money(value)}`
 
@@ -48,7 +50,7 @@ function StageConfigPanel({ stage, recommended, lockedConfiguration, staff, disa
 }
 
 export function StudioPage({ core }: { core: ReturnType<typeof useGameCore> }) {
-  const { game, busy, report, result, companyResult, startProject, decide, advance, settle, settleCompany, save, load, goHome } = useGameStore()
+  const { game, busy, report, result, companyResult, startProject, decide, advance, resolveEvent, settle, settleCompany, save, load, goHome } = useGameStore()
   if (!game) return null
   const unavailable = busy || core.status !== 'ready'
   const company = game.company
@@ -60,7 +62,10 @@ export function StudioPage({ core }: { core: ReturnType<typeof useGameCore> }) {
   const canSummarize = company.status === 'closing' && project === null
   return <main className="studio-layout enter" aria-busy={busy}>
     <div className="studio-heading">
-      <div><p className="eyebrow">PRODUCTION DESK / 周制制作台</p><h1>制作进行室<span className="title-period">。</span></h1></div>
+      <div className="studio-title-row">
+        <img className="studio-portrait" src="/assets/characters/producer.png" alt="制作人头像" />
+        <div><p className="eyebrow">PRODUCTION DESK / 周制制作台</p><h1>制作进行室<span className="title-period">。</span></h1></div>
+      </div>
       <button className="text-button" onClick={goHome} disabled={busy}><ArrowLeft size={16} aria-hidden="true" />返回首页</button>
     </div>
     <section className="studio-summary" aria-label="经营状态">
@@ -74,6 +79,16 @@ export function StudioPage({ core }: { core: ReturnType<typeof useGameCore> }) {
       {game.preview && <p className="local-note">第 {game.preview.next_week} 周预计支出 ¥{money(game.preview.total_cost)}：工资 ¥{money(game.preview.costs.salary)} / 运营 ¥{money(game.preview.costs.operations)} / 生产 ¥{money(game.preview.costs.production)} / 事件概率 {game.preview.event_probability_per_mille}‰。</p>}
       {company.end_reason && <p className="action-note">{endReasonNames[company.end_reason]}，公司进入结束流程。</p>}
     </section>
+
+    {game.phase === 'event_pending' && game.pending_event && <section className="ledger event-panel" aria-label="制作异常" data-testid="event-panel">
+      <div className="ledger-heading"><h2>{game.pending_event.title}</h2><span>{eventCategoryNames[game.pending_event.category]}</span></div>
+      <p className="event-description">{game.pending_event.description}</p>
+      <p className="local-note">触发依据：{eventMetricNames[game.pending_event.trigger.metric] ?? game.pending_event.trigger.metric} {game.pending_event.trigger.value}（阈值 {game.pending_event.trigger.threshold}）· 当前阶段 {stageNames[game.pending_event.stage]}</p>
+      <div className="event-options">{game.pending_event.options.map((option) => <button key={option.id} className="button secondary event-option" disabled={unavailable || option.disabled_reason !== null} onClick={() => void resolveEvent(option.id)}>
+        <span>{option.label}{option.cost > 0 ? ` · ¥${money(option.cost)}` : ''}</span>
+        {option.disabled_reason && <small>{option.disabled_reason}</small>}
+      </button>)}</div>
+    </section>}
 
     {companyResult && <section className="settlement ledger" aria-label="经营总结" data-testid="company-result">
       <div className="ledger-heading"><h2>经营总结</h2><span>{endReasonNames[companyResult.reason]}</span></div>
@@ -100,6 +115,7 @@ export function StudioPage({ core }: { core: ReturnType<typeof useGameCore> }) {
           <div><dt>制作周数</dt><dd>{result.end_week - result.start_week}</dd></div>
         </dl>
       </div>
+      <img className="settlement-still" src="/assets/production/colored_frame.png" alt="本作制作示意" />
       <p className="local-note">承制路线的商业收入不计入公司现金；结算已由核心入账。</p>
     </section>}
 

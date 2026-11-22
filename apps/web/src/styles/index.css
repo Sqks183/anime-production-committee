@@ -215,3 +215,20 @@ progress::-moz-progress-bar { background: var(--site-accent); }
   .app-footer { flex-direction: column; font-size: 9px; gap: 8px; }
   .feedback { align-items: flex-start; }
 }
+
+.sheet-frame { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--site-border); border-radius: 6px; }
+.studio-heading { position: relative; overflow: hidden; padding: 18px 20px; border-radius: var(--site-radius); }
+.studio-heading::before { content: ''; position: absolute; inset: 0; background: url('/assets/backgrounds/studio_office.png') center / cover no-repeat; opacity: .18; }
+.studio-heading > * { position: relative; z-index: 1; }
+.studio-title-row { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.studio-portrait { width: 56px; height: 56px; border-radius: 10px; border: 1px solid var(--site-border); object-fit: cover; flex: none; }
+.event-panel { border-left: 3px solid var(--site-accent); }
+.event-description { margin: 12px 0 8px; font-size: 15px; line-height: 1.9; }
+.event-options { display: grid; gap: 12px; margin-top: 18px; }
+.event-option { flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 4px; text-align: left; line-height: 1.6; }
+.event-option small { color: var(--site-muted); font-size: 11px; font-weight: 400; }
+.settlement-still { display: block; width: 100%; max-width: 420px; margin-top: 18px; border: 1px solid var(--site-border); border-radius: 8px; }
+@media (max-width: 720px) {
+  .studio-title-row { align-items: flex-start; }
+  .studio-portrait { width: 44px; height: 44px; }
+}

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { advanceWeek, applyDecision, calculateCompanyResult, calculateProjectResult, initializeGame, startProject } from '../services/gameCore'
+import { advanceWeek, applyDecision, calculateCompanyResult, calculateProjectResult, initializeGame, resolveEvent as resolveEventCore, startProject } from '../services/gameCore'
 import { loadGame, saveGame } from '../services/saveGame'
 import { isSeed } from '../types/gameV3'
 import type { CompanyResult, Decision, GameState, WeekReport, WorkRecord } from '../types/gameV3'
@@ -19,6 +19,7 @@ interface GameStore {
   startProject: (offerId: string) => Promise<void>
   decide: (decision: Decision) => Promise<void>
   advance: () => Promise<void>
+  resolveEvent: (optionId: string) => Promise<void>
   settle: () => Promise<void>
   settleCompany: () => Promise<void>
   save: () => Promise<void>
@@ -92,6 +93,10 @@ export const useGameStore = create<GameStore>((set, get) => {
     advance: () => withGame(async (game) => {
       const { state, report } = await advanceWeek(game)
       return { game: state, report }
+    }),
+    resolveEvent: (optionId) => withGame(async (game) => {
+      const { state, message } = await resolveEventCore(game, optionId)
+      return { game: state, notice: message }
     }),
     settle: () => withGame(async (game) => {
       const { state, result } = await calculateProjectResult(game)

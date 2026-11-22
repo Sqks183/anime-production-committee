@@ -1,4 +1,4 @@
-import { ArrowUpRight, Clapperboard, FolderOpen } from 'lucide-react'
+import { ArrowUpRight, FolderOpen } from 'lucide-react'
 import { useGameStore } from '../stores/gameStore'
 import type { useGameCore } from '../hooks/useGameCore'
 
@@ -22,7 +22,7 @@ export function HomePage({ core }: { core: ReturnType<typeof useGameCore> }) {
       <div className="sheet-top"><span>PROJECT FILE</span><span>NO. 001</span></div>
       <div className="sheet-illustration" aria-hidden="true">
         <div className="frame-corner corner-a" /><div className="frame-corner corner-b" />
-        <Clapperboard strokeWidth={1} size={104} />
+        <img className="sheet-frame" src="/assets/production/colored_frame.png" alt="" />
         <span>第一份动画企划</span><span className="frame-count">CUT 001 / TAKE 01</span>
       </div>
       <div className="sheet-title"><h2>制作，准备开始。</h2><span className="seal">筹备中</span></div>

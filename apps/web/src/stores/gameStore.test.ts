@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as core from '../services/gameCore'
 import { loadGame, saveGame } from '../services/saveGame'
-import { deferred, v3EndedState, v3IdleState, v3ProducingState, v3ReadyState, v3SettledState, v3WeekReport } from '../test/fixtures'
+import { deferred, v3EndedState, v3EventState, v3IdleState, v3ProducingState, v3ReadyState, v3SettledState, v3WeekReport } from '../test/fixtures'
 import { useGameStore } from './gameStore'
 
-vi.mock('../services/gameCore', () => ({ initializeGame: vi.fn(), startProject: vi.fn(), applyDecision: vi.fn(), advanceWeek: vi.fn(), calculateProjectResult: vi.fn(), calculateCompanyResult: vi.fn() }))
+vi.mock('../services/gameCore', () => ({ initializeGame: vi.fn(), startProject: vi.fn(), applyDecision: vi.fn(), advanceWeek: vi.fn(), resolveEvent: vi.fn(), calculateProjectResult: vi.fn(), calculateCompanyResult: vi.fn() }))
 vi.mock('../services/saveGame', () => ({ loadGame: vi.fn(), saveGame: vi.fn() }))
 
 beforeEach(() => {
@@ -22,6 +22,7 @@ const actions = [
   { name: 'startProject', service: core.startProject, invoke: () => store().startProject('v3_ova') },
   { name: 'decide', service: core.applyDecision, invoke: () => store().decide({ type: 'end_company' }) },
   { name: 'advance', service: core.advanceWeek, invoke: () => store().advance() },
+  { name: 'resolveEvent', service: core.resolveEvent, invoke: () => store().resolveEvent('give_up') },
   { name: 'settle', service: core.calculateProjectResult, invoke: () => store().settle() },
   { name: 'settleCompany', service: core.calculateCompanyResult, invoke: () => store().settleCompany() },
   { name: 'save', service: saveGame, invoke: () => store().save() },
@@ -126,6 +127,19 @@ describe('状态操作（服务隔离单元测试，不是 WASM 验证）', () =
     expect(store().game).toBe(next)
     expect(store().report).toBe(report)
     expect(before.seed).toBe(12345)
+  })
+
+  it('事件处理采用核心回执并保留周报', async () => {
+    const before = v3EventState()
+    const next = v3ProducingState()
+    const report = v3WeekReport()
+    useGameStore.setState({ game: before, report, screen: 'studio' })
+    vi.mocked(core.resolveEvent).mockResolvedValue({ state: next, message: '已处理「作画检查返工」' })
+    await store().resolveEvent('give_up')
+    expect(core.resolveEvent).toHaveBeenCalledWith(before, 'give_up')
+    expect(store().game).toBe(next)
+    expect(store().report).toBe(report)
+    expect(store()).toMatchObject({ busy: false, notice: '已处理「作画检查返工」' })
   })
 
   it('项目结算采用核心的 settled 状态与 WorkRecord，返回首页和继续经营不重初始化', async () => {
