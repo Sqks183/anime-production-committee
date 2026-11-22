@@ -37,6 +37,7 @@ class SimulatorTests(unittest.TestCase):
         contract=sim.simulate_one(100,"contract",cfg)
         committee=sim.simulate_one(101,"committee_10",cfg)
         self.assertEqual(contract.total_non_bd_revenue,0)
+        self.assertGreater(committee.total_non_bd_revenue,0)
     def test_payroll_is_four_people_at_50k(self):
         cfg=sim.deep_merge(sim.DEFAULTS,{"weeks":10})
         r=sim.simulate_one(123,"contract",cfg)
