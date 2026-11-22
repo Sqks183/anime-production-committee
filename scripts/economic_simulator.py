@@ -200,7 +200,12 @@ def summarize(rows:list[Trial])->dict:
       "mean_weeks_used":statistics.mean(r.weeks_used for r in rows),
       "mean_required_workload":statistics.mean(r.total_workload for r in rows),
       "mean_completed_workload":statistics.mean(r.completed_workload for r in rows),
-      "mean_final_quality":statistics.mean(r.avg_final_quality for r in rows)}
+      "mean_final_quality":statistics.mean(r.avg_final_quality for r in rows),
+      "mean_outsourcing_cost":statistics.mean(r.total_outsourcing_cost for r in rows),
+      "mean_overtime_cost":statistics.mean(r.total_overtime_cost for r in rows),
+      "mean_overtime_weeks":statistics.mean(r.overtime_weeks for r in rows),
+      "mean_payroll":statistics.mean(r.total_payroll for r in rows),
+      "mean_non_bd_revenue":statistics.mean(r.total_non_bd_revenue for r in rows)}
 
 def run(cfg:dict):
     all_rows=[]; summaries=[]; master=random.Random(cfg["seed"])
