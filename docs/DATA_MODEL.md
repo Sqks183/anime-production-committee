@@ -22,13 +22,13 @@
 
 | 对象 | 必填字段 | 产生时机与约束 |
 | --- | --- | --- |
-| GameState | version=3, seed, phase, company, offers, recruitment_pool, suppliers, project, pending_event, history, last_project_id, company_result, preview | 初始化建立全部字段；无项目/事件/最近结算/总结/预览时用 null。历史与外部资源池可空；running idle 恰有四企划 |
+| GameState | version=3, seed, phase, company, offers, recruitment_pool, suppliers, project, pending_event, history, last_project_id, company_result, preview | 初始化建立全部字段；无项目/事件/最近结算/总结/预览时用 null。历史与外部资源池可空；running idle 恰有四企划；可选 custom_offer/pending_proposal 独立槽位不占市场四槽（V3.7） |
 | Company | week, status, end_reason, initial_funds, funds, reputation, staff, finance；可选 scout_pity | status=running/closing/ended；仅 running 的理由为 null，其他为 time_limit/bankrupt/voluntary；核心名册可空，人数与能力不固定；初始化名册由核心生成；scout_pity={since_sr,since_ssr} 非负整数保底计数，缺省按 0/0 |
 | Finance | contract_received, investment_paid, commercial_share_received, costs | 非负实际累计收支；投资不再计入成本。公司层全生命周期、项目层项目区间，同一笔交易的两个汇总视图，不重复改变现金 |
-| Costs | salary, operations, production, temporary, outsourcing, events, extension, penalty | 八类均出现，无支出填 0；依次为核心工资、固定运营、阶段直接费用、临时合同、外包、独立付费事件、延期费、扣罚。同一笔只归一类 |
+| Costs | salary, operations, production, temporary, outsourcing, events, extension, penalty；可选 development, distribution | 八类均出现，无支出填 0；依次为核心工资、固定运营、阶段直接费用、临时合同、外包、独立付费事件、延期费、扣罚。同一笔只归一类。M2 可选 development（前期开发费）与 distribution（付费播出发行支出），核心落地前缺省按 0，见 V3.7 |
 | Staff | id, name, role, employment, abilities, experience, potential, revealed_potential, talent_type, clues, traits, weekly_salary, project_fee, fatigue, morale, departure_warning | employment=core/temporary；核心 project_fee=0，临时 weekly_salary=0。前三个能力对象含六项数值，revealed_potential 含六个布尔值；潜力不低于当前能力，线索 1–2 条，traits 可空；warning 仅预警 |
-| ProjectOffer | id, name, source, scale, total_investment, contract_budget, duration_weeks, target_quality, audience_base, commercial_potential, risk, allowed_modes, workloads, previous_work_id；可选 origin, style, min_reputation | source=manga/light_novel/game/original；scale=ova/short/tv/movie；risk=low/medium/high；allowed_modes 非空不重复，原创只能 committee；workloads 含五阶段正数；合同预算由核心按总投资 20% 生成。origin=market/custom/incoming/proposal（缺省 market）；style=normal/meme/ai（缺省 normal），非 normal 必须 origin=custom，meme 限定 scale=short；min_reputation 非负整数（缺省 0），声望不足仍展示但锁定 |
-| Project | offer, mode, investment_percent, opening_funds, start_week, deadline_week, current_stage, stages, extension_count, committee_pressure, finance, temporary_staff, outsourcing, delivery_reason | 接约原子建立，offer 保存原报价；opening_funds 在投资/拨款之前记录；实付本金只在 finance.investment_paid；临时人员属于当前项目 |
+| ProjectOffer | id, name, source, scale, total_investment, contract_budget, duration_weeks, target_quality, audience_base, commercial_potential, risk, allowed_modes, workloads, previous_work_id；可选 origin, style, min_reputation, committee_members, channel_potentials, required_works | source=manga/light_novel/game/original；scale=ova/short/tv/movie；risk=low/medium/high；allowed_modes 非空不重复，原创只能 committee；workloads 含五阶段正数；合同预算由核心按总投资 20% 生成。origin=market/custom/incoming/proposal（缺省 market）；style=normal/meme/ai（缺省 normal），非 normal 必须 origin=custom，meme 限定 scale=short；min_reputation 非负整数（缺省 0），声望不足仍展示但锁定；可选 committee_members（拟定委员会阵容，仅 allowed_modes 含 committee）、channel_potentials（{bd 必填 0–100，其余渠道可选}）、required_works（{rating, source?} 非空全满足）见 V3.7 |
+| Project | offer, mode, investment_percent, opening_funds, start_week, deadline_week, current_stage, stages, extension_count, committee_pressure, finance, temporary_staff, outsourcing, delivery_reason；可选 committee, tv_service | 接约原子建立，offer 保存原报价；opening_funds 在投资/拨款之前记录；实付本金只在 finance.investment_paid；临时人员属于当前项目。committee 为立项固定的委员会阵容（Σ持股+投资比例恰为 100，承制为 null，制作中不追加更换）；tv_service={purchased_week,cost} 每项目至多一次，见 V3.7 |
 | StageConfiguration | assignments, policy, overtime | assignments 每项 staff_id/role/focus，人员不重复；未安排者休整。policy=quality/balanced/deadline；overtime 为整个阶段方案，不逐周清除。是否允许无员工而仅用外包由核心按有效产能校验 |
 | StageState | status, work_done, quality, configuration, recommended_configuration, result | status=pending/ready/active/completed；pending/ready 无提交配置与结果且 work_done=0；active 配置非空；completed 结果非空且工作量完成。推荐配置可 null，不等于已提交 |
 | StageResult | weeks_spent, quality, costs, issues, team | 阶段结束产生；issues 为遗留问题文案。costs 仅归属分析，不能再次扣款或重复累加到项目成本 |
@@ -36,7 +36,7 @@
 | Supplier | id, name, specialties, capacity, quality, speed, unit_price, reliability, unlocked | 固定池；specialties 非空不重复；capacity 为工作量，speed 为工作量/周，unit_price 为每单位工作量报价。解锁不回退；可靠性可在 UI 隐藏 |
 | OutsourceTask | id, supplier_id, stage, ability, work_total, work_done, mode, fee_paid, due_week, status | mode=normal/emergency；status=active/delivered/failed；交付时 work_done=work_total。费用按核心报价确认时一次支付，fee_paid 是快照，不是第二笔支出 |
 | GameEvent | id, category, stage, title, description, trigger, options | category=personnel/quality/budget/schedule；trigger={metric,value,threshold} 说明状态原因。option={id,label,cost,allows_reconfigure,disabled_reason}；disabled_reason 为 null 或拒绝文案。实际效果按核心目录执行，不接收自造 effect |
-| WorkRecord | id, name, source, scale, previous_work_id, mode, investment_percent, start_week, end_week, end_reason, quality_score, commercial_score, commercial_revenue, finance, profit, team, stages；可选 origin, style | 结算只追加一次；end_reason=completed/deadline/company_closed；commercial_revenue 为作品总商业收入，不是公司所得；公司所得只记 finance.commercial_share_received。五阶段及团队永久快照。origin/style 从报价继承，交叉约束与 ProjectOffer 相同 |
+| WorkRecord | id, name, source, scale, previous_work_id, mode, investment_percent, start_week, end_week, end_reason, quality_score, commercial_score, commercial_revenue, finance, profit, team, stages；可选 origin, style, rating, channel_breakdown | 结算只追加一次；end_reason=completed/deadline/company_closed；commercial_revenue 为作品总商业收入，不是公司所得；公司所得只记 finance.commercial_share_received。五阶段及团队永久快照。origin/style 从报价继承，交叉约束与 ProjectOffer 相同。rating 为作品评价 S/A/B/C/D（固定分数线，与制作质量 quality_score 分列）；channel_breakdown 分渠道对账：Σrevenue=commercial_revenue、Σcompany_received=commercial_share_received 且恒含 bd，见 V3.7 |
 | CompanyResult | reason, weeks, final_funds, net_cash_change, total_projects, best_work_id, rating | 关闭流程完成产生，best_work_id 为历史 ID 或 null；rating=renowned/stable/small/failed，评级阈值待定；总结不再次入账 |
 | WeekPreview | next_week, costs, total_cost, event_probability_per_mille | 仅 running idle 或 active 制作阶段非空；待配置/事件/交付/结算/终局为 null；费用与风险只能使用核心预览 |
 | WeekReport | week, funds_delta, costs, stage_deltas, staff_deltas, messages | stage_deltas={stage,work_done_delta,quality_delta}；staff_deltas={staff_id,experience,fatigue_delta,morale_delta}；预检破产未完成周，week 不变、增量为 0；回执不作为请求状态 |
@@ -46,7 +46,7 @@
 ## V3.4 关联不变量
 
 1. 核心、当前临时、招聘池人员 ID 不重复；招募从池移出，临时人员结算后释放，后续可按招聘规则重新出现。当前配置和推荐引用可用人员；已完成阶段及历史的已提交配置按实际团队快照验证，未采纳的推荐不要求命中实际团队。
-2. 至多一个项目；offers 只在 running idle 存在。当前企划不得已在 history 中。running idle 恰有四企划，其中至少 2 个可立即承接（min_reputation 缺省 0，≤ 当前声望）；锁定项照常展示，不占满四个位置。
+2. 至多一个项目；offers 只在 running idle 存在。当前企划不得已在 history 中。running idle 恰有四企划，其中至少 2 个可立即承接（min_reputation 缺省 0，≤ 当前声望）；锁定项照常展示，不占满四个位置。custom_offer/pending_proposal 为独立槽位：ID 与市场、历史互斥，提案只在 running idle 出现，企划开工或提案离开槽位后原槽必须清空，公司非 running 时两槽均为 null。
 3. current_stage 指向首个未完成阶段；之前 completed、之后 pending；全部完成为 null。阶段不并行，完成后下一阶段 ready，重新确认配置才能推进。
 4. contract：investment_percent=0、investment_paid=0、commercial_share_received=0、extension_count=0、committee_pressure=null。committee：整数投资 10–100、压力 0–100、延期次数 0–1。超支不改变投资比例，压力与声望分开。
 5. history 只追加；project_settled 的 last_project_id 必须命中 history，return_to_market 后清空；终局可保留最后作品 ID。
@@ -76,9 +76,32 @@ M0 在 services/saveGame.ts 实现 decodeV3SaveRecord 与只读 loadGameV3：拒
 | scout_pity | Company | {since_sr,since_ssr} 非负整数，缺省 0/0 | 抽卡保底计数，随存档持久，终局不重置；普池与定向池共享 |
 | scout / targeted_scout | Decision | scout 无参数；targeted_scout 的 role 与 focus_ability 二选一 | 仅 running idle 或 project_settled（与 hire_core 同经营窗口）；费用、稀有度阈值、保底次数进 game_rules.hpp，不在契约 |
 
-**可选字段纪律（修订 V3.2「均必填」）：** 上表字段在 #6/#7 核心实现落地前可选，缺省按表内语义解释。理由：契约先行冻结目标形状，M1 核心输出与既有 v3 存档必须保持合法，不引入存档迁移。核心实现落地后应统一输出这些字段；守卫对存在值执行完整校验。除此之外不得新增可选状态字段。
+**可选字段纪律（修订 V3.2「均必填」）：** 上表字段在 #6/#7 核心实现落地前可选，缺省按表内语义解释。理由：契约先行冻结目标形状，M1 核心输出与既有 v3 存档必须保持合法，不引入存档迁移。核心实现落地后应统一输出这些字段；守卫对存在值执行完整校验。除此之外不得自行新增可选状态字段；V3.7 的第二批字段为负责人 2026-11-22 裁定的已批准扩展，沿用同一纪律。
 
-**暂缓与待决（不在本轮落地）：** create_custom_offer 决策、员工提案采纳/拒绝决策、自定/提案企划的状态存放与生命周期、前期开发费用 ledger 归属、IP 上门成绩类解锁条件字段、09:16 商业渠道框架对 Finance 与分成公式的修订。冲突与待决清单见 GAME_RULES V3.7 与 #6/#7 负责人决定评论；口径确认前核心不得自行发明存放结构。
+**暂缓与待决（已由 V3.7 处置）：** 本节的 create_custom_offer 决策、员工提案采纳/拒绝、自定/提案企划的状态存放与生命周期、前期开发费用 ledger 归属、成绩类解锁字段与 09:16 渠道框架对分成语义的修订，负责人 2026-11-22 裁定「全部按新口径」，已在 V3.7 落地为可选契约字段，规则口径见 GAME_RULES V3.8。仍待定的是全部数值平衡与 #6/#7/#8 核心行为。
+
+## V3.7 M2 契约扩展第二批：企划槽位、委员会渠道与成绩解锁（2026-11-22 负责人裁定落地）
+
+来源：负责人 08:05/08:11（自定企划与员工提案）、08:51（评价框架）、09:16（商业渠道框架）确认口径，取代 M0 冻结草案中的冲突假设（裁定详情见 GAME_RULES V3.8）。字段形状与交叉校验在 gameV3.ts；沿用 V3.6 可选字段纪律：核心落地前可选、缺省按旧语义解释，M1 核心输出与既有 v3 存档保持合法，不做存档迁移。
+
+| 字段 | 位置 | 形状与缺省 | 约束与行为归属 |
+| --- | --- | --- | --- |
+| custom_offer | GameState | ProjectOffer 或 null；缺省无槽 | 玩家自定企划槽，origin 必须 custom；不占市场四槽；开工后随项目消费，不得残留（ID 命中 history 即非法） |
+| pending_proposal | GameState | ProjectOffer 或 null；缺省无槽 | 员工提案槽，origin 必须 proposal、source 必须 original；仅 running idle 出现，推进周未采纳即消失；reject_proposal 无惩罚 |
+| create_custom_offer | Decision | name, source, scale, 可选 style | 仅 running idle；生成 custom_offer 并支付固定前期开发费（costs.development）；首版限原创与少数核心方向、企划能力资格由 #6 核心校验 |
+| adopt_proposal / reject_proposal | Decision | 无参数 | 仅 idle 且存在提案；采纳转入 custom_offer 后走同一 start_project，未采纳提案不可直接开工；拒绝清空 |
+| discard_custom_offer | Decision | 无参数 | 仅 idle 且存在自定企划；不退款 |
+| buy_tv_service | Decision | 无参数 | 仅委员会模式在制项目且未购买；支付 costs.distribution，写入 project.tv_service |
+| development / distribution | Costs | 非负整数，可选，缺省 0 | 前期开发费与付费播出发行支出；独立于投资本金、不参与分成；冻结八类不删不改 |
+| committee_members | ProjectOffer | {id, name, share_percent 1–100, channels}[]，可选 | 拟定委员会阵容；仅 allowed_modes 含 committee 的报价可携带；channels 限 publisher/toy/music/tv_broadcast，bd 为基础渠道不挂股东 |
+| committee | Project | 同上或 null；缺省未输出 | 立项时固定整份阵容：Σshare_percent + investment_percent 恰为 100；承制必须 null；制作中不追加更换 |
+| tv_service | Project | {purchased_week, cost 正整数} 或 null | 每项目至多一次电视播出服务购买 |
+| channel_potentials | ProjectOffer | {bd 必填 0–100；其余渠道可选 0–100} | 分渠道商业潜力按企划定位生成；股东未开通的渠道不展示 |
+| required_works | ProjectOffer | {rating S/A/B/C/D, 可选 source} 非空不重复数组 | 成绩类 IP 上门解锁条件，须全部满足；与 min_reputation 并存，未满足仍展示并锁定 |
+| rating | WorkRecord | S/A/B/C/D，可选 | 作品评价等级（固定分数线，数值 TODO）；与制作质量 quality_score 分列 |
+| channel_breakdown | WorkRecord | {channel, revenue, company_received}[]，可选 | 分渠道对账：Σrevenue=commercial_revenue、Σcompany_received=commercial_share_received、恒含 bd、company_received≤revenue |
+
+分账新口径：company_received 由「BD 收益至少 50% 归公司（独立于投资比例）+ 非 BD 渠道按投资比例与分账约定」构成，具体数值待 #8 平衡；V3.3 的 commercial_share_received=floor(revenue×percent/100) 单渠道公式被该框架取代，承制（contract）BD 归委托方、公司商业分成仍恒 0。渠道收入在制作完成后随 calculate_result 统一结算。爆款 ×5 作用于分账前渠道毛收入（判定归 #7）。续作继承商业基础沿用 previous_work_id，属规则数值，无新增契约字段。
 
 ---
 

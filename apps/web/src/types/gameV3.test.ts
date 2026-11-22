@@ -2,9 +2,9 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import { endedState, eventState, idleState, producingState, v3EndedState, v3EventState, v3IdleState, v3ProducingState, v3ReadyState, v3SettledState, v3WeekReport } from '../test/fixtures'
 import {
   ABILITIES, CORE_METHODS, COST_CATEGORIES, STAGES, isCompanyResult, isCoreError, isCoreRequest, isCoreResponse,
-  isDecision, isGameState, isOutsourceTask, isStageConfiguration, isStateResponse, isSupplier, isWeekReport, isWorkRecord,
+  isDecision, isGameState, isOutsourceTask, isProjectOffer, isStageConfiguration, isStateResponse, isSupplier, isWeekReport, isWorkRecord,
 } from './gameV3'
-import type { CoreMethod, CoreRequests, CoreResponses, Decision, GameState, OutsourceTask, StageConfiguration, Staff } from './gameV3'
+import type { CommitteeMember, CoreMethod, CoreRequests, CoreResponses, Decision, GameState, OutsourceTask, StageConfiguration, Staff } from './gameV3'
 
 // 以 unknown 构造损坏的外部 JSON；不修改夹具本身，也不强转为被测模型。
 function changed(source: unknown, path: string, value: unknown, remove = false): unknown {
@@ -867,5 +867,167 @@ describe('M2 契约扩展：origin/style/min_reputation/scout（可选字段与�
     expect(isWorkRecord({ ...work, origin: 'custom', style: 'ai', source: 'original' })).toBe(true)
     expect(isWorkRecord(changed(work, 'style', 'wrong'))).toBe(false)
     expect(isWorkRecord(changed(work, 'origin', 'wrong'))).toBe(false)
+  })
+})
+
+describe('M2 契约扩展第二批：企划槽位、委员会渠道、成本类别与成绩解锁（K1–K4 按新口径）', () => {
+  function slotOffer(id: string, origin: 'custom' | 'proposal'): GameState['offers'][number] {
+    const offer = structuredClone(v3IdleState().offers[3])
+    return { ...offer, id, origin }
+  }
+  function slottedState(): GameState {
+    const state = v3IdleState()
+    state.custom_offer = slotOffer('v3_custom', 'custom')
+    state.pending_proposal = slotOffer('v3_proposal', 'proposal')
+    return state
+  }
+  const member = (id: string, share: number, channels: unknown[]) => ({
+    id, name: `成员${id}`, share_percent: share, channels: channels as CommitteeMember['channels'],
+  })
+  const baseOffer = () => structuredClone(v3IdleState().offers[2])
+
+  it('自定与提案槽独立于市场四企划；缺省可选字段保持兼容', () => {
+    const state = slottedState()
+    expect(isGameState(state)).toBe(true)
+    expect(isGameState(JSON.parse(JSON.stringify(state)))).toBe(true)
+    expect(isGameState(v3IdleState())).toBe(true)
+    expect(isGameState(changed(state, 'custom_offer', undefined, true))).toBe(true)
+    expect(isGameState(changed(state, 'custom_offer', null))).toBe(true)
+    expect(isGameState(changed(state, 'pending_proposal', undefined, true))).toBe(true)
+  })
+
+  it('槽位报价的来源、岗位与 ID 交叉；已开工企划不得残留槽位', () => {
+    const state = slottedState()
+    expect(isGameState(changed(state, 'custom_offer.origin', 'market'))).toBe(false)
+    expect(isGameState(changed(state, 'pending_proposal.origin', 'custom'))).toBe(false)
+    expect(isGameState(changed(state, 'pending_proposal.source', 'manga'))).toBe(false)
+    expect(isGameState(changed(state, 'custom_offer.id', 'v3_ova'))).toBe(false)
+    expect(isGameState(changed(state, 'pending_proposal.id', 'v3_custom'))).toBe(false)
+    const settled = v3SettledState()
+    settled.custom_offer = slotOffer(settled.history[0].id, 'custom')
+    expect(isGameState(settled)).toBe(false)
+  })
+
+  it('提案仅在空闲周展示；公司非 running 时槽位必须清空', () => {
+    const producing = v3ProducingState()
+    producing.pending_proposal = slotOffer('v3_proposal', 'proposal')
+    expect(isGameState(producing)).toBe(false)
+    const closing = closingState()
+    closing.custom_offer = slotOffer('v3_custom', 'custom')
+    expect(isGameState(closing)).toBe(false)
+    const ended = v3EndedState()
+    ended.pending_proposal = slotOffer('v3_proposal', 'proposal')
+    expect(isGameState(ended)).toBe(false)
+    const producingCustom = v3ProducingState()
+    producingCustom.custom_offer = slotOffer('v3_custom', 'custom')
+    expect(isGameState(producingCustom)).toBe(true)
+  })
+
+  it('create_custom_offer 结构校验参数，且只在空闲市场窗口可用', () => {
+    const draft: Decision = { type: 'create_custom_offer', name: '想做的企划', source: 'original', scale: 'short', style: 'meme' }
+    expect(isDecision(draft)).toBe(true)
+    expect(isDecision({ ...draft, style: undefined })).toBe(true)
+    expect(isDecision({ ...draft, style: 'normal' })).toBe(true)
+    expect(isDecision({ ...draft, scale: 'tv' })).toBe(false)
+    expect(isDecision({ ...draft, style: 'ai', scale: 'tv' })).toBe(true)
+    expect(isDecision({ ...draft, name: '  ' })).toBe(false)
+    expect(isDecision({ ...draft, source: 'wrong' })).toBe(false)
+    expect(isCoreRequest('apply_decision', { state: v3IdleState(), decision: draft })).toBe(true)
+    for (const state of [v3ProducingState(), v3SettledState(), v3EventState(), v3EndedState()]) {
+      expect(isCoreRequest('apply_decision', { state, decision: draft })).toBe(false)
+    }
+  })
+
+  it('采纳、拒绝与放弃只对当前槽位生效；start_project 可接自定企划，不能直接接未采纳提案', () => {
+    const state = slottedState()
+    for (const type of ['adopt_proposal', 'reject_proposal', 'discard_custom_offer'] as const) {
+      expect(isCoreRequest('apply_decision', { state, decision: { type } })).toBe(true)
+    }
+    const bare = v3IdleState()
+    for (const type of ['adopt_proposal', 'reject_proposal', 'discard_custom_offer'] as const) {
+      expect(isCoreRequest('apply_decision', { state: bare, decision: { type } })).toBe(false)
+    }
+    const noProposal = structuredClone(state)
+    delete noProposal.pending_proposal
+    expect(isCoreRequest('apply_decision', { state: noProposal, decision: { type: 'adopt_proposal' } })).toBe(false)
+    expect(isCoreRequest('apply_decision', { state: noProposal, decision: { type: 'discard_custom_offer' } })).toBe(true)
+    expect(isCoreRequest('start_project', { state, offer_id: 'v3_custom', mode: 'committee', investment_percent: 10 })).toBe(true)
+    expect(isCoreRequest('start_project', { state, offer_id: 'v3_custom', mode: 'contract', investment_percent: 0 })).toBe(false)
+    expect(isCoreRequest('start_project', { state, offer_id: 'v3_proposal', mode: 'committee', investment_percent: 10 })).toBe(false)
+    expect(isCoreRequest('start_project', { state, offer_id: 'v3_ova', mode: 'committee', investment_percent: 10 })).toBe(true)
+  })
+
+  it('报价的拟定阵容与渠道潜力、成绩解锁字段执行结构约束', () => {
+    const offer = baseOffer()
+    expect(isProjectOffer({ ...offer, committee_members: [member('m1', 50, ['toy']), member('m2', 40, ['publisher', 'tv_broadcast'])] })).toBe(true)
+    expect(isProjectOffer({ ...offer, allowed_modes: ['contract'], committee_members: [member('m1', 50, ['toy'])] })).toBe(false)
+    expect(isProjectOffer({ ...offer, committee_members: [] })).toBe(false)
+    expect(isProjectOffer({ ...offer, committee_members: [member('m1', 50, ['bd'])] })).toBe(false)
+    expect(isProjectOffer({ ...offer, committee_members: [member('m1', 0, ['toy'])] })).toBe(false)
+    expect(isProjectOffer({ ...offer, committee_members: [member('m1', 50, ['toy']), member('m1', 40, ['music'])] })).toBe(false)
+    expect(isProjectOffer({ ...offer, channel_potentials: { bd: 60 } })).toBe(true)
+    expect(isProjectOffer({ ...offer, channel_potentials: { bd: 60, publisher: 99, toy: 0, music: 40, tv_broadcast: 10 } })).toBe(true)
+    expect(isProjectOffer({ ...offer, channel_potentials: { toy: 30 } })).toBe(false)
+    expect(isProjectOffer({ ...offer, channel_potentials: { bd: 101 } })).toBe(false)
+    expect(isProjectOffer({ ...offer, required_works: [{ rating: 'A', source: 'game' }] })).toBe(true)
+    expect(isProjectOffer({ ...offer, required_works: [] })).toBe(false)
+    expect(isProjectOffer({ ...offer, required_works: [{ rating: 'E' }] })).toBe(false)
+    expect(isProjectOffer({ ...offer, required_works: [{ source: 'manga' }] })).toBe(false)
+    expect(isProjectOffer({ ...offer, required_works: [{ rating: 'S' }, { rating: 'S' }] })).toBe(false)
+    expect(isProjectOffer({ ...offer, required_works: [{ rating: 'S' }, { rating: 'S', source: 'manga' }] })).toBe(true)
+  })
+
+  it('委员会阵容立项固定：持股与投资比例合计恰为 100；承制必须为 null', () => {
+    const committee = committeeState()
+    committee.project!.committee = [member('m1', 60, ['toy']), member('m2', 30, ['music'])]
+    expect(isGameState(committee)).toBe(true)
+    expect(isGameState(changed(committee, 'project.committee.0.share_percent', 50))).toBe(false)
+    expect(isGameState(changed(committee, 'project.committee', null))).toBe(false)
+    expect(isGameState(changed(committee, 'project.committee', undefined, true))).toBe(true)
+    const contract = v3ProducingState()
+    expect(isGameState(changed(contract, 'project.committee', null))).toBe(true)
+    expect(isGameState(changed(contract, 'project.committee', [member('m1', 90, ['toy'])]))).toBe(false)
+  })
+
+  it('buy_tv_service 仅委员会在制项目且未购买时可用；服务记录要求正花费与合法周', () => {
+    const buy: Decision = { type: 'buy_tv_service' }
+    expect(isCoreRequest('apply_decision', { state: committeeState(), decision: buy })).toBe(true)
+    const bought = committeeState()
+    bought.project!.tv_service = { purchased_week: 1, cost: 500_000 }
+    expect(isGameState(bought)).toBe(true)
+    expect(isCoreRequest('apply_decision', { state: bought, decision: buy })).toBe(false)
+    expect(isCoreRequest('apply_decision', { state: v3ProducingState(), decision: buy })).toBe(false)
+    expect(isCoreRequest('apply_decision', { state: v3EventState(), decision: buy })).toBe(false)
+    expect(isGameState(changed(bought, 'project.tv_service.cost', 0))).toBe(false)
+    expect(isGameState(changed(bought, 'project.tv_service.purchased_week', 5.5))).toBe(false)
+  })
+
+  it('新成本类别 development/distribution 可选且非负整数；缺省兼容 M1 账本', () => {
+    const state = v3IdleState()
+    state.company.finance.costs.development = 200_000
+    state.company.finance.costs.distribution = 0
+    expect(isGameState(state)).toBe(true)
+    expect(isGameState(changed(state, 'company.finance.costs.development', undefined, true))).toBe(true)
+    expect(isGameState(changed(state, 'company.finance.costs.development', -1))).toBe(false)
+    expect(isGameState(changed(state, 'company.finance.costs.distribution', 0.5))).toBe(false)
+  })
+
+  it('WorkRecord 携作品评价与分渠道对账；对账必须精确且恒含 BD 基础渠道', () => {
+    const work = v3SettledState('committee').history[0]
+    expect(isWorkRecord({ ...work, rating: 'A' })).toBe(true)
+    expect(isWorkRecord({ ...work, rating: 'E' })).toBe(false)
+    const breakdown = [
+      { channel: 'bd', revenue: 10_000_000, company_received: 1_000_000 },
+      { channel: 'toy', revenue: 6_000_000, company_received: 600_000 },
+      { channel: 'music', revenue: 4_000_000, company_received: 400_000 },
+    ]
+    expect(isWorkRecord({ ...work, channel_breakdown: breakdown })).toBe(true)
+    expect(isWorkRecord({ ...work, channel_breakdown: breakdown.slice(1) })).toBe(false)
+    expect(isWorkRecord({ ...work, channel_breakdown: [{ channel: 'bd', revenue: 9_000_000, company_received: 1_000_000 }, ...breakdown.slice(1)] })).toBe(false)
+    expect(isWorkRecord({ ...work, channel_breakdown: [...breakdown, { channel: 'bd', revenue: 0, company_received: 0 }] })).toBe(false)
+    expect(isWorkRecord({ ...work, channel_breakdown: [{ channel: 'bd', revenue: 20_000_000, company_received: 2_000_000 }] })).toBe(true)
+    expect(isWorkRecord({ ...work, channel_breakdown: [{ channel: 'wrong', revenue: 20_000_000, company_received: 2_000_000 }] })).toBe(false)
+    const contractWork = v3SettledState().history[0]
+    expect(isWorkRecord({ ...contractWork, channel_breakdown: [{ channel: 'bd', revenue: 20_000_000, company_received: 0 }] })).toBe(true)
   })
 })

@@ -2,12 +2,14 @@ export const CORE_METHODS = ['initialize_game', 'start_project', 'apply_decision
 export const STAGES = ['script', 'storyboard', 'key_animation', 'animation_check', 'postproduction'] as const
 export const ABILITIES = ['planning', 'direction', 'drawing', 'animation', 'management', 'postproduction'] as const
 export const COST_CATEGORIES = ['salary', 'operations', 'production', 'temporary', 'outsourcing', 'events', 'extension', 'penalty'] as const
+// M2 新成本类别（前期开发费、电视播出发行成本）在 #6 核心落地前可选，缺省按 0 解释。
+export const OPTIONAL_COST_CATEGORIES = ['development', 'distribution'] as const
 
 export type CoreMethod = typeof CORE_METHODS[number]
 export type Stage = typeof STAGES[number]
 export type Ability = typeof ABILITIES[number]
 export type AbilityValues = Record<Ability, number>
-export type Costs = Record<typeof COST_CATEGORIES[number], number>
+export type Costs = Record<typeof COST_CATEGORIES[number], number> & Partial<Record<typeof OPTIONAL_COST_CATEGORIES[number], number>>
 export type Phase = 'idle' | 'producing' | 'event_pending' | 'project_ready' | 'project_settled' | 'company_ended'
 export type CompanyEndReason = 'time_limit' | 'bankrupt' | 'voluntary'
 export type DeliveryReason = 'completed' | 'deadline' | 'company_closed'
@@ -18,6 +20,41 @@ export type WorkStyle = 'normal' | 'meme' | 'ai'
 export type CooperationMode = 'contract' | 'committee'
 export type Policy = 'quality' | 'balanced' | 'deadline'
 export type Role = 'director' | 'scriptwriter' | 'animation_director' | 'key_animator' | 'animator' | 'production_manager' | 'postproduction'
+export const CHANNELS = ['bd', 'publisher', 'toy', 'music', 'tv_broadcast'] as const
+export type Channel = typeof CHANNELS[number]
+export type MemberChannel = Exclude<Channel, 'bd'>
+export type WorkRating = 'S' | 'A' | 'B' | 'C' | 'D'
+
+export interface CommitteeMember {
+  id: string
+  name: string
+  share_percent: number
+  channels: MemberChannel[]
+}
+
+export interface ChannelPotentials {
+  bd: number
+  publisher?: number
+  toy?: number
+  music?: number
+  tv_broadcast?: number
+}
+
+export interface OfferRequirement {
+  rating: WorkRating
+  source?: Source
+}
+
+export interface TvService {
+  purchased_week: number
+  cost: number
+}
+
+export interface ChannelRevenue {
+  channel: Channel
+  revenue: number
+  company_received: number
+}
 
 export interface Finance {
   contract_received: number
@@ -45,8 +82,8 @@ export interface Staff {
   departure_warning: boolean
 }
 
-// M2 扩展字段（origin/style/min_reputation/scout_pity）在 #6/#7 核心实现落地前可选：
-// 缺省按 market/normal/0/零计数解释，M1 核心输出与既有 v3 存档保持合法。见 DATA_MODEL V3.6。
+// M2 扩展字段（origin/style/min_reputation/scout_pity 及 V3.7 渠道/槽位字段）在 #6/#7/#8
+// 核心实现落地前可选：缺省按旧语义解释，M1 核心输出与既有 v3 存档保持合法。见 DATA_MODEL V3.6/V3.7。
 export interface Company {
   week: number
   status: 'running' | 'closing' | 'ended'
@@ -77,6 +114,9 @@ export interface ProjectOffer {
   origin?: OfferOrigin
   style?: WorkStyle
   min_reputation?: number
+  committee_members?: CommitteeMember[]
+  channel_potentials?: ChannelPotentials
+  required_works?: OfferRequirement[]
 }
 
 export interface Assignment {
@@ -156,6 +196,9 @@ export interface Project {
   temporary_staff: Staff[]
   outsourcing: OutsourceTask[]
   delivery_reason: DeliveryReason | null
+  // M2 渠道框架（DATA_MODEL V3.7）：成员构成在立项时固定；承制模式两字段为 null。
+  committee?: CommitteeMember[] | null
+  tv_service?: TvService | null
 }
 
 export interface EventOption {
@@ -196,6 +239,8 @@ export interface WorkRecord {
   stages: Record<Stage, StageState>
   origin?: OfferOrigin
   style?: WorkStyle
+  rating?: WorkRating
+  channel_breakdown?: ChannelRevenue[]
 }
 
 export interface CompanyResult {
@@ -229,6 +274,9 @@ export interface GameState {
   last_project_id: string | null
   company_result: CompanyResult | null
   preview: WeekPreview | null
+  // M2 企划来源扩展（DATA_MODEL V3.7）：自定企划与员工提案各占独立槽位，不占市场四企划。
+  custom_offer?: ProjectOffer | null
+  pending_proposal?: ProjectOffer | null
 }
 
 export type Decision =
@@ -242,6 +290,11 @@ export type Decision =
   | { type: 'end_company' }
   | { type: 'scout' }
   | { type: 'targeted_scout'; role?: Role; focus_ability?: Ability }
+  | { type: 'create_custom_offer'; name: string; source: Source; scale: Scale; style?: WorkStyle }
+  | { type: 'discard_custom_offer' }
+  | { type: 'adopt_proposal' }
+  | { type: 'reject_proposal' }
+  | { type: 'buy_tv_service' }
 
 export interface WeekReport {
   week: number
@@ -307,11 +360,16 @@ export const isSource = (value: unknown): value is Source => choice(value, ['man
 export const isScale = (value: unknown): value is Scale => choice(value, ['ova', 'short', 'tv', 'movie'])
 export const isOfferOrigin = (value: unknown): value is OfferOrigin => choice(value, ['market', 'custom', 'incoming', 'proposal'])
 export const isWorkStyle = (value: unknown): value is WorkStyle => choice(value, ['normal', 'meme', 'ai'])
+export const isChannel = (value: unknown): value is Channel => choice(value, CHANNELS)
+export const isMemberChannel = (value: unknown): value is MemberChannel => choice(value, ['publisher', 'toy', 'music', 'tv_broadcast'])
+export const isWorkRating = (value: unknown): value is WorkRating => choice(value, ['S', 'A', 'B', 'C', 'D'])
 export const isCooperationMode = (value: unknown): value is CooperationMode => choice(value, ['contract', 'committee'])
 export const isPolicy = (value: unknown): value is Policy => choice(value, ['quality', 'balanced', 'deadline'])
 export const isRole = (value: unknown): value is Role => choice(value, ['director', 'scriptwriter', 'animation_director', 'key_animator', 'animator', 'production_manager', 'postproduction'])
 export const isAbilityValues = (value: unknown): value is AbilityValues => fields(value, ABILITIES, score)
-export const isCosts = (value: unknown): value is Costs => fields(value, COST_CATEGORIES, integer)
+export const isCosts = (value: unknown): value is Costs => isRecord(value)
+  && OPTIONAL_COST_CATEGORIES.every((category) => value[category] === undefined || integer(value[category]))
+  && fields(value, COST_CATEGORIES, integer)
 
 export function isFinance(value: unknown): value is Finance {
   return isRecord(value) && integer(value.contract_received) && integer(value.investment_paid)
@@ -350,6 +408,28 @@ const styleOriginRule = (value: Record<string, unknown>) => {
   return style === 'normal' || (value.origin === 'custom' && (style === 'ai' || value.scale === 'short'))
 }
 
+// M2 渠道框架结构守卫（DATA_MODEL V3.7）：BD 是基础渠道，股东只带其余四类。
+export const isCommitteeMember = (value: unknown): value is CommitteeMember => isRecord(value) && isText(value.id) && isText(value.name)
+  && integer(value.share_percent, 1, 100) && arrayOf(value.channels, isMemberChannel) && value.channels.length > 0 && unique(value.channels)
+const isCommitteeMembers = (value: unknown): value is CommitteeMember[] => arrayOf(value, isCommitteeMember) && value.length > 0 && uniqueIds(value)
+const shareSum = (members: CommitteeMember[]) => members.reduce((sum, member) => sum + member.share_percent, 0)
+const isChannelPotentials = (value: unknown): value is ChannelPotentials => isRecord(value) && score(value.bd)
+  && (value.publisher === undefined || score(value.publisher)) && (value.toy === undefined || score(value.toy))
+  && (value.music === undefined || score(value.music)) && (value.tv_broadcast === undefined || score(value.tv_broadcast))
+const isOfferRequirement = (value: unknown): value is OfferRequirement => isRecord(value) && isWorkRating(value.rating)
+  && (value.source === undefined || isSource(value.source))
+const isOfferRequirements = (value: unknown): value is OfferRequirement[] => arrayOf(value, isOfferRequirement) && value.length > 0
+  && unique(value.map((item) => `${item.rating}:${item.source ?? ''}`))
+export const isTvService = (value: unknown): value is TvService => isRecord(value) && week(value.purchased_week) && integer(value.cost, 1)
+const isChannelRevenue = (value: unknown): value is ChannelRevenue => isRecord(value) && isChannel(value.channel)
+  && integer(value.revenue) && integer(value.company_received) && value.revenue >= value.company_received
+const nullableOffer = (value: unknown): value is ProjectOffer | null | undefined => value === undefined || value === null || isProjectOffer(value)
+// 分渠道收入必须与总收入、公司分账总额精确对账；BD 恒在列表中（基础渠道）。
+const isChannelBreakdown = (value: unknown, revenue: number, companyReceived: number): value is ChannelRevenue[] => arrayOf(value, isChannelRevenue)
+  && value.length > 0 && unique(value.map(({ channel }) => channel)) && value.some(({ channel }) => channel === 'bd')
+  && value.reduce((sum, item) => sum + item.revenue, 0) === revenue
+  && value.reduce((sum, item) => sum + item.company_received, 0) === companyReceived
+
 export function isProjectOffer(value: unknown): value is ProjectOffer {
   return isRecord(value) && isText(value.id) && isText(value.name) && isSource(value.source) && isScale(value.scale)
     && integer(value.total_investment) && integer(value.contract_budget) && integer(value.duration_weeks, 1)
@@ -362,6 +442,9 @@ export function isProjectOffer(value: unknown): value is ProjectOffer {
     && (value.origin === undefined || isOfferOrigin(value.origin))
     && (value.style === undefined || isWorkStyle(value.style))
     && (value.min_reputation === undefined || integer(value.min_reputation))
+    && (value.committee_members === undefined || (isCommitteeMembers(value.committee_members) && value.allowed_modes.includes('committee')))
+    && (value.channel_potentials === undefined || isChannelPotentials(value.channel_potentials))
+    && (value.required_works === undefined || isOfferRequirements(value.required_works))
     && styleOriginRule(value)
 }
 
@@ -429,7 +512,7 @@ export function isOutsourceTask(value: unknown): value is OutsourceTask {
     && choice(value.status, ['active', 'delivered', 'failed']) && (value.status !== 'delivered' || value.work_done === value.work_total)
 }
 
-const validInvestment = (mode: CooperationMode, percent: unknown) => mode === 'contract' ? percent === 0 : integer(percent, 10, 100)
+const validInvestment = (mode: CooperationMode, percent: unknown): percent is number => mode === 'contract' ? percent === 0 : integer(percent, 10, 100)
 const modeFinance = (mode: CooperationMode, finance: Finance) => mode !== 'contract' || (finance.investment_paid === 0 && finance.commercial_share_received === 0)
 
 export function isProject(value: unknown): value is Project {
@@ -440,6 +523,10 @@ export function isProject(value: unknown): value is Project {
     || !integer(value.extension_count, 0, 1) || !isFinance(value.finance) || !modeFinance(value.mode, value.finance)
     || !arrayOf(value.temporary_staff, isStaff) || !uniqueIds(value.temporary_staff) || !value.temporary_staff.every((staff) => staff.employment === 'temporary')
     || !arrayOf(value.outsourcing, isOutsourceTask) || !uniqueIds(value.outsourcing)
+    || !(value.committee === undefined || (value.mode === 'committee'
+      ? value.committee !== null && isCommitteeMembers(value.committee) && shareSum(value.committee) + value.investment_percent === 100
+      : value.committee === null))
+    || !(value.tv_service === undefined || value.tv_service === null || isTvService(value.tv_service))
     || !(value.delivery_reason === null || isDeliveryReason(value.delivery_reason))) return false
   if (value.mode === 'contract' ? value.committee_pressure !== null || value.extension_count !== 0 : !score(value.committee_pressure)) return false
   if (!orderedStages(value.stages) || value.current_stage !== firstUnfinished(value.stages)) return false
@@ -471,7 +558,10 @@ export function isWorkRecord(value: unknown): value is WorkRecord {
     || !isFinance(value.finance) || !modeFinance(value.mode, value.finance) || !signed(value.profit) || !isTeam(value.team)
     || !fields(value.stages, STAGES, isStageState) || !orderedStages(value.stages)
     || !(value.origin === undefined || isOfferOrigin(value.origin))
-    || !(value.style === undefined || isWorkStyle(value.style)) || !styleOriginRule(value)) return false
+    || !(value.style === undefined || isWorkStyle(value.style)) || !styleOriginRule(value)
+    || !(value.rating === undefined || isWorkRating(value.rating))
+    || !(value.channel_breakdown === undefined || isChannelBreakdown(value.channel_breakdown,
+      value.commercial_revenue, value.finance.commercial_share_received))) return false
   if ((firstUnfinished(value.stages) === null) !== (value.end_reason === 'completed')) return false
   const ids = new Set(value.team.map(({ staff_id }) => staff_id))
   const stages = value.stages
@@ -502,8 +592,16 @@ export function isGameState(value: unknown): value is GameState {
     || !arrayOf(value.suppliers, isSupplier) || !uniqueIds(value.suppliers)
     || !(value.project === null || isProject(value.project)) || !(value.pending_event === null || isGameEvent(value.pending_event))
     || !arrayOf(value.history, isWorkRecord) || !uniqueIds(value.history) || !nullableText(value.last_project_id)
-    || !(value.company_result === null || isCompanyResult(value.company_result)) || !(value.preview === null || isWeekPreview(value.preview))) return false
+    || !(value.company_result === null || isCompanyResult(value.company_result)) || !(value.preview === null || isWeekPreview(value.preview))
+    || !nullableOffer(value.custom_offer) || !nullableOffer(value.pending_proposal)) return false
   const { company, project, history, pending_event: event } = value
+  const custom = value.custom_offer ?? null
+  const proposal = value.pending_proposal ?? null
+  // 自定企划与员工提案不占市场四槽；提案只出现在空闲周，公司非 running 时两槽必须为空。
+  if (custom !== null && custom.origin !== 'custom') return false
+  if (proposal !== null && (proposal.origin !== 'proposal' || proposal.source !== 'original')) return false
+  if (company.status !== 'running' && (custom !== null || proposal !== null)) return false
+  if (proposal !== null && value.phase !== 'idle') return false
   const historyById = new Map<string, WorkRecord>()
   for (const work of history) {
     if (work.end_week > company.week) return false
@@ -514,7 +612,9 @@ export function isGameState(value: unknown): value is GameState {
     historyById.set(work.id, work)
   }
   if (value.last_project_id !== null && !historyById.has(value.last_project_id)) return false
-  const availableOffers = project === null ? value.offers : [...value.offers, project.offer]
+  const listedOffers = [...value.offers, ...(custom === null ? [] : [custom]), ...(proposal === null ? [] : [proposal])]
+  if (!uniqueIds(listedOffers)) return false
+  const availableOffers = project === null ? listedOffers : [...listedOffers, project.offer]
   if (availableOffers.some((offer) => historyById.has(offer.id) || (offer.previous_work_id !== null && !historyById.has(offer.previous_work_id)))) return false
   const currentStaff = [...company.staff, ...(project?.temporary_staff ?? [])]
   if (!uniqueIds([...currentStaff, ...value.recruitment_pool])) return false
@@ -574,6 +674,10 @@ export function isDecision(value: unknown): value is Decision {
       const hasAbility = value.focus_ability !== undefined
       return hasRole !== hasAbility && (!hasRole || isRole(value.role)) && (!hasAbility || isAbility(value.focus_ability))
     }
+    case 'create_custom_offer': return isText(value.name) && isSource(value.source) && isScale(value.scale)
+      && (value.style === undefined || isWorkStyle(value.style))
+      && ((value.style ?? 'normal') !== 'meme' || value.scale === 'short')
+    case 'discard_custom_offer': case 'adopt_proposal': case 'reject_proposal': case 'buy_tv_service': return true
     default: return false
   }
 }
@@ -605,6 +709,11 @@ function decisionReferences(state: GameState, decision: Decision): boolean {
     case 'return_to_market': return state.phase === 'project_settled'
     case 'end_company': return true
     case 'scout': case 'targeted_scout': return managing
+    case 'create_custom_offer': return state.phase === 'idle'
+    case 'discard_custom_offer': return state.phase === 'idle' && (state.custom_offer ?? null) !== null
+    case 'adopt_proposal': case 'reject_proposal': return state.phase === 'idle' && (state.pending_proposal ?? null) !== null
+    case 'buy_tv_service': return state.phase === 'producing' && project !== null && project.mode === 'committee'
+      && (project.tv_service ?? null) === null
   }
 }
 
@@ -618,7 +727,9 @@ export function isCoreRequest(method: unknown, input: unknown): input is CoreReq
   switch (method) {
     case 'start_project': {
       if (state.phase !== 'idle' || state.company.status !== 'running' || !isText(input.offer_id) || !isCooperationMode(input.mode)) return false
-      const offer = state.offers.find(({ id }) => id === input.offer_id)
+      // 自定企划走同一接约校验；员工提案须先采纳转入自定槽，不能直接开工。
+      const custom = state.custom_offer ?? null
+      const offer = state.offers.find(({ id }) => id === input.offer_id) ?? (custom !== null && custom.id === input.offer_id ? custom : undefined)
       return offer !== undefined && offer.allowed_modes.includes(input.mode) && validInvestment(input.mode, input.investment_percent)
     }
     case 'apply_decision': return isDecision(input.decision) && decisionReferences(state, input.decision)

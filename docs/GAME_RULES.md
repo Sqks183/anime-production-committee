@@ -122,7 +122,20 @@
 | K3 | 商业渠道框架 vs V3.3 分成公式 | 2026-11-22 09:16 确认框架：BD 保底 50% 独立于投资比例、渠道由立项时固定的委员会成员决定、渠道潜力独立数值；与冻结 commercial_share_received=floor(revenue×percent/100) 及 Finance 形状冲突。提案沿用 V3.3 的会计假设需同步修订；爆款×5 的作用渠道未定 | 负责人出契约修订提案（委员会成员、渠道潜力、Finance 语义），#6/#8 会签 |
 | K4 | IP 上门成绩类解锁条件字段 | min_reputation 只覆盖声望阈值；历史成绩类条件需要结构化规则或文案字段，提案未给出形状 | 负责人定字段口径，#6 落地 |
 
-create_custom_offer 决策受 K1/K2 阻塞，本轮不进入 Decision 联合类型；style/origin 字段先行冻结不依赖它。
+create_custom_offer 决策受 K1/K2 阻塞，本轮不进入 Decision 联合类型；style/origin 字段先行冻结不依赖它。（该阻塞已由下方 V3.8 裁定解除。）
+
+## V3.8 K1–K4 新口径裁定与第二批契约落地（2026-11-22，负责人裁定「全部按新口径」）
+
+2026-11-22 08:05/08:11（原创企划与员工提案）、08:51（评价框架）、09:16（商业渠道框架）的负责人确认口径取代 M0 冻结草案中的冲突假设，K1–K4 全部按新口径裁定并落入契约层（形状与交叉校验见 DATA_MODEL V3.7、gameV3.ts，决策时点见 API V3.2）。字段纪律与 V3.7 相同：核心实现落地前可选、缺省按旧语义解释，M1 核心输出与既有 v3 存档保持合法。数值全部 TODO(待定)，规则实现归 #6/#7/#8，本文不声称 C++ 已实现。
+
+| # | 裁定口径 |
+| --- | --- |
+| K1 | 企划槽位独立于市场：`custom_offer` 存放家自定企划（origin=custom），`pending_proposal` 存放员工提案（origin=proposal、source=original）；均不占市场四槽，「至少 2 个可立即承接」不变，ID 与市场及历史交叉拒绝。提案只在空闲周展示：未采纳即推进周消失，reject_proposal 无惩罚；adopt_proposal 转入 custom_offer 后与自定企划走同一 start_project 通路，未采纳提案不可直接开工。开工后槽位必须清空（开局 ID 不在 history 的既有不变量强制）。create_custom_offer 只在 idle 市场窗口，付固定前期开发费。 |
+| K2 | 成本账新增两个可选类别：`development`（前期开发费）与 `distribution`（付费播出发行支出）。两者独立于投资本金、不参与分成；冻结八类不删不改，缺省按 0。否决复用既有类别方案。 |
+| K3 | 商业结算按渠道框架执行：BD 为所有企划的基础渠道（channel_potentials.bd），公司至少获 BD 收益 50%，独立于投资比例；其余渠道由立项时固定的委员会成员开放（Project.committee，Σ持股 + 投资比例恰为 100，制作中不追加更换），渠道收入归相应股东方，公司从非 BD 渠道的实际入账由投资比例与分账约定共同决定，数值待平衡。WorkRecord.channel_breakdown 分渠道对账，revenue 与公司入账总额分别精确等于 commercial_revenue 与 commercial_share_received。V3.3 的 floor(revenue×percent/100) 单渠道公式被本框架取代。承制（contract）企划 BD 归委托方，公司 commercial_share_received 仍恒 0（保留 V3.3 承制口径）。无电视台股东时委员会企划可 buy_tv_service 购买播出服务，记 distribution 费用并带来宣传提升。爆款 ×5 作用于分账前渠道毛收入（含 BD），判定阈值归 #7 彩蛋规则。 |
+| K4 | 成绩类解锁条件结构化落地：ProjectOffer.required_works 为 {rating S/A/B/C/D, source?} 数组且须全部满足；WorkRecord.rating 记录作品评价（固定分数线，与制作质量 quality_score 分列，数值 TODO）。min_reputation 保留，可与 required_works 并存。 |
+
+其余口径：续作经 previous_work_id 继承商业基础（上一部影响最大、差表现不抹掉积累、不影响制作质量与评价、不做市场疲劳），属规则数值不新增契约字段；渠道收入在制作完成后随 calculate_result 统一结算，无中途入账；第一版不做广告赞助。
 
 ---
 

@@ -9,7 +9,7 @@
 | 导出 | 请求 | 成功响应 | 条件 |
 | --- | --- | --- | --- |
 | initialize_game | `{seed}` | `{state,message}` | 根据 seed 创建新公司，week=0、running/idle、四企划；返回生成后的 seed |
-| start_project | `{state,offer_id,mode,investment_percent}` | `{state,message}` | running idle；报价必须在当前四选项中。contract 投资 0；committee 投资整数 10–100；原创只能 committee |
+| start_project | `{state,offer_id,mode,investment_percent}` | `{state,message}` | running idle；报价必须在当前四个市场选项或 custom_offer 槽（未采纳的员工提案不可直接接）。contract 投资 0；committee 投资整数 10–100；原创只能 committee |
 | apply_decision | `{state,decision}` | `{state,message}` | 按下表分支校验，不存在通用任意改字段接口 |
 | advance_week | `{state}` | `{state,report}` | running idle，或 producing 且当前阶段 active；推进恰一周，费用不足转关闭成功响应，不伪造已完成一周 |
 | resolve_event | `{state,option_id,configuration?}` | `{state,message}` | running event_pending；只能选择当前可用选项，仅 allows_reconfigure=true 的选项可附配置；此选项必须附完整配置，其他选项禁止附配置 |
@@ -33,6 +33,11 @@
 | end_company | 无 | running 的任意非终局 phase；不推进周，锁 closing/voluntary；有未交付项目先进入 project_ready，已完成或已待交付的成果保留其交付原因 |
 | scout | 无 | running idle 或 project_settled；支付 scouting_fee，按当前种子生成新候选人补充/替换 recruitment_pool；保底计数 scout_pity 随状态持久。**契约已冻结，核心行为由 #7 实现；实现前返回 INVALID_INPUT，与 hire_core 现状同例** |
 | targeted_scout | role 与 focus_ability 二选一 | 同 scout 窗口；费用更高，候选人限定该岗位/能力方向；与普池共享保底计数。**核心行为由 #7 实现，实现前返回 INVALID_INPUT** |
+| create_custom_offer | name, source, scale, 可选 style | 仅 running idle；生成 custom_offer 槽报价并支付固定前期开发费（costs.development），不占市场四槽；首版限原创企划与少数核心方向，企划能力资格由核心校验；meme 限定短篇。**契约已冻结（V3.7），核心行为由 #6 实现；实现前返回 INVALID_INPUT** |
+| adopt_proposal | 无 | 仅 running idle 且 pending_proposal 存在；提案转入 custom_offer 并支付前期开发费，之后走同一 start_project；未采纳不可直接开工。**核心行为由 #6 实现，实现前返回 INVALID_INPUT** |
+| reject_proposal | 无 | 仅 running idle 且 pending_proposal 存在；清空提案，无惩罚；空闲周推进时未决同样自动消失。**核心行为由 #6 实现，实现前返回 INVALID_INPUT** |
+| discard_custom_offer | 无 | 仅 running idle 且 custom_offer 存在；清空自定企划，不退款。**核心行为由 #6 实现，实现前返回 INVALID_INPUT** |
+| buy_tv_service | 无 | running producing、committee 项目且未购买过；支付发行成本（costs.distribution）并写入 project.tv_service；承制返回 MODE_NOT_ALLOWED。**契约已冻结（V3.7），核心行为由 #6/#8 实现；实现前返回 INVALID_INPUT** |
 
 休整不另开人事子系统：空闲周或阶段未安排的人员按周恢复；核心工资照付。事件受控改配通过 resolve_event，而非放开 configure_stage。事件导致的外包/改配由核心复用同一费用、匹配与产能规则。事件库尚未开题，不在 M0 造完整触发器。
 
