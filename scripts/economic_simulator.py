@@ -8,7 +8,9 @@ from typing import Any
 
 DEFAULTS: dict[str, Any] = {
     "seed": 20261123, "trials": 500, "weeks": 520,
-    "initial_cash": 50_000_000, "weekly_fixed_cost": 680_000,
+    "initial_cash": 50_000_000, "weekly_fixed_cost": 200_000,
+    "core_employee_count": 4, "weekly_salary_per_employee": 50_000,
+    "overtime_multiplier": 1.5, "overtime_capacity_ratio": 0.20,
     "project_types": [
         {"name":"short","budget":30_000_000,"weeks":16,"workload":1800,"weight":1,"target_quality":62},
         {"name":"ova","budget":20_000_000,"weeks":12,"workload":1200,"weight":1,"target_quality":60},
