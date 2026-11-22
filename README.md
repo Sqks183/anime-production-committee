@@ -236,6 +236,7 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 - [V0.3 随机工期基线报告](docs/ECONOMIC_SIMULATION_REPORT_V0.3.md)
 - [V0.4 动态工作量首轮报告](docs/ECONOMIC_SIMULATION_REPORT_V0.4.md)
 - [V0.5 工资、加班、外包与非 BD 收入报告](docs/ECONOMIC_SIMULATION_REPORT_V0.5.md)
+- [V0.6 动态经营策略模拟报告](docs/ECONOMIC_SIMULATION_REPORT_V0.6.md)
 
 在仓库根目录运行：
 
