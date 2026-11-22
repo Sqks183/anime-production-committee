@@ -223,3 +223,24 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 - 开工资金加上拨款，草案利润 `profit = revenue - spent` 不含拨款，付费事件计入 spent；此经济口径待团队复核。
 - 上述招聘成长、企划市场、委员会投资、商业渠道、十年履历与结局等属于 V1.0 目标范围，当前 v2 纵向切片尚未实现；v2 当前不包含这些玩法。存档仍为单槽手动保存，不支持旧版迁移或历史结算持久化。
 - 本地真实 WASM 与浏览器完整循环已按上述记录验证；没有执行线上部署，托管后的 MIME、资源加载和访问策略仍需发布后单独验收。
+
+
+## 经济模拟器（实验版）
+
+已加入可复现的 520 周经济模拟器，用于比较承制/委员会现金流，并测试延期压力与违约处罚参数。它是独立的 Python 实验工具，不是游戏运行时，也不代表数值已经定案。
+
+- [模拟器说明与运行方式](scripts/README.md)
+- [模拟器源码](scripts/economic_simulator.py)
+- [参数示例](scripts/simulation_config.example.json)
+- [敏感性实验脚本](scripts/run_sensitivity.py)
+- [V0.3 基线报告](docs/ECONOMIC_SIMULATION_REPORT_V0.3.md)
+
+在仓库根目录运行：
+
+```bash
+python scripts/economic_simulator.py
+python scripts/run_sensitivity.py
+python -m unittest discover -s scripts/tests -v
+```
+
+当前工期仍由可配置随机分布模拟；真实五阶段动态工作量、员工产能与外包模型接入后，需重新校准所有结果。
