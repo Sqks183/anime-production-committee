@@ -130,27 +130,34 @@ def produce_project(rng:random.Random,project:dict,cfg:dict,strategy:str,weeks_l
 
 def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
     rng=random.Random(seed); cash=float(cfg["initial_cash"]); reputation=100.0
-    week=completed=low=breaches=extensions=0
-    total_work=done_work=quality_sum=quality_count=0.0; bankrupt=False
+    week=completed=low=breaches=extensions=overtime_weeks=0
+    total_work=done_work=quality_sum=quality_count=0.0
+    total_outsource=total_overtime=total_payroll=total_non_bd=0.0; bankrupt=False
     pct=0 if strategy=="contract" else int(strategy.split("_")[1])
+    weekly_payroll=cfg["core_employee_count"]*cfg["weekly_salary_per_employee"]
     while week<cfg["weeks"]:
         offers=[choose_project(rng,cfg) for _ in range(4)]; affordable=[]
         for p in offers:
             inv=float(p["budget"])*cfg["committee_investment_multiple"]*pct/100.0
             if cash>=inv: affordable.append((p,inv))
         if not affordable:
-            if cash<cfg["weekly_fixed_cost"]: bankrupt=True; break
-            cash-=cfg["weekly_fixed_cost"]; week+=1; continue
+            weekly_cost=cfg["weekly_fixed_cost"]+weekly_payroll
+            if cash<weekly_cost: bankrupt=True; break
+            cash-=weekly_cost; total_payroll+=weekly_payroll; week+=1; continue
         project,investment=rng.choice(affordable); budget=float(project["budget"])
         cash-=investment; cash+=budget
-        outcome,elapsed,pressure,work,required,quality,extended=produce_project(rng,project,cfg,strategy,cfg["weeks"]-week)
+        outcome,elapsed,pressure,work,required,quality,extended,outsource_by_week,overtime_by_week=produce_project(
+            rng,project,cfg,strategy,cfg["weeks"]-week)
         extensions+=int(extended); total_work+=required; done_work+=work
         quality_sum+=quality; quality_count+=1
-        project_cost=work*cfg["production_cost_per_work_unit"]
-        for _ in range(elapsed):
-            cost=cfg["weekly_fixed_cost"]+project_cost/max(1,elapsed)
-            if cash<cost: bankrupt=True; break
-            cash-=cost; week+=1
+        for i in range(elapsed):
+            overtime_cost=weekly_payroll*cfg["overtime_multiplier"]*overtime_by_week[i]
+            outsourcing_cost=outsource_by_week[i]
+            weekly_cost=cfg["weekly_fixed_cost"]+weekly_payroll+overtime_cost+outsourcing_cost
+            if cash<weekly_cost: bankrupt=True; break
+            cash-=weekly_cost; total_payroll+=weekly_payroll
+            total_overtime+=overtime_cost; total_outsource+=outsourcing_cost
+            overtime_weeks+=int(overtime_by_week[i]>1e-8); week+=1
         if bankrupt: break
         for threshold,penalty in zip(cfg["pressure_reputation_thresholds"],cfg["pressure_reputation_penalties"]):
             if pressure>=threshold: reputation-=penalty
@@ -160,16 +167,23 @@ def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
         else:
             if outcome=="normal": completed+=1
             else: low+=1; reputation-=cfg["low_delivery_reputation_penalty"]
-            score=draw_score(rng,cfg,quality)
-            band=score_band(score)
+            score=draw_score(rng,cfg,quality); band=score_band(score)
             cash+=budget*cfg["bd_multipliers"][band]*cfg["bd_company_share"]
             if strategy=="contract" and score>=cfg["contract_success_bonus_score"]:
                 cash+=budget*cfg["contract_success_bonus_ratio"]
-            if strategy!="contract":
-                cash+=budget*cfg["non_bd_gross_per_budget_per_channel"]*cfg["committee_channel_count"]*pct/100.0
+            if strategy!="contract" and cfg["non_bd_channel_count"]>0:
+                channels=list(cfg["non_bd_channel_rates"].items())
+                chosen=rng.sample(channels,k=min(cfg["non_bd_channel_count"],len(channels)))
+                channel_gross=0.0
+                for _,rate in chosen:
+                    fit=rng.uniform(cfg["channel_fit_min"],cfg["channel_fit_max"])
+                    channel_gross+=budget*rate*(fit/100.0)*cfg["non_bd_commercial_multipliers"][band]
+                share=channel_gross*pct/100.0
+                cash+=share; total_non_bd+=share
         if week>=cfg["weeks"]: break
     return Trial(strategy,bankrupt,cash,completed,low,breaches,extensions,reputation,week,
-                 total_work,done_work,quality_sum/max(1,quality_count))
+        total_work,done_work,quality_sum/max(1,quality_count),total_outsource,total_overtime,
+        overtime_weeks,total_payroll,total_non_bd)
 
 def summarize(rows:list[Trial])->dict:
     cash=[r.final_cash for r in rows]; ordered=sorted(cash)
