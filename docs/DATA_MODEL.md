@@ -27,8 +27,8 @@
 | Finance | contract_received, investment_paid, commercial_share_received, costs；可选 success_reward_received | 均为非负实际累计收支；success_reward_received 为委托方支付的承制成功奖励，缺省按 0 兼容旧状态，委员会项目为 0；投资不再计入成本。公司层全生命周期、项目层项目区间，同一笔交易的两个汇总视图，不重复改变现金 |
 | Costs | salary, operations, production, temporary, outsourcing, events, extension, penalty；可选 development, distribution | 八类均出现，无支出填 0；依次为核心工资、固定运营、阶段直接费用、临时合同、外包、独立付费事件、延期费、扣罚。同一笔只归一类。M2 可选 development（前期开发费）与 distribution（付费播出发行支出），核心落地前缺省按 0，见 V3.7 |
 | Staff | id, name, role, employment, abilities, experience, potential, revealed_potential, talent_type, clues, traits, weekly_salary, project_fee, fatigue, morale, departure_warning | employment=core/temporary；核心 project_fee=0，临时 weekly_salary=0。前三个能力对象含六项数值，revealed_potential 含六个布尔值；潜力不低于当前能力，线索 1–2 条，traits 可空；warning 仅预警 |
-| ProjectOffer | id, name, source, scale, total_investment, contract_budget, duration_weeks, target_quality, audience_base, commercial_potential, risk, allowed_modes, workloads, previous_work_id；可选 origin, style, min_reputation, committee_members, channel_potentials, required_works | source=manga/light_novel/game/original；scale=ova/short/tv/movie；risk=low/medium/high；allowed_modes 非空不重复，原创仍只能 committee；同一企划可同时提供 contract/committee 两种方式，由玩家选择时确定；workloads 含五阶段正数；合同预算由核心按总投资 50% 生成。origin=market/custom/incoming/proposal（缺省 market）；style=normal/meme/ai（缺省 normal），非 normal 必须 origin=custom，meme 限定 scale=short；min_reputation 非负整数（缺省 0），声望不足仍展示但锁定；可选 committee_members（拟定委员会阵容，仅 allowed_modes 含 committee）、channel_potentials（{bd 必填 0–100，其余渠道可选}）、required_works（{rating, source?} 非空全满足）见 V3.7 |
-| Project | offer, mode, investment_percent, opening_funds, start_week, deadline_week, current_stage, stages, extension_count, committee_pressure, finance, temporary_staff, outsourcing, delivery_reason；可选 committee, tv_service | 接约原子建立，offer 保存原报价；opening_funds 在投资/拨款之前记录；实付本金只在 finance.investment_paid；临时人员属于当前项目。committee 为立项固定的委员会成员/渠道快照（成员结构为 {id,name,channel}，一个成员对应一个渠道，不含成员投资比例；承制为 null，制作中不追加更换）；委员会投资比例按 0.1（10 个百分点）调整，开工后锁定；tv_service={purchased_week,cost} 每项目至多一次，见 V3.7/V3.8 |
+| ProjectOffer | id, name, source, scale, total_investment, contract_budget, duration_weeks, target_quality, audience_base, commercial_potential, risk, allowed_modes, workloads, previous_work_id；可选 origin, style, min_reputation, committee_members, channel_potentials, required_works | source=manga/light_novel/game/original；scale=ova/short/tv/movie；risk=low/medium/high；普通企划 allowed_modes 固定包含 contract/committee，原创仅 committee；workloads 含五阶段正数；contract_budget 是合同预算且就是制作预算，按企划规模与报价规则生成；仅 committee 模式生成 total_investment，且等于 contract_budget×2，contract 模式不适用投资规模。origin=market/custom/incoming/proposal（缺省 market）；style=normal/meme/ai（缺省 normal），非 normal 必须 origin=custom，meme 限定 scale=short；min_reputation 非负整数（缺省 0），声望不足仍展示但锁定；可选 committee_members（拟定委员会阵容，仅 allowed_modes 含 committee）、channel_potentials（{bd 必填 0–100，其余渠道可选}）、required_works（{rating, source?} 非空全满足）见 V3.7 |
+| Project | offer, mode, investment_percent, opening_funds, start_week, deadline_week, current_stage, stages, extension_count, committee_pressure, finance, temporary_staff, outsourcing, delivery_reason；可选 committee, tv_service | 接约原子建立，offer 保存原报价；opening_funds 在投资/拨款之前记录；实付本金只在 finance.investment_paid；临时人员属于当前项目。committee 为立项固定的委员会成员/渠道快照（成员结构为 {id,name,channel}，一个成员对应一个渠道，不含成员投资比例；仅委员会模式可有成员，承制为 null，制作中不追加更换）；委员会投资比例按 0.1（10 个百分点）调整，开工后锁定；tv_service={purchased_week,cost} 每项目至多一次，见 V3.7/V3.8 |
 | StageConfiguration | assignments, policy, overtime | assignments 每项 staff_id/role/focus，人员不重复；未安排者休整。policy=quality/balanced/deadline；overtime 为整个阶段方案，不逐周清除。是否允许无员工而仅用外包由核心按有效产能校验 |
 | StageState | status, work_done, quality, configuration, recommended_configuration, result | status=pending/ready/active/completed；pending/ready 无提交配置与结果且 work_done=0；active 配置非空；completed 结果非空且工作量完成。推荐配置可 null，不等于已提交 |
 | StageResult | weeks_spent, quality, costs, issues, team | 阶段结束产生；issues 为遗留问题文案。costs 仅归属分析，不能再次扣款或重复累加到项目成本 |
@@ -108,13 +108,13 @@ M0 在 services/saveGame.ts 实现 decodeV3SaveRecord 与只读 loadGameV3：拒
 
 > 本节部分投资亏损与委员会成员字段口径已由后续 V3.9 修订覆盖；当前有效契约以文末 V3.9 为准。
 
-- 同一企划可同时提供承制与制作委员会两种合作方式；玩家选择企划时确定模式，实际选项由 ProjectOffer.allowed_modes 表达。已有「原创只能委员会」约束继续有效。
+- 所有普通企划均提供承制与制作委员会两种合作方式；原创企划只能委员会。ProjectOffer.allowed_modes 必须体现这一规则，不允许普通企划仅提供承制。
 - Project.mode 与 investment_percent 在 start_project 时确定，开工后锁定。委员会投资比例按 0.1（10 个百分点）为最小调整单位，现行范围 10–100%；其他投资方承担剩余投资份额。
 - contract 的 investment_percent=0；committee 的 investment_percent 为 10–100 的 10 倍数。该范围与步长应由核心校验，TypeScript 仅做协议校验，不重算投资金额。
 - 公司同一时间最多一个在制项目，不支持多开；委员会模式必须由公司实际参与制作，不支持纯投资。
 - 承制与委员会共用同一制作能力、人员、资源和制作流程。投资比例不改变制作责任/工作量、作品质量上限或项目决策权；两种模式在相同制作条件下具有相同质量上限。
 - 委员会投资本金亏损上限为公司实际投入的全部投资额；制作经营费用另行核算，可能使项目净收益或公司经营结果为负，不受投资本金上限保护。
-- 渠道规则：IP 上门企划自带成熟渠道；普通合同企划至少自带一个渠道；原创企划需要自行寻找渠道。所有企划均可在原有基础上额外引入渠道。
+- 渠道规则：IP 上门企划自带成熟渠道；普通企划至少自带一个渠道；原创企划需要自行寻找渠道。所有企划都可选择委员会模式；只有委员会模式可通过拉入委员会成员额外开放渠道，承制模式不拉入委员会成员。
 - 委员会投资玩法包含玩家投资比例控制和拉入成员开放渠道两个操作维度。一个成员对应一个渠道，成员加入即开放；渠道开放与投资比例、投资金额没有数值绑定关系。其他投资方共同补足公司未承担的剩余投资份额。
 - 委员会非 BD 渠道收益按玩家投资比例分配，不记录每个渠道的独立分配比例或其他成员细分投资份额。BD 在承制与委员会模式下统一按初始50%公司收入、50%综合成本分配。
 - 当前 committee_members 目标结构为 {id,name,channel}，一个成员对应一个渠道。若现有 TypeScript/C++ 字段仍采用旧结构，须由 #6 提交契约同步与实现方案；本节不宣称代码已支持。
@@ -362,7 +362,34 @@ GameStore 的 `game` 初始为 null，新开必须等待真实 WASM 的 initiali
 - 渠道开放由企划自带条件和已加入的委员会成员决定，不由玩家投资比例或投资金额计算。BD 是所有企划自带的基础渠道，不挂接委员会成员。
 - 非 BD 渠道公司所得统一按玩家投资比例分配；不维护每个渠道独立的投资比例或分账比例。
 - BD 在承制和委员会模式下统一按毛收入初始 50% 计入公司收入、另 50% 计为综合成本；比例是可调整的平衡参数，成本比例不得为 0。
-- 制作预算为项目总投资的 50%，开工时并入公司统一现金池；没有独立预算钱包。预算资金用完后继续使用公司现有现金支付制作费用。
+- contract_budget 就是制作预算，开工时并入公司统一现金池；委员会模式下 total_investment=contract_budget×2，承制模式不生成 total_investment。没有独立预算钱包；制作预算资金用完后继续使用公司现有现金支付制作费用。
 - 制作经营亏损适用于承制与委员会；委员会投资本金亏损单独核算。强制制作费用无法支付时立即破产结算、游戏失败；不贷款、不追加投资。
 
 字段结构调整属于目标契约修订，不代表当前 TypeScript/C++ 实现已经同步。#6 负责人需要据此提交对应实现/迁移方案；集成时同步 gameV3.ts、核心校验、API 和测试。
+
+## V3.10 合同预算与委员会投资规模修订（2026-11-23，当前有效）
+
+本节覆盖本文前文及 V3.9 中“制作预算=项目总投资50%”的旧字段生成规则。旧描述仅作历史记录，不再作为当前契约。
+
+- ProjectOffer.contract_budget：必填，表示项目合同预算，同时就是制作预算。按企划规模和报价规则生成；不再从投资规模反推。
+- ProjectOffer.total_investment：仅委员会模式适用。委员会投资规模直接按 contract_budget × 2 生成；承制模式应为 null/不适用，不应生成数值。
+- 所有普通企划的 allowed_modes 必须同时包含 contract 与 committee；原创企划仅包含 committee。企划来源与规模不能将普通企划排除在委员会模式之外。
+- Project.investment_percent：承制为0；委员会为10–100且步长10。委员会公司投资额为 floor(total_investment × investment_percent / 100)。
+- Project.committee：仅委员会模式可携带成员快照；承制必须为 null。只有委员会模式可以拉入成员开放额外渠道，一个成员对应一个渠道。
+- contract_budget 是制作预算，total_investment 是委员会投资规模，两者不可混用。制作预算开工时进入公司统一现金池；委员会投资本金单独支付并单独核算。
+- BD 公司所得为毛收入的初始50%。可以通过“毛收入−50%综合成本”或“毛收入×0.5”实现，必须避免重复扣除；分渠道对账需分别保留毛收入与公司实际所得。
+
+字段空值表达、条件字段校验及 allowed_modes 生成由 #6 同步 TypeScript/C++ 契约与测试；本文只冻结目标口径，不代表实现已经完成。
+## V3.10 合同预算与委员会投资规模修订（2026-11-23，当前有效）
+
+本节覆盖本文前文及 V3.9 中“制作预算=项目总投资50%”的旧字段生成规则。旧描述仅作历史记录，不再作为当前契约。
+
+- ProjectOffer.contract_budget：必填，表示项目合同预算，同时就是制作预算。按企划规模和报价规则生成；不再从投资规模反推。
+- ProjectOffer.total_investment：仅委员会模式适用。委员会投资规模直接按 contract_budget × 2 生成；承制模式应为 null/不适用，不应生成数值。
+- 所有普通企划的 allowed_modes 必须同时包含 contract 与 committee；原创企划仅包含 committee。企划来源与规模不能将普通企划排除在委员会模式之外。
+- Project.investment_percent：承制为0；委员会为10–100且步长10。委员会公司投资额为 floor(total_investment × investment_percent / 100)。
+- Project.committee：仅委员会模式可携带成员快照；承制必须为 null。只有委员会模式可以拉入成员开放额外渠道，一个成员对应一个渠道。
+- contract_budget 是制作预算，total_investment 是委员会投资规模，两者不可混用。制作预算开工时进入公司统一现金池；委员会投资本金单独支付并单独核算。
+- BD 公司所得为毛收入的初始50%。可以通过“毛收入−50%综合成本”或“毛收入×0.5”实现，必须避免重复扣除；分渠道对账需分别保留毛收入与公司实际所得。
+
+字段空值表达、条件字段校验及 allowed_modes 生成由 #6 同步 TypeScript/C++ 契约与测试；本文只冻结目标口径，不代表实现已经完成。
