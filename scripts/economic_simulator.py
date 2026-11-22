@@ -38,6 +38,11 @@ DEFAULTS: dict[str, Any] = {
     "pressure_reputation_thresholds":[20,40,60,80],
     "pressure_reputation_penalties":[2,4,7,10],
     "low_delivery_reputation_penalty":10, "breach_penalty_ratio":0.50,
+    "dynamic_policy": {
+        "dynamic_conservative":{"cash_reserve_ratio":0.60,"project_operating_reserve_ratio":1.0,"minimum_operating_reserve_weeks":0,"max_investment_ratio":30},
+        "dynamic_opportunity":{"cash_reserve_ratio":0.35,"project_operating_reserve_ratio":0.5,"minimum_operating_reserve_weeks":0,"max_investment_ratio":70},
+        "dynamic_aggressive":{"cash_reserve_ratio":0.10,"project_operating_reserve_ratio":0.0,"minimum_operating_reserve_weeks":8,"max_investment_ratio":100}
+    },
     "strategies":["contract","committee_10","committee_50","committee_100","dynamic_conservative","dynamic_opportunity","dynamic_aggressive"]
 }
 
@@ -76,17 +81,18 @@ def dynamic_offer_decision(cash:float, offers:list[dict], cfg:dict, policy:str):
     """Choose an offer and financing mode using only pre-start information."""
     burn=cfg["weekly_fixed_cost"]+cfg["core_employee_count"]*cfg["weekly_salary_per_employee"]
     if policy=="dynamic_conservative":
-        project=min(offers,key=lambda p:(p["budget"]*2/max(1.0,p["weeks"]),p["workload"]))
-        reserve=max(cfg["initial_cash"]*0.60,burn*project["weeks"])
-        cap=30
+        project=min(offers,key=lambda p:(p["budget"]*cfg["committee_investment_multiple"]/max(1.0,p["weeks"]),p["workload"]))
     elif policy=="dynamic_opportunity":
         project=max(offers,key=lambda p:(p["target_quality"]*0.55+(p["budget"]/max(1.0,p["workload"])/10000.0)*20.0))
-        reserve=max(cfg["initial_cash"]*0.35,burn*project["weeks"]*0.5)
-        cap=70
-    else:
+    elif policy=="dynamic_aggressive":
         project=max(offers,key=lambda p:(p["budget"]*p["target_quality"],p["budget"]))
-        reserve=max(cfg["initial_cash"]*0.10,burn*8)
-        cap=100
+    else:
+        raise ValueError(f"Unknown dynamic policy: {policy}")
+    policy_cfg=cfg["dynamic_policy"][policy]
+    reserve=max(cfg["initial_cash"]*policy_cfg["cash_reserve_ratio"],
+                burn*max(policy_cfg["minimum_operating_reserve_weeks"],
+                         project["weeks"]*policy_cfg["project_operating_reserve_ratio"]))
+    cap=policy_cfg["max_investment_ratio"]
     affordable_pct=max(0,int((cash-reserve)/(cfg["committee_investment_multiple"]*float(project["budget"]))*10)*10)
     pct=min(cap,affordable_pct)
     return project, ("committee" if pct>=10 else "contract"), pct
