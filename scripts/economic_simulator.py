@@ -80,21 +80,45 @@ def sample_stage_targets(rng:random.Random,requirements:list[float],cfg:dict):
 
 def produce_project(rng:random.Random,project:dict,cfg:dict,strategy:str,weeks_left:int):
     total=max(1.0,float(project["workload"])*max(0.5,rng.gauss(1.0,cfg["workload_variation_sd"])))
-    shares=cfg["stage_shares"]
+    shares=cfg["stage_shares"]; out_shares=cfg["stage_outsource_shares"]; rates=cfg["stage_outsource_cost_per_unit"]
     if not math.isclose(sum(shares),1.0,abs_tol=1e-6): raise ValueError("stage_shares must sum to 1.0")
+    if not (len(shares)==len(out_shares)==len(rates)): raise ValueError("stage arrays must have equal lengths")
     req=[total*x for x in shares]; done=[0.0 for _ in shares]
     _,polish,targets=sample_stage_targets(rng,req,cfg)
     stage=elapsed=0; work=quality_bonus=0.0; extended=False
     base_deadline=int(project["weeks"]); deadline=base_deadline
     max_deadline=base_deadline*(1+cfg["committee_extension_ratio"]) if strategy!="contract" else base_deadline
+    weekly_outsource=[]; weekly_overtime=[]
     while elapsed<min(deadline,weeks_left) and stage<len(shares):
-        cap=max(0.0,cfg["weekly_work_capacity"]*rng.lognormvariate(-0.5*cfg["weekly_capacity_variation_sd"]**2,cfg["weekly_capacity_variation_sd"]))
-        while cap>1e-9 and stage<len(shares):
-            amount=min(max(0.0,targets[stage]-done[stage]),cap)
-            done[stage]+=amount; work+=amount; cap-=amount
+        variation=rng.lognormvariate(-0.5*cfg["weekly_capacity_variation_sd"]**2,cfg["weekly_capacity_variation_sd"])
+        regular_internal=cfg["weekly_work_capacity"]*variation
+        remaining_weeks=max(1,deadline-elapsed)
+        regular_left=regular_internal; overtime_left=regular_internal*cfg["overtime_capacity_ratio"]
+        overtime_used_total=0.0; outsource_cost=0.0
+        # Consume regular capacity first. Overtime is activated only when needed to meet deadline pace.
+        while stage<len(shares):
+            need=max(0.0,targets[stage]-done[stage])
+            if need<=1e-8:
+                if polish[stage]: quality_bonus+=cfg["polish_quality_gain"]
+                stage+=1; continue
+            out_share=out_shares[stage]
+            required_internal_rate=need*(1.0-out_share)/remaining_weeks
+            overtime_needed=min(overtime_left,max(0.0,required_internal_rate-regular_left))
+            internal_available=regular_left+overtime_needed
+            amount=min(need,internal_available/max(1e-9,1.0-out_share))
+            done[stage]+=amount; work+=amount
+            outsource_cost+=amount*out_share*rates[stage]
+            used_internal=amount*(1.0-out_share)
+            regular_used=min(regular_left,used_internal); regular_left-=regular_used
+            overtime_used=max(0.0,used_internal-regular_used); overtime_left=max(0.0,overtime_left-overtime_used)
+            overtime_used_total+=overtime_used
             if done[stage]+1e-8>=targets[stage]:
                 if polish[stage]: quality_bonus+=cfg["polish_quality_gain"]
                 stage+=1
+                if regular_left+overtime_left<=1e-8: break
+            else: break
+        weekly_outsource.append(outsource_cost)
+        weekly_overtime.append(min(cfg["overtime_capacity_ratio"],overtime_used_total/max(1e-9,regular_internal)))
         elapsed+=1
         if elapsed>=base_deadline and stage<len(shares) and strategy!="contract" and not extended:
             extended=True; deadline=max_deadline
@@ -102,7 +126,7 @@ def produce_project(rng:random.Random,project:dict,cfg:dict,strategy:str,weeks_l
     pressure=max(0,elapsed-base_deadline)*cfg["extension_pressure_per_week"] if extended else 0
     outcome="normal" if stage_complete else ("low" if progress>=cfg["minimum_low_delivery_ratio"] else "breach")
     quality=max(0.0,min(100.0,float(project["target_quality"])+quality_bonus+rng.gauss(0,cfg["quality_performance_noise_sd"])))
-    return outcome,elapsed,pressure,work,total,quality,extended
+    return outcome,elapsed,pressure,work,total,quality,extended,weekly_outsource,weekly_overtime
 
 def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
     rng=random.Random(seed); cash=float(cfg["initial_cash"]); reputation=100.0
