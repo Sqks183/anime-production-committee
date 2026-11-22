@@ -20,27 +20,30 @@ const policyNames: Record<Policy, string> = { quality: '质量优先', balanced:
 const money = (value: number) => value.toLocaleString('zh-CN')
 const signed = (value: number) => `${value > 0 ? '+' : ''}${money(value)}`
 
-function StageConfigPanel({ stage, recommended, staff, disabled, onLock }: {
+function StageConfigPanel({ stage, recommended, lockedConfiguration, staff, disabled, onLock }: {
   stage: Stage
   recommended: StageConfiguration | null
+  lockedConfiguration: StageConfiguration | null
   staff: Staff[]
   disabled: boolean
   onLock: (configuration: StageConfiguration) => void
 }) {
-  const base = recommended?.assignments ?? staff.map((person) => ({ staff_id: person.id, role: person.role, focus: 'planning' as Ability }))
-  const [policy, setPolicy] = useState<Policy>(recommended?.policy ?? 'balanced')
-  const [overtime, setOvertime] = useState(recommended?.overtime ?? false)
+  const source = lockedConfiguration ?? recommended
+  const base = source?.assignments ?? staff.map((person) => ({ staff_id: person.id, role: person.role, focus: 'planning' as Ability }))
+  const [policy, setPolicy] = useState<Policy>(source?.policy ?? 'balanced')
+  const [overtime, setOvertime] = useState(source?.overtime ?? false)
   const [focus, setFocus] = useState<Record<string, Ability>>(() => Object.fromEntries(base.map((item) => [item.staff_id, item.focus])))
+  const inactive = disabled || lockedConfiguration !== null
   return <div className="stage-config" aria-label={`${stageNames[stage]}阶段配置`}>
-    <label className="policy-control">制作方针<select aria-label="制作方针" value={policy} disabled={disabled} onChange={(event) => {
+    <label className="policy-control">制作方针<select aria-label="制作方针" value={policy} disabled={inactive} onChange={(event) => {
       if (isPolicy(event.target.value)) setPolicy(event.target.value)
     }}>{(Object.keys(policyNames) as Policy[]).map((value) => <option key={value} value={value}>{policyNames[value]}</option>)}</select></label>
-    <label className="check-control"><input type="checkbox" aria-label="加班" checked={overtime} disabled={disabled} onChange={(event) => setOvertime(event.target.checked)} />本周加班（额外支出与士气消耗）</label>
-    <div className="staff-controls">{staff.map((person) => <label key={person.id}>{person.name} · {roleNames[person.role]}<select aria-label={`${person.name}专注`} value={focus[person.id] ?? 'planning'} disabled={disabled} onChange={(event) => {
+    <label className="check-control"><input type="checkbox" aria-label="加班" checked={overtime} disabled={inactive} onChange={(event) => setOvertime(event.target.checked)} />本周加班（额外支出与士气消耗）</label>
+    <div className="staff-controls">{staff.map((person) => <label key={person.id}>{person.name} · {roleNames[person.role]}<select aria-label={`${person.name}专注`} value={focus[person.id] ?? 'planning'} disabled={inactive} onChange={(event) => {
       if (isAbility(event.target.value)) setFocus((current) => ({ ...current, [person.id]: event.target.value as Ability }))
     }}>{ABILITIES.map((ability) => <option key={ability} value={ability}>{abilityNames[ability]}</option>)}</select></label>)}</div>
-    <button className="button primary" disabled={disabled} onClick={() => onLock({ assignments: staff.map((person) => ({ staff_id: person.id, role: person.role, focus: focus[person.id] ?? 'planning' })), policy, overtime })}>锁定阶段方案</button>
-    <p className="local-note">方案锁定后本阶段不可更改；推进前不扣款。</p>
+    {lockedConfiguration === null && <button className="button primary" disabled={disabled} onClick={() => onLock({ assignments: staff.map((person) => ({ staff_id: person.id, role: person.role, focus: focus[person.id] ?? 'planning' })), policy, overtime })}>锁定阶段方案</button>}
+    <p className="local-note">{lockedConfiguration !== null ? '方案已锁定：本阶段推进期间配置控件禁用，不可更改。' : '方案锁定后本阶段不可更改；推进前不扣款。'}</p>
   </div>
 }
 
@@ -63,12 +66,12 @@ export function StudioPage({ core }: { core: ReturnType<typeof useGameCore> }) {
     <section className="studio-summary" aria-label="经营状态">
       <div className="budget-block"><p><Coins size={17} aria-hidden="true" />当前资金 / 日元</p><strong data-testid="funds"><small>¥</small>{money(company.funds)}</strong></div>
       <dl className="studio-facts">
-        <div><dt>当前周</dt><dd data-testid="week">{company.week}</dd></div>
+        <div><dt>当前周</dt><dd><span data-testid="week">{company.week}</span> / 520</dd></div>
         <div><dt>公司声望</dt><dd>{company.reputation}</dd></div>
         <div><dt>经营阶段</dt><dd>{phaseNames[game.phase]} · {statusNames[company.status]}</dd></div>
         <div><dt>当前种子</dt><dd>{game.seed}</dd></div>
       </dl>
-      {game.preview && <p className="local-note">第 {game.preview.next_week} 周预计支出 ¥{money(game.preview.total_cost)}（工资、运营与已锁定阶段的生产费）。</p>}
+      {game.preview && <p className="local-note">第 {game.preview.next_week} 周预计支出 ¥{money(game.preview.total_cost)}：工资 ¥{money(game.preview.costs.salary)} / 运营 ¥{money(game.preview.costs.operations)} / 生产 ¥{money(game.preview.costs.production)} / 事件概率 {game.preview.event_probability_per_mille}‰。</p>}
       {company.end_reason && <p className="action-note">{endReasonNames[company.end_reason]}，公司进入结束流程。</p>}
     </section>
 
@@ -101,7 +104,7 @@ export function StudioPage({ core }: { core: ReturnType<typeof useGameCore> }) {
     </section>}
 
     {game.phase === 'idle' && running && <section className="offers-section" aria-label="企划报价">
-      <div className="section-heading"><h2>桌上的四份企划</h2><p>选择下一部作品，合同拨款由核心一次性入账。</p></div>
+      <div className="section-heading"><h2>桌上的四份企划</h2><p>选择下一部作品，合同拨款由核心一次性入账。M1 仅开放承制路线。</p></div>
       <div className="offer-grid">{game.offers.map((offer) => <article className="offer-card" key={offer.id}>
         <p className="eyebrow">{scaleNames[offer.scale]} / {sourceNames[offer.source]}</p><h3>{offer.name}</h3>
         <dl className="connection-details">
@@ -109,6 +112,7 @@ export function StudioPage({ core }: { core: ReturnType<typeof useGameCore> }) {
           <div><dt>工期</dt><dd>{offer.duration_weeks} 周</dd></div>
           <div><dt>目标质量</dt><dd>{offer.target_quality}</dd></div>
           <div><dt>受众 / 商业潜力</dt><dd>{offer.audience_base} / {offer.commercial_potential}</dd></div>
+          <div><dt>可选合作模式</dt><dd>{offer.allowed_modes.map((mode) => mode === 'contract' ? '承制' : '委员会').join(' / ')}</dd></div>
         </dl>
         <button className="button secondary" disabled={unavailable} onClick={() => void startProject(offer.id)}>接手：{offer.name}</button>
       </article>)}</div>
@@ -129,13 +133,15 @@ export function StudioPage({ core }: { core: ReturnType<typeof useGameCore> }) {
             <div className="progress-heading"><span>进度</span><strong data-testid={`progress-${stage}`}>{percent}<small>%</small></strong></div>
             <progress value={percent} max={100} aria-label={`${stageNames[stage]}进度`} />
             <p className="stage-quality">质量 <strong>{item.quality}</strong> · {item.work_done}/{project.offer.workloads[stage]}</p>
+            {item.result && <p className="stage-quality">用时 {item.result.weeks_spent} 周</p>}
           </section>
         })}</div>
-        {game.phase === 'producing' && stageState?.status === 'ready' && currentStage && <StageConfigPanel
-          key={`${currentStage}-ready`} stage={currentStage} recommended={stageState.recommended_configuration} staff={company.staff} disabled={unavailable}
+        {game.phase === 'producing' && currentStage && stageState && (stageState.status === 'ready' || stageState.status === 'active') && <StageConfigPanel
+          key={`${currentStage}-${stageState.status}`} stage={currentStage} recommended={stageState.recommended_configuration}
+          lockedConfiguration={stageState.status === 'active' ? stageState.configuration : null}
+          staff={company.staff} disabled={unavailable}
           onLock={(configuration) => void decide({ type: 'configure_stage', stage: currentStage, configuration })} />}
-        {canAdvance && <><p className="action-note">「{currentStage && stageNames[currentStage]}」方案已锁定，推进本周进行制作。</p>
-          <button className="button primary advance-button" onClick={() => void advance()} disabled={unavailable}>推进本周<ArrowRight size={20} aria-hidden="true" /></button></>}
+        {canAdvance && <button className="button primary advance-button" onClick={() => void advance()} disabled={unavailable}>推进本周<ArrowRight size={20} aria-hidden="true" /></button>}
         {game.phase === 'producing' && stageState?.status === 'ready' && <p className="action-note">请先锁定本阶段方案，再推进本周。</p>}
         {game.phase === 'project_ready' && <><p className="action-note">{project.delivery_reason && deliveryNames[project.delivery_reason]}，请领取项目结算。</p>
           <button className="button primary advance-button" onClick={() => void settle()} disabled={unavailable}>结算项目<ArrowRight size={20} aria-hidden="true" /></button></>}

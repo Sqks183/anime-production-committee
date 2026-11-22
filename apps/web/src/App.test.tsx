@@ -46,8 +46,11 @@ it('串联新开、接手、阶段配置、推进、结算与返回市场，展�
   expect(core.initializeGame).toHaveBeenCalledWith(12345)
   expect(screen.getByTestId('funds')).toHaveTextContent('5,000,000')
   expect(screen.getByTestId('week')).toHaveTextContent('0')
+  expect(screen.getByText(/第 1 周预计支出 ¥120,000：工资 ¥100,000 \/ 运营 ¥20,000 \/ 生产 ¥0 \/ 事件概率 0‰/)).toBeVisible()
   const offers = within(screen.getByRole('region', { name: '企划报价' }))
   expect(offers.getAllByRole('button')).toHaveLength(4)
+  expect(offers.getAllByText('承制 / 委员会')).toHaveLength(3)
+  expect(offers.getByText('委员会', { exact: true })).toBeVisible()
   await user.click(offers.getByRole('button', { name: '接手：放学后的第七帧' }))
   expect(core.startProject).toHaveBeenCalledWith(initial, 'v3_ova')
   expect(screen.getByTestId('funds')).toHaveTextContent('7,000,000')
@@ -66,7 +69,10 @@ it('串联新开、接手、阶段配置、推进、结算与返回市场，展�
       ], policy: 'quality', overtime: true,
     },
   })
-  expect(screen.queryByLabelText('制作方针')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('制作方针')).toBeDisabled()
+  expect(screen.getByLabelText('加班')).toBeDisabled()
+  expect(screen.getByLabelText('林导演专注')).toBeDisabled()
+  expect(screen.getByText('方案已锁定：本阶段推进期间配置控件禁用，不可更改。')).toBeVisible()
   await user.click(screen.getByRole('button', { name: '推进本周' }))
   expect(core.advanceWeek).toHaveBeenCalledWith(configured)
   expect(screen.getByTestId('week')).toHaveTextContent('5')
@@ -114,6 +120,8 @@ it('阶段配置默认采用核心推荐，专注选择随决策提交', async (
     },
   })
   expect(screen.getByRole('button', { name: '推进本周' })).toBeEnabled()
+  expect(screen.getByLabelText('制作方针')).toBeDisabled()
+  expect(screen.queryByRole('button', { name: '锁定阶段方案' })).not.toBeInTheDocument()
 })
 
 it('保存、返回首页、继续与读取保留完整状态，不进行隐式初始化', async () => {
