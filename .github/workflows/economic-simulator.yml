@@ -24,11 +24,11 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s scripts/tests -v
       - name: Run seven-strategy simulation
-        run: python scripts/economic_simulator.py --config scripts/simulation_config.example.json
+        run: python scripts/economic_simulator.py --config scripts/simulation_config.example.json --out simulation-output
       - name: Upload simulation outputs
         uses: actions/upload-artifact@v4
         with:
           name: economic-simulation-v0.6
           path: |
-            summary.json
-            trials.csv
+            simulation-output/summary.json
+            simulation-output/trials.csv
