@@ -55,6 +55,12 @@ class SimulatorTests(unittest.TestCase):
             self.assertIn(pct,range(0,101,10))
             self.assertEqual(mode=="committee",pct>=10)
 
+    def test_conservative_policy_starts_with_contract_below_activation_threshold(self):
+        project={"name":"sample","budget":20_000_000,"weeks":12,"workload":1200,"target_quality":60}
+        _,mode,pct=sim.dynamic_offer_decision(sim.DEFAULTS["initial_cash"],[project],sim.DEFAULTS,"dynamic_conservative")
+        self.assertEqual(mode,"contract")
+        self.assertEqual(pct,0)
+
     def test_dynamic_strategies_are_reproducible_and_report_mix(self):
         cfg=sim.deep_merge(sim.DEFAULTS,{"weeks":160,"trials":3})
         for policy in ["dynamic_conservative","dynamic_opportunity","dynamic_aggressive"]:
