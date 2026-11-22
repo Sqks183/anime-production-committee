@@ -260,19 +260,9 @@ v2 替代三字段工程夹具，不兼容 v1。固定目录、公式和 LCG 以
 
 - 所有普通企划的 allowed_modes 必须包含 contract 与 committee；原创企划仅允许 committee。
 - contract_budget 始终表示合同预算，同时就是项目制作预算；不是承制专属字段。
-- 仅委员会模式生成 total_investment，公式为 contract_budget × 2。承制模式的 total_investment 为空/不适用，investment_percent=0。
+- 仅在 start_project 选择委员会模式后生成 Project.total_investment，公式为 offer.contract_budget × 2。承制模式不生成该字段，investment_percent=0。
 - 委员会模式的 investment_percent 为10–100、步长10；公司投资额为 floor(total_investment×investment_percent/100)。其他投资方共同补足剩余投资规模。
-- Project.committee 仅委员会模式可携带；承制必须为 null。只有委员会模式可拉入委员会成员开放额外渠道。
-- BD 毛收入初始50%计入公司所得、50%为综合成本。可直接计算 gross_bd_revenue×0.5，也可先记毛收入再扣成本；不得重复扣除。分渠道数据必须能同时核对毛收入与公司实际所得。
-
-以上是目标协议，需由 #6 同步 gameV3.ts、C++ 校验、报价生成、核心校验与测试；当前文档不代表代码已支持。
-## V3.2.2 合同预算与投资规模（2026-11-23，当前目标协议）
-
-- 所有普通企划的 allowed_modes 必须包含 contract 与 committee；原创企划仅允许 committee。
-- contract_budget 始终表示合同预算，同时就是项目制作预算；不是承制专属字段。
-- 仅委员会模式生成 total_investment，公式为 contract_budget × 2。承制模式的 total_investment 为空/不适用，investment_percent=0。
-- 委员会模式的 investment_percent 为10–100、步长10；公司投资额为 floor(total_investment×investment_percent/100)。其他投资方共同补足剩余投资规模。
-- Project.committee 仅委员会模式可携带；承制必须为 null。只有委员会模式可拉入委员会成员开放额外渠道。
+- Project.committee 与 Project.total_investment 仅委员会模式生成；承制必须均不适用。只有委员会模式可拉入委员会成员开放额外渠道。
 - BD 毛收入初始50%计入公司所得、50%为综合成本。可直接计算 gross_bd_revenue×0.5，也可先记毛收入再扣成本；不得重复扣除。分渠道数据必须能同时核对毛收入与公司实际所得。
 
 以上是目标协议，需由 #6 同步 gameV3.ts、C++ 校验、报价生成、核心校验与测试；当前文档不代表代码已支持。
