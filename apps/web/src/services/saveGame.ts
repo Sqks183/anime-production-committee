@@ -1,16 +1,8 @@
-import { isGameState } from '../types/game'
-import type { GameState } from '../types/game'
-import { isGameState as isV3GameState } from '../types/gameV3'
-import type { GameState as V3GameState } from '../types/gameV3'
+import { isGameState } from '../types/gameV3'
+import type { GameState, SaveRecord } from '../types/gameV3'
 
 const databaseName = 'anime-production-committee'
 const storeName = 'saves'
-
-interface SaveRecord {
-  version: 2
-  savedAt: string
-  state: GameState
-}
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -35,7 +27,7 @@ export async function saveGame(state: GameState): Promise<void> {
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(storeName, 'readwrite')
-      transaction.objectStore(storeName).put({ version: 2, savedAt: new Date().toISOString(), state } satisfies SaveRecord, 'current')
+      transaction.objectStore(storeName).put({ version: 3, savedAt: new Date().toISOString(), state } satisfies SaveRecord, 'current')
       transaction.oncomplete = () => resolve()
       transaction.onabort = () => reject(transaction.error ?? new Error('保存失败'))
       transaction.onerror = () => reject(transaction.error ?? new Error('保存失败'))
@@ -63,21 +55,7 @@ async function readSaveRecord(): Promise<unknown> {
   return record
 }
 
-export async function loadGame(): Promise<GameState | null> {
-  const record = await readSaveRecord()
-  if (record === undefined) return null
-  if (typeof record === 'object' && record !== null && 'version' in record && record.version === 1) {
-    throw new Error('v1 存档是旧版工程验证数据，不支持载入。请新开游戏；旧存档未被覆盖。')
-  }
-  if (typeof record !== 'object' || record === null || !('version' in record) || record.version !== 2
-    || !('savedAt' in record) || typeof record.savedAt !== 'string' || !Number.isFinite(Date.parse(record.savedAt))
-    || !('state' in record) || !isGameState(record.state)) {
-    throw new Error('存档损坏或版本不受支持，当前数据未改变。')
-  }
-  return record.state
-}
-
-export function decodeV3SaveRecord(record: unknown): V3GameState | null {
+export function decodeV3SaveRecord(record: unknown): GameState | null {
   if (record === undefined) return null
   if (typeof record === 'object' && record !== null && 'version' in record
     && (record.version === 1 || record.version === 2)) {
@@ -85,12 +63,12 @@ export function decodeV3SaveRecord(record: unknown): V3GameState | null {
   }
   if (typeof record !== 'object' || record === null || Array.isArray(record) || !('version' in record) || record.version !== 3
     || !('savedAt' in record) || typeof record.savedAt !== 'string' || !Number.isFinite(Date.parse(record.savedAt))
-    || !('state' in record) || !isV3GameState(record.state)) {
+    || !('state' in record) || !isGameState(record.state)) {
     throw new Error('存档损坏或版本不受支持，当前数据未改变。')
   }
   return record.state
 }
 
-export async function loadGameV3(): Promise<V3GameState | null> {
+export async function loadGame(): Promise<GameState | null> {
   return decodeV3SaveRecord(await readSaveRecord())
 }

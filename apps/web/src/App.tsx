@@ -16,6 +16,6 @@ export default function App() {
     {error && <div className="feedback error" role="alert">{error}</div>}
     {notice && <div className="feedback" role="status">{notice}</div>}
     {screen === 'home' ? <HomePage core={core} /> : <StudioPage core={core} />}
-    <footer className="app-footer"><span>独立动画制作室 <span className="footer-divider">/</span> 纵向切片</span><span>项目开发中 · 本地存档 · 单人体验</span></footer>
+    <footer className="app-footer"><span>独立动画制作室 <span className="footer-divider">/</span> 周制纵向切片</span><span>项目开发中 · 本地存档 · 单人体验</span></footer>
   </div>
 }

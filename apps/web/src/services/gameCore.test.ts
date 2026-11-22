@@ -1,9 +1,10 @@
 import { beforeEach, expect, it, vi } from 'vitest'
-import { dayReport, deferred, eventState, idleState, producingState, projectResult } from '../test/fixtures'
-import type { CoreMethod, CoreModule } from '../types/game'
+import { deferred, v3EndedState, v3EventState, v3IdleState, v3ProducingState, v3SettledState, v3WeekReport } from '../test/fixtures'
+import type { CoreMethod, StageConfiguration } from '../types/gameV3'
+import type { CoreModule } from './gameCore'
 
 const moduleUrl = new URL('/wasm/game-core.mjs', window.location.href).href
-const methods: CoreMethod[] = ['initialize_game', 'start_project', 'apply_decision', 'advance_day', 'resolve_event', 'calculate_result']
+const methods: CoreMethod[] = ['initialize_game', 'start_project', 'apply_decision', 'advance_week', 'resolve_event', 'calculate_result']
 type Api = typeof import('./gameCore')
 
 beforeEach(() => {
@@ -17,7 +18,7 @@ function moduleFixture(response = '{}'): CoreModule {
     initialize_game: vi.fn(() => response),
     start_project: vi.fn(() => response),
     apply_decision: vi.fn(() => response),
-    advance_day: vi.fn(() => response),
+    advance_week: vi.fn(() => response),
     resolve_event: vi.fn(() => response),
     calculate_result: vi.fn(() => response),
   }
@@ -28,14 +29,25 @@ async function mockCore(module: Partial<CoreModule>) {
   return import('./gameCore')
 }
 
-const state = producingState()
+const state = v3ProducingState()
+function startedState() {
+  const next = v3ProducingState()
+  next.project!.stages.script = { ...next.project!.stages.script, status: 'ready', configuration: null }
+  next.preview = null
+  return next
+}
+const settled = v3SettledState()
+const ended = v3EndedState()
+const configuration: StageConfiguration = { assignments: [{ staff_id: 'v3_director', role: 'director', focus: 'direction' }], policy: 'balanced', overtime: false }
+
 const cases: { method: CoreMethod; input: unknown; response: unknown; invoke: (api: Api) => Promise<unknown> }[] = [
-  { method: 'initialize_game', input: { seed: 12345 }, response: { state: idleState() }, invoke: (api) => api.initializeGame(12345) },
-  { method: 'start_project', input: { state, project_id: 'proj_ova_01' }, response: { state, message: '接手回执' }, invoke: (api) => api.startProject(state, 'proj_ova_01') },
-  { method: 'apply_decision', input: { state, decision: { type: 'outsource', stage: 'pre', enabled: false } }, response: { state, message: '决策回执' }, invoke: (api) => api.applyDecision(state, { type: 'outsource', stage: 'pre', enabled: false }) },
-  { method: 'advance_day', input: { state }, response: { state: eventState(), report: dayReport() }, invoke: (api) => api.advanceDay(state) },
-  { method: 'resolve_event', input: { state, option_id: 'opt_b' }, response: { state, message: '事件回执' }, invoke: (api) => api.resolveEvent(state, 'opt_b') },
-  { method: 'calculate_result', input: { state }, response: { state: idleState(), result: projectResult() }, invoke: (api) => api.calculateResult(state) },
+  { method: 'initialize_game', input: { seed: 12345 }, response: { state: v3IdleState(), message: '公司成立' }, invoke: (api) => api.initializeGame(12345) },
+  { method: 'start_project', input: { state, offer_id: 'v3_ova', mode: 'contract', investment_percent: 0 }, response: { state: startedState(), message: '接手回执' }, invoke: (api) => api.startProject(state, 'v3_ova') },
+  { method: 'apply_decision', input: { state, decision: { type: 'configure_stage', stage: 'script', configuration } }, response: { state, message: '决策回执' }, invoke: (api) => api.applyDecision(state, { type: 'configure_stage', stage: 'script', configuration }) },
+  { method: 'advance_week', input: { state }, response: { state: v3EventState(), report: v3WeekReport() }, invoke: (api) => api.advanceWeek(state) },
+  { method: 'resolve_event', input: { state, option_id: 'v3_keep' }, response: { state, message: '事件回执' }, invoke: (api) => api.resolveEvent(state, 'v3_keep') },
+  { method: 'calculate_result', input: { state, scope: 'project' }, response: { state: settled, scope: 'project', result: settled.history[0] }, invoke: (api) => api.calculateProjectResult(state) },
+  { method: 'calculate_result', input: { state, scope: 'company' }, response: { state: ended, scope: 'company', result: ended.company_result }, invoke: (api) => api.calculateCompanyResult(state) },
 ]
 
 it.each(cases)('$method 使用 snake_case 完整信封，不重算返回值（工厂隔离测试）', async ({ method, input, response, invoke }) => {
@@ -45,43 +57,66 @@ it.each(cases)('$method 使用 snake_case 完整信封，不重算返回值（�
   expect(module[method]).toHaveBeenCalledWith(JSON.stringify(input))
 })
 
-it.each(['INVALID_INPUT', 'INSUFFICIENT_BUDGET', 'INVALID_PHASE', 'INTERNAL_ERROR'])('保留 C++ 结构化错误 %s', async (code) => {
-  const api = await mockCore(moduleFixture(JSON.stringify({ error: { code, message: '核心拒绝此操作' } })))
-  await expect(api.advanceDay(state)).rejects.toMatchObject({ code, message: '核心拒绝此操作', name: 'GameCoreError' })
+it('resolve_event 可选携带阶段配置，未提供时不写入 configuration 键', async () => {
+  const module = moduleFixture(JSON.stringify({ state, message: '事件回执' }))
+  const api = await mockCore(module)
+  await api.resolveEvent(state, 'v3_discuss', configuration)
+  expect(module.resolve_event).toHaveBeenCalledWith(JSON.stringify({ state, option_id: 'v3_discuss', configuration }))
 })
 
-it.each(['null', '[]', '{', '{}', '{"error":null}', '{"error":{"code":"NOT_IMPLEMENTED","message":"旧版"}}', '{"error":{"code":"INVALID_INPUT","message":42}}', '{"state":{"version":2},"report":{}}'])('拒绝非法返回 %s', async (response) => {
+it.each(['INVALID_INPUT', 'INVALID_PHASE', 'INSUFFICIENT_BUDGET', 'STAGE_LOCKED', 'MODE_NOT_ALLOWED', 'CAPACITY_EXCEEDED', 'COMPANY_ENDED', 'INTERNAL_ERROR'])('保留 C++ 结构化错误 %s', async (code) => {
+  const api = await mockCore(moduleFixture(JSON.stringify({ error: { code, message: '核心拒绝此操作' } })))
+  await expect(api.advanceWeek(state)).rejects.toMatchObject({ code, message: '核心拒绝此操作', name: 'GameCoreError' })
+})
+
+it.each(['null', '[]', '{', '{}', '{"error":null}', '{"error":{"code":"NOT_IMPLEMENTED","message":"旧版"}}', '{"error":{"code":"INVALID_INPUT","message":42}}', '{"state":{"version":2}}'])('拒绝非法返回 %s', async (response) => {
   const api = await mockCore(moduleFixture(response))
-  await expect(api.advanceDay(state)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+  await expect(api.advanceWeek(state)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
 })
 
 it.each(cases)('$method 拒绝缺失 payload 或损坏状态', async ({ invoke, method, response }) => {
   const module = moduleFixture(JSON.stringify({ state }))
-  if (method === 'initialize_game') module.initialize_game = vi.fn(() => JSON.stringify({ state: { ...state, funds: -1 } }))
   const api = await mockCore(module)
   await expect(invoke(api)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
-  vi.mocked(module[method]).mockReturnValue(JSON.stringify({ ...response as object, state: { ...state, seed: 0x100000000 } }))
+  const broken = JSON.parse(JSON.stringify(response)) as { state: { seed: number } }
+  broken.state.seed = 0x100000000
+  vi.mocked(module[method]).mockReturnValue(JSON.stringify(broken))
   await expect(invoke(api)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
 })
 
-it('拒绝损坏的日报与结算数值', async () => {
+it('initialize_game 拒绝负资金，start_project 拒绝未配置的首阶段', async () => {
   const module = moduleFixture()
-  module.advance_day = vi.fn(() => JSON.stringify({ state, report: { ...dayReport(), morale_delta: 101 } }))
-  module.calculate_result = vi.fn(() => JSON.stringify({ state: idleState(), result: { ...projectResult(), profit: 0.25 } }))
+  const poor = v3IdleState()
+  poor.company.funds = -1
+  module.initialize_game = vi.fn(() => JSON.stringify({ state: poor, message: '成立' }))
+  module.start_project = vi.fn(() => JSON.stringify({ state, message: '接手' }))
   const api = await mockCore(module)
-  await expect(api.advanceDay(state)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
-  await expect(api.calculateResult(state)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+  await expect(api.initializeGame(12345)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+  await expect(api.startProject(state, 'v3_ova')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+})
+
+it('拒绝损坏的周报与结算数值', async () => {
+  const module = moduleFixture()
+  const lateReport = { ...v3WeekReport(), week: 2 }
+  const badMorale = { ...v3WeekReport(), staff_deltas: [{ ...v3WeekReport().staff_deltas[0], morale_delta: 101 }] }
+  module.advance_week = vi.fn(() => JSON.stringify({ state: v3EventState(), report: lateReport }))
+  const api = await mockCore(module)
+  await expect(api.advanceWeek(state)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+  vi.mocked(module.advance_week).mockReturnValue(JSON.stringify({ state: v3EventState(), report: badMorale }))
+  await expect(api.advanceWeek(state)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+  vi.mocked(module.calculate_result).mockReturnValue(JSON.stringify({ state: settled, scope: 'project', result: { ...settled.history[0], profit: 0.25 } }))
+  await expect(api.calculateProjectResult(state)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
 })
 
 it('捕获导出函数抛出的异常并保留 cause', async () => {
   const trap = new Error('wasm trap')
   const module = moduleFixture()
-  module.advance_day = vi.fn(() => { throw trap })
+  module.advance_week = vi.fn(() => { throw trap })
   const api = await mockCore(module)
-  await expect(api.advanceDay(state)).rejects.toMatchObject({ code: 'CALL_FAILED', cause: trap })
+  await expect(api.advanceWeek(state)).rejects.toMatchObject({ code: 'CALL_FAILED', cause: trap })
 })
 
-it.each(methods)('加载时验证 %s 导出，而非只检测 advance_day', async (method) => {
+it.each(methods)('加载时验证 %s 导出，而非只检测 advance_week', async (method) => {
   const module: Partial<CoreModule> = moduleFixture()
   delete module[method]
   const api = await mockCore(module)

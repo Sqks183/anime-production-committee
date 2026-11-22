@@ -77,43 +77,44 @@ async function newProject(page, seed = 12345) {
   await ready(page)
   await page.getByRole('button', { name: '开始经营', exact: true }).click()
   await page.getByRole('button', { name: '接手：放学后的第七帧', exact: true }).click()
-  await page.getByRole('button', { name: '推进今天', exact: true }).waitFor()
+  await page.getByRole('button', { name: '锁定阶段方案', exact: true }).waitFor()
+}
+async function lockStage(page) {
+  await page.getByRole('button', { name: '锁定阶段方案', exact: true }).click()
+  await page.getByRole('button', { name: '推进本周', exact: true }).waitFor()
 }
 async function advanceUi(page) {
-  const previous = await page.getByTestId('day').textContent()
-  await page.getByRole('button', { name: '推进今天', exact: true }).click()
-  await page.waitForFunction((previous) => document.querySelector('[data-testid="day"]')?.textContent !== previous
+  const previous = await page.getByTestId('week').textContent()
+  await page.getByRole('button', { name: '推进本周', exact: true }).click()
+  await page.waitForFunction((previous) => document.querySelector('[data-testid="week"]')?.textContent !== previous
     || [...document.querySelectorAll('button')].some((button) => button.textContent.includes('结算项目')), previous)
 }
 async function finishUi(page) {
-  let events = 0
   for (let step = 0; step < 100; step++) {
     const settlement = page.getByRole('button', { name: '结算项目', exact: true })
     if (await settlement.isVisible()) {
       await settlement.click()
       await page.getByTestId('project-result').waitFor()
-      return events
+      return
     }
-    const event = page.getByRole('region', { name: '制作事件' })
-    if (await event.isVisible()) {
-      await event.getByRole('button').last().click()
-      await event.waitFor({ state: 'hidden' })
-      events++
-    } else await advanceUi(page)
+    const configure = page.getByRole('button', { name: '锁定阶段方案', exact: true })
+    if (await configure.isVisible()) await lockStage(page)
+    else await advanceUi(page)
   }
   assert.fail('100 步内未到达项目结算')
 }
-async function realCoreFixture(page, changes = {}) {
-  return page.evaluate(async (changes) => {
+async function realCoreFixture(page) {
+  return page.evaluate(async () => {
     const { default: create } = await import('/wasm/game-core.mjs')
     const core = await create()
     const initial = JSON.parse(core.initialize_game(JSON.stringify({ seed: 12345 }))).state
-    const state = JSON.parse(core.start_project(JSON.stringify({ state: initial, project_id: 'proj_ova_01' }))).state
-    return { ...state, ...changes }
-  }, changes)
+    const started = JSON.parse(core.start_project(JSON.stringify({ state: initial, offer_id: 'proj_ova_01', mode: 'contract', investment_percent: 0 }))).state
+    const configuration = started.project.stages.script.recommended_configuration
+    return JSON.parse(core.apply_decision(JSON.stringify({ state: started, decision: { type: 'configure_stage', stage: 'script', configuration } }))).state
+  })
 }
 
-test('浏览器真实 WASM 新游戏→决策→按期交付→结算，且同种子完整重放一致', async () => {
+test('浏览器真实 WASM 新游戏→阶段配置→周推进→违约结算→返回市场，且同种子完整重放一致', async () => {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
   try {
     const page = await context.newPage()
@@ -128,36 +129,49 @@ test('浏览器真实 WASM 新游戏→决策→按期交付→结算，且同�
     assert.deepEqual([...((await response.body()).subarray(0, 4))], [0, 97, 115, 109])
     await page.screenshot({ path: resolve(screenshots, 'home-desktop.png'), fullPage: true, animations: 'disabled' })
     await page.getByRole('button', { name: '开始经营', exact: true }).click()
-    assert.equal(await page.getByRole('button', { name: /接手：未寄出的夏天/ }).isDisabled(), true)
+    await textEquals(page.getByTestId('funds'), '¥2,000,000')
+    await textEquals(page.getByTestId('week'), '0')
+    const offers = page.getByRole('region', { name: '企划报价' })
+    assert.equal(await offers.getByRole('button').count(), 4)
     await page.getByRole('button', { name: '接手：放学后的第七帧', exact: true }).click()
-    await textEquals(page.getByTestId('funds'), '¥10,000,000')
-    await page.getByRole('combobox', { name: '制作方针', exact: true }).selectOption('polish')
-    await page.getByRole('combobox', { name: '制作方针', exact: true }).selectOption('normal')
+    await textEquals(page.getByTestId('funds'), '¥6,000,000')
+    await textEquals(page.getByTestId('progress-script'), '0%')
+    assert.equal(await page.getByRole('combobox', { name: '制作方针', exact: true }).inputValue(), 'balanced')
+    await lockStage(page)
     await advanceUi(page)
-    await textEquals(page.getByTestId('funds'), '¥9,700,000')
-    await textEquals(page.getByTestId('progress-pre'), '6%')
+    await textEquals(page.getByTestId('funds'), '¥5,790,000')
+    await textEquals(page.getByTestId('week'), '1')
+    await textEquals(page.getByTestId('progress-script'), '33%')
+    assert.match(await page.getByTestId('week-report').textContent(), /-210,000/)
     await page.screenshot({ path: resolve(screenshots, 'studio-desktop.png'), fullPage: true, animations: 'disabled' })
-    assert.equal(await finishUi(page), 1)
+    await finishUi(page)
     const receipt = await page.getByTestId('project-result').textContent()
-    assert.match(receipt, /79/)
-    assert.match(receipt, /6,320,000/)
-    assert.match(receipt, /1,220,000/)
-    await textEquals(page.getByTestId('funds'), '¥11,220,000')
+    assert.match(receipt, /截止违约交付/)
+    assert.match(receipt, /58/)
+    assert.match(receipt, /855,000/)
+    assert.match(receipt, /\+260,000/)
+    assert.match(receipt, /800,000/)
+    await textEquals(page.getByTestId('funds'), '¥2,260,000')
     await page.screenshot({ path: resolve(screenshots, 'settlement-desktop.png'), fullPage: true, animations: 'disabled' })
     const first = await savedState(page)
-    assert.equal(first.version, 2)
-    assert.equal(first.state.day, 18)
-    assert.equal(first.state.reputation, 10)
-    assert.equal(first.state.phase, 'idle')
-    assert.equal(first.state.seed, 1702883732)
+    assert.equal(first.version, 3)
+    assert.equal(first.state.company.week, 14)
+    assert.equal(first.state.phase, 'project_settled')
+    assert.equal(first.state.seed, 12345)
+    assert.equal(first.state.history.length, 1)
+    await page.getByRole('button', { name: '回到企划市场', exact: true }).click()
+    await page.getByRole('button', { name: '接手：便利屋手记', exact: true }).waitFor()
+    assert.equal((await savedState(page)).state.seed, 87628868)
     await newProject(page)
-    await page.getByRole('combobox', { name: '制作方针', exact: true }).selectOption('polish')
-    await page.getByRole('combobox', { name: '制作方针', exact: true }).selectOption('normal')
     await finishUi(page)
     assert.equal(await page.getByTestId('project-result').textContent(), receipt)
     assert.deepEqual((await savedState(page)).state, first.state)
-    await page.getByRole('button', { name: '接手：星轨列车', exact: true }).click()
-    assert.equal((await savedState(page)).state.project.start_day, 18)
+    await page.getByRole('button', { name: '回到企划市场', exact: true }).click()
+    await page.getByRole('button', { name: '接手：便利屋手记', exact: true }).click()
+    const next = await savedState(page)
+    assert.equal(next.state.project.start_week, 14)
+    assert.equal(next.state.project.deadline_week, 25)
+    assert.equal(next.state.company.funds, 5460000)
     assert.deepEqual(errors, [])
   } finally { await context.close() }
 })
@@ -170,15 +184,17 @@ test('IndexedDB 保存、刷新恢复、无存档提示与继续经营', async (
     await page.getByRole('button', { name: '读取本地存档' }).click()
     await page.getByText('此浏览器还没有存档。', { exact: true }).waitFor()
     await newProject(page)
+    await lockStage(page)
     await advanceUi(page)
     const saved = await savedState(page)
+    assert.equal(saved.version, 3)
     await advanceUi(page)
     await page.getByRole('button', { name: '返回首页', exact: true }).click()
     await page.getByRole('button', { name: '继续经营', exact: true }).click()
-    await textEquals(page.getByTestId('funds'), '¥9,400,000')
+    await textEquals(page.getByTestId('funds'), '¥5,580,000')
     await page.reload(); await ready(page)
     await page.getByRole('button', { name: '读取本地存档' }).click()
-    await textEquals(page.getByTestId('funds'), '¥9,700,000')
+    await textEquals(page.getByTestId('funds'), '¥5,790,000')
     assert.deepEqual((await savedState(page)).state, saved.state)
   } finally { await context.close() }
 })
@@ -198,67 +214,75 @@ for (const asset of ['mjs', 'wasm']) {
       await ready(page)
       await page.getByRole('button', { name: '开始经营', exact: true }).click()
       await page.getByRole('button', { name: '接手：放学后的第七帧', exact: true }).click()
+      await lockStage(page)
       await advanceUi(page)
-      await textEquals(page.getByTestId('funds'), '¥9,700,000')
+      await textEquals(page.getByTestId('funds'), '¥5,790,000')
     } finally { await context.close() }
   })
 }
 
-test('事件阻塞、资金不足保持状态、破产结算与损坏/旧版存档拒绝', async () => {
-  const context = await browser.newContext()
-  try {
-    const page = await context.newPage()
-    await newProject(page, 13)
-    await advanceUi(page)
-    const event = page.getByRole('region', { name: '制作事件' })
-    await event.waitFor()
-    const advance = page.getByRole('button', { name: '推进今天', exact: true })
-    assert.equal(await advance.count() === 0 || await advance.isDisabled(), true)
-    const saved = await savedState(page)
-    const poor = { ...saved.state, funds: 0 }
-    await putSave(page, { version: 2, state: poor, savedAt: new Date().toISOString() })
-    await page.getByRole('button', { name: '读取存档', exact: true }).click()
-    await textEquals(page.getByTestId('funds'), '¥0')
-    await event.getByRole('button').first().click()
-    await page.getByRole('alert').filter({ hasText: '资金不足' }).waitFor()
-    assert.deepEqual((await savedState(page)).state, poor)
-    await event.getByRole('button').last().click()
-    await event.waitFor({ state: 'hidden' })
-    await advanceUi(page)
-    await page.getByRole('button', { name: '结算项目', exact: true }).click()
-    await page.getByTestId('project-result').waitFor()
-    assert.match(await page.getByTestId('project-result').textContent(), /破产/)
-    const settled = await savedState(page)
-    assert.equal(settled.state.day, 2)
-    assert.equal(settled.state.seed, 1035543048)
-    for (const record of [{ version: 99, state: {} }, { version: 1, state: { budget: 100000, progress: 20, seed: 1 } }]) {
-      await putSave(page, record)
-      await page.getByRole('button', { name: '读取存档', exact: true }).click()
-      await page.getByRole('alert').waitFor()
-      assert.deepEqual((await savedState(page)).state, settled.state)
-    }
-  } finally { await context.close() }
-})
-
-test('读取临近截止的合法边界存档并强制交付结算', async () => {
+test('周支出预检破产零变化、经营总结与损坏/旧版存档拒绝', async () => {
   const context = await browser.newContext()
   try {
     const page = await context.newPage()
     await page.goto(baseUrl); await ready(page)
     const state = await realCoreFixture(page)
-    state.project.deadline_day = 1
-    await putSave(page, { version: 2, state, savedAt: new Date().toISOString() })
+    const poor = { ...state, company: { ...state.company, funds: 179999 } }
+    await putSave(page, { version: 3, state: poor, savedAt: new Date().toISOString() })
+    await page.getByRole('button', { name: '读取本地存档' }).click()
+    await textEquals(page.getByTestId('funds'), '¥179,999')
+    await page.getByRole('button', { name: '推进本周', exact: true }).click()
+    await page.getByText('资金破产，公司进入结束流程。', { exact: true }).waitFor()
+    await textEquals(page.getByTestId('funds'), '¥179,999')
+    assert.match(await page.getByTestId('week-report').textContent(), /¥0/)
+    await page.getByRole('button', { name: '结算项目', exact: true }).click()
+    await page.getByTestId('project-result').waitFor()
+    assert.match(await page.getByTestId('project-result').textContent(), /公司关闭交付/)
+    assert.match(await page.getByTestId('project-result').textContent(), /400,000/)
+    await textEquals(page.getByTestId('funds'), '¥-220,001')
+    await page.getByRole('button', { name: '生成经营总结', exact: true }).click()
+    const summary = page.getByTestId('company-result')
+    await summary.waitFor()
+    assert.match(await summary.textContent(), /资金破产/)
+    assert.match(await summary.textContent(), /-220,001/)
+    const settled = await savedState(page)
+    assert.equal(settled.state.phase, 'company_ended')
+    assert.equal(settled.state.company.status, 'ended')
+    for (const record of [
+      { version: 99, state: {} },
+      { version: 2, savedAt: new Date().toISOString(), state: { version: 2, day: 3, funds: 100000, seed: 1 } },
+      { version: 1, savedAt: new Date().toISOString(), state: { budget: 100000, progress: 20, seed: 1 } },
+    ]) {
+      await putSave(page, record)
+      await page.getByRole('button', { name: '读取存档', exact: true }).click()
+      await page.getByRole('alert').waitFor()
+      assert.match(await page.getByRole('alert').textContent(), record.version === 99 ? /存档损坏/ : new RegExp(`v${record.version} 存档不兼容周制经营 v3`))
+      assert.deepEqual((await savedState(page)).state, settled.state)
+    }
+  } finally { await context.close() }
+})
+
+test('读取临近截止的合法边界存档并强制违约交付结算', async () => {
+  const context = await browser.newContext()
+  try {
+    const page = await context.newPage()
+    await page.goto(baseUrl); await ready(page)
+    const state = await realCoreFixture(page)
+    state.project.deadline_week = 1
+    await putSave(page, { version: 3, state, savedAt: new Date().toISOString() })
     await page.getByRole('button', { name: '读取本地存档' }).click()
     await advanceUi(page)
     await page.getByRole('button', { name: '结算项目', exact: true }).click()
     await page.getByTestId('project-result').waitFor()
-    assert.equal((await savedState(page)).state.phase, 'idle')
-    assert.match(await page.getByTestId('project-result').textContent(), /截止|超期|违约/)
+    assert.match(await page.getByTestId('project-result').textContent(), /截止违约交付/)
+    assert.match(await page.getByTestId('project-result').textContent(), /800,000/)
+    await textEquals(page.getByTestId('funds'), '¥4,990,000')
+    assert.equal((await savedState(page)).state.phase, 'project_settled')
   } finally { await context.close() }
 })
 
 for (const width of [375, 768]) {
-  test(`${width}px 首页、报价、制作、事件、结算无横向溢出，控件可操作`, async () => {
+  test(`${width}px 首页、报价、阶段配置、制作、结算无横向溢出，控件可操作`, async () => {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: 'reduce' })
     try {
       const page = await context.newPage()
@@ -270,10 +294,15 @@ for (const width of [375, 768]) {
       await page.getByRole('button', { name: '接手：放学后的第七帧', exact: true }).waitFor()
       await noOverflow()
       await page.getByRole('button', { name: '接手：放学后的第七帧', exact: true }).click()
-      await page.getByRole('combobox', { name: '林导演排班', exact: true }).selectOption('rest')
-      await page.getByRole('combobox', { name: '林导演排班', exact: true }).selectOption('pre')
+      await page.getByRole('combobox', { name: '制作方针', exact: true }).waitFor()
+      await noOverflow()
+      await page.screenshot({ path: resolve(screenshots, `config-${width}.png`), fullPage: true, animations: 'disabled' })
+      await page.getByRole('combobox', { name: '制作方针', exact: true }).selectOption('quality')
+      await page.getByRole('combobox', { name: '制作方针', exact: true }).selectOption('balanced')
+      await page.getByRole('combobox', { name: '林导演专注', exact: true }).selectOption('planning')
+      await page.getByRole('combobox', { name: '林导演专注', exact: true }).selectOption('direction')
+      await lockStage(page)
       await advanceUi(page)
-      await page.getByRole('region', { name: '制作事件' }).waitFor()
       await noOverflow()
       await page.screenshot({ path: resolve(screenshots, `studio-${width}.png`), fullPage: true, animations: 'disabled' })
       await finishUi(page)

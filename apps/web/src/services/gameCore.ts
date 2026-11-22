@@ -1,8 +1,11 @@
-import { isAdvanceDayResult, isCalculateResultResponse, isGameMessageResponse, isGameStateResponse } from '../types/game'
-import type { AdvanceDayResult, CalculateResultResponse, CoreErrorCode, CoreMethod, CoreModule, Decision, GameMessageResponse, GameState, GameStateResponse } from '../types/game'
+import { CORE_METHODS, isCoreResponse } from '../types/gameV3'
+import type { CompanyResult, CoreErrorCode, CoreMethod, CoreResponses, CooperationMode, Decision, GameState, StageConfiguration, StateResponse, WeekReport, WorkRecord } from '../types/gameV3'
+
+export type CoreModule = Record<CoreMethod, (input: string) => string>
+export type ServiceErrorCode = CoreErrorCode | 'LOAD_FAILED' | 'CALL_FAILED' | 'INVALID_RESPONSE'
 
 export class GameCoreError extends Error {
-  constructor(public readonly code: CoreErrorCode, message: string, options?: ErrorOptions) {
+  constructor(public readonly code: ServiceErrorCode, message: string, options?: ErrorOptions) {
     super(message, options)
     this.name = 'GameCoreError'
   }
@@ -23,8 +26,7 @@ export function loadGameCore(): Promise<CoreModule> {
         const module: CoreModule = await createGameCore({
           locateFile: (file: string) => new URL(file, moduleUrl).href,
         })
-        const methods: CoreMethod[] = ['initialize_game', 'start_project', 'apply_decision', 'advance_day', 'resolve_event', 'calculate_result']
-        for (const method of methods) {
+        for (const method of CORE_METHODS) {
           if (typeof module?.[method] !== 'function') throw new Error(`WASM 缺少 ${method} 导出`)
         }
         return module
@@ -40,7 +42,7 @@ export function loadGameCore(): Promise<CoreModule> {
   return modulePromise
 }
 
-const errorCodes: CoreErrorCode[] = ['INVALID_INPUT', 'INSUFFICIENT_BUDGET', 'INVALID_PHASE', 'INTERNAL_ERROR']
+const errorCodes: CoreErrorCode[] = ['INVALID_INPUT', 'INVALID_PHASE', 'INSUFFICIENT_BUDGET', 'STAGE_LOCKED', 'MODE_NOT_ALLOWED', 'CAPACITY_EXCEEDED', 'COMPANY_ENDED', 'INTERNAL_ERROR']
 
 export async function callCore(method: CoreMethod, input: unknown): Promise<unknown> {
   const module = await loadGameCore()
@@ -70,32 +72,41 @@ export async function callCore(method: CoreMethod, input: unknown): Promise<unkn
   return result
 }
 
-async function checkedCall<T>(method: CoreMethod, input: unknown, validate: (value: unknown) => value is T): Promise<T> {
+async function checkedCall<M extends CoreMethod>(method: M, input: unknown): Promise<CoreResponses[M]> {
   const response = await callCore(method, input)
-  if (!validate(response)) throw new GameCoreError('INVALID_RESPONSE', 'C++ 返回的经营数据无效。')
+  if (!isCoreResponse(method, response)) throw new GameCoreError('INVALID_RESPONSE', 'C++ 返回的经营数据无效。')
   return response
 }
 
-export function initializeGame(seed: number): Promise<GameStateResponse> {
-  return checkedCall('initialize_game', { seed }, isGameStateResponse)
+export function initializeGame(seed: number): Promise<StateResponse> {
+  return checkedCall('initialize_game', { seed })
 }
 
-export function startProject(state: GameState, projectId: string): Promise<GameMessageResponse> {
-  return checkedCall('start_project', { state, project_id: projectId }, isGameMessageResponse)
+export function startProject(state: GameState, offerId: string, mode: CooperationMode = 'contract', investmentPercent = 0): Promise<StateResponse> {
+  return checkedCall('start_project', { state, offer_id: offerId, mode, investment_percent: investmentPercent })
 }
 
-export function applyDecision(state: GameState, decision: Decision): Promise<GameMessageResponse> {
-  return checkedCall('apply_decision', { state, decision }, isGameMessageResponse)
+export function applyDecision(state: GameState, decision: Decision): Promise<StateResponse> {
+  return checkedCall('apply_decision', { state, decision })
 }
 
-export function advanceDay(state: GameState): Promise<AdvanceDayResult> {
-  return checkedCall('advance_day', { state }, isAdvanceDayResult)
+export function advanceWeek(state: GameState): Promise<{ state: GameState; report: WeekReport }> {
+  return checkedCall('advance_week', { state })
 }
 
-export function resolveEvent(state: GameState, optionId: string): Promise<GameMessageResponse> {
-  return checkedCall('resolve_event', { state, option_id: optionId }, isGameMessageResponse)
+export function resolveEvent(state: GameState, optionId: string, configuration?: StageConfiguration): Promise<StateResponse> {
+  const input = configuration === undefined ? { state, option_id: optionId } : { state, option_id: optionId, configuration }
+  return checkedCall('resolve_event', input)
 }
 
-export function calculateResult(state: GameState): Promise<CalculateResultResponse> {
-  return checkedCall('calculate_result', { state }, isCalculateResultResponse)
+export async function calculateProjectResult(state: GameState): Promise<{ state: GameState; scope: 'project'; result: WorkRecord }> {
+  const response = await checkedCall('calculate_result', { state, scope: 'project' })
+  if (response.scope !== 'project') throw new GameCoreError('INVALID_RESPONSE', 'C++ 返回的经营数据无效。')
+  return response
+}
+
+export async function calculateCompanyResult(state: GameState): Promise<{ state: GameState; scope: 'company'; result: CompanyResult }> {
+  const response = await checkedCall('calculate_result', { state, scope: 'company' })
+  if (response.scope !== 'company') throw new GameCoreError('INVALID_RESPONSE', 'C++ 返回的经营数据无效。')
+  return response
 }

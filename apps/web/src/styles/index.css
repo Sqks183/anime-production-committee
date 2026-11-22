@@ -101,6 +101,12 @@ h1,h2,p { margin-top: 0; }
 .check-control { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; min-width: 44px; font-size: 12px; cursor: pointer; }
 .policy-control { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 20px; font-size: 13px; }
 .policy-control select { min-width: 140px; }
+.stage-status { margin-left: 8px; font-weight: 400; font-size: 11px; color: var(--site-muted); }
+.stage-config { display: grid; gap: 4px; padding-top: 8px; }
+.stage-config .policy-control { padding-top: 12px; }
+.stage-config .staff-controls { flex-wrap: wrap; justify-content: flex-start; gap: 12px 20px; padding: 8px 0; }
+.stage-config .staff-controls > label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.stage-config .staff-controls select { min-width: 110px; }
 .staff-row { padding: 18px 0; border-bottom: 1px dashed var(--site-border); }
 .staff-row:last-child { border: 0; padding-bottom: 0; }
 .staff-name { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }

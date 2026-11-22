@@ -5,9 +5,9 @@ import { HomePage } from './HomePage'
 import { useGameStore } from '../stores/gameStore'
 import { initializeGame } from '../services/gameCore'
 import { loadGame } from '../services/saveGame'
-import { deferred, idleState, producingState } from '../test/fixtures'
+import { deferred, v3IdleState, v3ProducingState } from '../test/fixtures'
 
-vi.mock('../services/gameCore', () => ({ initializeGame: vi.fn(), startProject: vi.fn(), applyDecision: vi.fn(), advanceDay: vi.fn(), resolveEvent: vi.fn(), calculateResult: vi.fn() }))
+vi.mock('../services/gameCore', () => ({ initializeGame: vi.fn(), startProject: vi.fn(), applyDecision: vi.fn(), advanceWeek: vi.fn(), calculateProjectResult: vi.fn(), calculateCompanyResult: vi.fn() }))
 vi.mock('../services/saveGame', () => ({ loadGame: vi.fn(), saveGame: vi.fn() }))
 const ready = { status: 'ready' as const, error: null, retry: vi.fn() }
 
@@ -18,7 +18,7 @@ beforeEach(() => {
 })
 
 it('保留首页设计内容，开始经营调用初始化后进入经营页', async () => {
-  vi.mocked(initializeGame).mockResolvedValue({ state: idleState() })
+  vi.mocked(initializeGame).mockResolvedValue({ state: v3IdleState(), message: '公司成立' })
   render(<HomePage core={ready} />)
   expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('动画制作委员会')
   expect(screen.getByText('ANIME PRODUCTION COMMITTEE')).toBeVisible()
@@ -30,7 +30,7 @@ it('保留首页设计内容，开始经营调用初始化后进入经营页', a
 })
 
 it.each(['loading', 'error'] as const)('核心 %s 时禁止新开但保留载入与继续', async (status) => {
-  const game = producingState()
+  const game = v3ProducingState()
   useGameStore.setState({ game })
   vi.mocked(loadGame).mockResolvedValue(game)
   render(<HomePage core={{ status, error: status === 'error' ? '加载失败' : null, retry: vi.fn() }} />)
@@ -46,9 +46,9 @@ it.each(['loading', 'error'] as const)('核心 %s 时禁止新开但保留载入
 })
 
 it('已有游戏时开始经营仍执行全新初始化，不等同于继续', async () => {
-  const next = idleState()
-  useGameStore.setState({ game: producingState() })
-  vi.mocked(initializeGame).mockResolvedValue({ state: next })
+  const next = v3IdleState()
+  useGameStore.setState({ game: v3ProducingState() })
+  vi.mocked(initializeGame).mockResolvedValue({ state: next, message: '公司成立' })
   render(<HomePage core={ready} />)
   await userEvent.click(screen.getByRole('button', { name: /开始经营/ }))
   expect(initializeGame).toHaveBeenCalledTimes(1)
@@ -56,8 +56,8 @@ it('已有游戏时开始经营仍执行全新初始化，不等同于继续', a
 })
 
 it('初始化期间禁用所有首页操作，失败仍保留旧游戏', async () => {
-  const pending = deferred<{ state: ReturnType<typeof idleState> }>()
-  const game = producingState()
+  const pending = deferred<{ state: ReturnType<typeof v3IdleState>; message: string }>()
+  const game = v3ProducingState()
   useGameStore.setState({ game })
   vi.mocked(initializeGame).mockReturnValue(pending.promise)
   render(<HomePage core={ready} />)

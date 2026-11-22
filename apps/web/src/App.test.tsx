@@ -6,13 +6,20 @@ import { useGameCore } from './hooks/useGameCore'
 import * as core from './services/gameCore'
 import { loadGame, saveGame } from './services/saveGame'
 import { useGameStore } from './stores/gameStore'
-import { dayReport, deferred, endedState, eventState, idleState, producingState, projectResult } from './test/fixtures'
-import type { AdvanceDayResult } from './types/game'
+import { deferred, v3IdleState, v3ProducingState, v3ReadyState, v3SettledState, v3WeekReport } from './test/fixtures'
+import type { GameState } from './types/gameV3'
 
 // 只隔离 React 交互与服务边界；真实 WASM / 浏览器验收由独立测试负责。
 vi.mock('./hooks/useGameCore', () => ({ useGameCore: vi.fn() }))
-vi.mock('./services/gameCore', () => ({ initializeGame: vi.fn(), startProject: vi.fn(), applyDecision: vi.fn(), advanceDay: vi.fn(), resolveEvent: vi.fn(), calculateResult: vi.fn() }))
+vi.mock('./services/gameCore', () => ({ initializeGame: vi.fn(), startProject: vi.fn(), applyDecision: vi.fn(), advanceWeek: vi.fn(), calculateProjectResult: vi.fn(), calculateCompanyResult: vi.fn() }))
 vi.mock('./services/saveGame', () => ({ loadGame: vi.fn(), saveGame: vi.fn() }))
+
+function startedState(): GameState {
+  const next = v3ProducingState()
+  next.project!.stages.script = { ...next.project!.stages.script, status: 'ready', configuration: null }
+  next.preview = null
+  return next
+}
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -21,156 +28,144 @@ beforeEach(() => {
   vi.mocked(useGameCore).mockReturnValue({ status: 'ready', error: null, retry: vi.fn() })
 })
 
-it('串联新开、报价、推进、事件、结算与下一轮企划，展示核心返回值', async () => {
+it('串联新开、接手、阶段配置、推进、结算与返回市场，展示核心返回值', async () => {
   const user = userEvent.setup()
-  const initial = idleState()
-  const producing = producingState()
-  const event = eventState()
-  const ended = endedState()
-  const settled = { ...idleState(), day: 21, funds: 7654321, reputation: 20 }
-  vi.mocked(core.initializeGame).mockResolvedValue({ state: initial })
-  vi.mocked(core.startProject).mockResolvedValue({ state: producing, message: '企划拨款已到账' })
-  vi.mocked(core.advanceDay).mockResolvedValueOnce({ state: event, report: dayReport() }).mockResolvedValueOnce({ state: ended, report: { ...dayReport(), message: '项目已到交付节点' } })
-  vi.mocked(core.resolveEvent).mockResolvedValue({ state: producing, message: '事件已处理' })
-  vi.mocked(core.calculateResult).mockResolvedValue({ state: settled, result: projectResult() })
+  const initial = v3IdleState()
+  const started = startedState()
+  const configured = v3ProducingState()
+  const ready = v3ReadyState()
+  const settled = v3SettledState()
+  const market = v3IdleState()
+  vi.mocked(core.initializeGame).mockResolvedValue({ state: initial, message: '公司成立' })
+  vi.mocked(core.startProject).mockResolvedValue({ state: started, message: '企划拨款已到账' })
+  vi.mocked(core.applyDecision).mockResolvedValueOnce({ state: configured, message: '阶段方案已锁定' }).mockResolvedValueOnce({ state: market, message: '回到企划市场' })
+  vi.mocked(core.advanceWeek).mockResolvedValue({ state: ready, report: v3WeekReport() })
+  vi.mocked(core.calculateProjectResult).mockResolvedValue({ state: settled, scope: 'project', result: settled.history[0] })
   render(<App />)
   await user.click(screen.getByRole('button', { name: /开始经营/ }))
   expect(core.initializeGame).toHaveBeenCalledWith(12345)
-  expect(screen.getByTestId('funds')).toHaveTextContent('2,000,000')
-  expect(screen.getByTestId('day')).toHaveTextContent('1')
+  expect(screen.getByTestId('funds')).toHaveTextContent('5,000,000')
+  expect(screen.getByTestId('week')).toHaveTextContent('0')
   const offers = within(screen.getByRole('region', { name: '企划报价' }))
-  expect(offers.getAllByRole('button')).toHaveLength(3)
-  expect(offers.getByRole('button', { name: '接手：未寄出的夏天' })).toBeDisabled()
+  expect(offers.getAllByRole('button')).toHaveLength(4)
   await user.click(offers.getByRole('button', { name: '接手：放学后的第七帧' }))
-  expect(core.startProject).toHaveBeenCalledWith(initial, 'proj_ova_01')
-  expect(screen.getByTestId('funds')).toHaveTextContent('10,000,000')
-  expect(screen.getByTestId('progress-pre')).toHaveTextContent('30%')
-  expect(screen.getByTestId('progress-mid')).toHaveTextContent('20%')
-  expect(screen.getByTestId('progress-post')).toHaveTextContent('10%')
-  expect(screen.getByText('截止日')).toBeVisible()
-  await user.click(screen.getByRole('button', { name: '推进今天' }))
-  expect(core.advanceDay).toHaveBeenCalledWith(producing)
-  expect(screen.getByTestId('day')).toHaveTextContent('2')
-  expect(screen.getByTestId('day-report')).toHaveTextContent(dayReport().message)
-  expect(screen.getByTestId('day-report')).toHaveTextContent('-345,678')
-  expect(screen.getByTestId('day-report')).toHaveTextContent('返工：是')
-  expect(screen.getByTestId('day-report')).toHaveTextContent('进度 +7 / 质量 -2')
-  expect(screen.getByRole('button', { name: '推进今天' })).toBeDisabled()
-  const eventPanel = within(screen.getByRole('region', { name: '制作事件' }))
-  await user.click(eventPanel.getByRole('button', { name: '延期方案（核心标签）' }))
-  expect(core.resolveEvent).toHaveBeenCalledWith(event, 'opt_b')
-  expect(screen.queryByRole('region', { name: '制作事件' })).not.toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: '推进今天' }))
-  expect(screen.queryByRole('button', { name: '推进今天' })).not.toBeInTheDocument()
-  expect(screen.getByLabelText('制作方针')).toBeDisabled()
+  expect(core.startProject).toHaveBeenCalledWith(initial, 'v3_ova')
+  expect(screen.getByTestId('funds')).toHaveTextContent('7,000,000')
+  expect(screen.getByTestId('progress-script')).toHaveTextContent('0%')
+  expect(screen.getByText('截止周')).toBeVisible()
+  expect(screen.getByLabelText('制作方针')).toHaveValue('balanced')
+  await user.selectOptions(screen.getByLabelText('制作方针'), 'quality')
+  await user.click(screen.getByLabelText('加班'))
+  await user.click(screen.getByRole('button', { name: '锁定阶段方案' }))
+  expect(core.applyDecision).toHaveBeenCalledWith(started, {
+    type: 'configure_stage', stage: 'script',
+    configuration: {
+      assignments: [
+        { staff_id: 'v3_director', role: 'director', focus: 'direction' },
+        { staff_id: 'v3_artist', role: 'key_animator', focus: 'drawing' },
+      ], policy: 'quality', overtime: true,
+    },
+  })
+  expect(screen.queryByLabelText('制作方针')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '推进本周' }))
+  expect(core.advanceWeek).toHaveBeenCalledWith(configured)
+  expect(screen.getByTestId('week')).toHaveTextContent('5')
+  expect(screen.getByTestId('week-report')).toHaveTextContent(v3WeekReport().messages[0])
+  expect(screen.getByTestId('week-report')).toHaveTextContent('-200,000')
+  expect(screen.getByTestId('week-report')).toHaveTextContent('进度 +40 / 质量 +60')
+  expect(screen.queryByRole('button', { name: '推进本周' })).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '结算项目' }))
-  expect(core.calculateResult).toHaveBeenCalledWith(ended)
+  expect(core.calculateProjectResult).toHaveBeenCalledWith(ready)
   const result = screen.getByRole('region', { name: '项目结算' })
   expect(result).toHaveAttribute('data-testid', 'project-result')
-  expect(result).toHaveTextContent('4,321,987')
-  expect(result).toHaveTextContent('5,678,901')
-  expect(result).toHaveTextContent('-1,356,914')
-  expect(result).toHaveTextContent('B')
-  expect(screen.getByTestId('funds')).toHaveTextContent('7,654,321')
-  expect(screen.getByRole('button', { name: '接手：未寄出的夏天' })).toBeEnabled()
+  expect(result).toHaveTextContent('70')
+  expect(result).toHaveTextContent('20,000,000')
+  expect(result).toHaveTextContent('+1,000,000')
+  expect(screen.getByTestId('funds')).toHaveTextContent('6,000,000')
+  expect(screen.getByRole('region', { name: '作品履历' })).toHaveTextContent('放学后的第七帧')
   expect(screen.queryByRole('button', { name: '结算项目' })).not.toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: '接手：星轨列车' }))
-  expect(core.startProject).toHaveBeenLastCalledWith(settled, 'proj_tv_01')
+  await user.click(screen.getByRole('button', { name: '回到企划市场' }))
+  expect(core.applyDecision).toHaveBeenLastCalledWith(settled, { type: 'return_to_market' })
+  expect(screen.getByRole('region', { name: '企划报价' })).toBeVisible()
   expect(screen.queryByTestId('project-result')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('day-report')).not.toBeInTheDocument()
 })
 
-it('排班、加班、制作方针与各工序外包仅提交决策，控件反映服务返回状态', async () => {
+it('阶段配置默认采用核心推荐，专注选择随决策提交', async () => {
   const user = userEvent.setup()
-  const original = producingState()
-  useGameStore.setState({ screen: 'studio', game: original })
+  const game = startedState()
+  useGameStore.setState({ screen: 'studio', game })
   render(<App />)
-  const resting = producingState()
-  resting.staff[0].assignment = 'rest'
-  vi.mocked(core.applyDecision).mockResolvedValueOnce({ state: resting, message: '排班回执' })
-  await user.selectOptions(screen.getByLabelText('林导演排班'), 'rest')
-  expect(core.applyDecision).toHaveBeenLastCalledWith(original, { type: 'assign', staff_id: 'staff_01', assignment: 'rest' })
-  expect(screen.getByLabelText('林导演排班')).toHaveValue('rest')
-  expect(screen.getByLabelText('林导演加班')).toBeDisabled()
-  const overtime = structuredClone(resting)
-  overtime.staff[1].overtime = true
-  vi.mocked(core.applyDecision).mockResolvedValueOnce({ state: overtime, message: '加班回执' })
-  await user.click(screen.getByLabelText('陈原画加班'))
-  expect(core.applyDecision).toHaveBeenLastCalledWith(resting, { type: 'overtime', staff_id: 'staff_02', enabled: true })
-  expect(screen.getByLabelText('陈原画加班')).toBeChecked()
-  const polish = structuredClone(overtime)
-  polish.project!.policy = 'polish'
-  vi.mocked(core.applyDecision).mockResolvedValueOnce({ state: polish, message: '方针回执' })
-  await user.selectOptions(screen.getByLabelText('制作方针'), 'polish')
-  expect(core.applyDecision).toHaveBeenLastCalledWith(overtime, { type: 'policy', policy: 'polish' })
-  expect(screen.getByLabelText('制作方针')).toHaveValue('polish')
-  let previous = polish
-  for (const [stage, name] of [['pre', '前期 · 分镜演出'], ['mid', '中期 · 原画动画'], ['post', '后期 · 摄影合成']] as const) {
-    const next = structuredClone(previous)
-    next.project!.stages[stage].outsourced = true
-    vi.mocked(core.applyDecision).mockResolvedValueOnce({ state: next, message: '外包回执' })
-    const checkbox = within(screen.getByRole('region', { name })).getByRole('checkbox', { name: '当日外包' })
-    await user.click(checkbox)
-    expect(core.applyDecision).toHaveBeenLastCalledWith(previous, { type: 'outsource', stage, enabled: true })
-    expect(checkbox).toBeChecked()
-    previous = next
-  }
-  vi.mocked(core.applyDecision).mockResolvedValueOnce({ state: polish, message: '取消外包' })
-  await user.click(within(screen.getByRole('region', { name: '前期 · 分镜演出' })).getByRole('checkbox'))
-  expect(core.applyDecision).toHaveBeenLastCalledWith(previous, { type: 'outsource', stage: 'pre', enabled: false })
-  expect(screen.getByTestId('funds')).toHaveTextContent('10,000,000')
+  expect(screen.getByLabelText('制作方针')).toHaveValue('balanced')
+  expect(screen.getByLabelText('林导演专注')).toHaveValue('direction')
+  expect(screen.getByLabelText('陈原画专注')).toHaveValue('drawing')
+  expect(screen.getByLabelText('加班')).not.toBeChecked()
+  const next = v3ProducingState()
+  vi.mocked(core.applyDecision).mockResolvedValue({ state: next, message: '阶段方案已锁定' })
+  await user.selectOptions(screen.getByLabelText('陈原画专注'), 'animation')
+  await user.selectOptions(screen.getByLabelText('制作方针'), 'deadline')
+  await user.click(screen.getByRole('button', { name: '锁定阶段方案' }))
+  expect(core.applyDecision).toHaveBeenCalledWith(game, {
+    type: 'configure_stage', stage: 'script',
+    configuration: {
+      assignments: [
+        { staff_id: 'v3_director', role: 'director', focus: 'direction' },
+        { staff_id: 'v3_artist', role: 'key_animator', focus: 'animation' },
+      ], policy: 'deadline', overtime: false,
+    },
+  })
+  expect(screen.getByRole('button', { name: '推进本周' })).toBeEnabled()
 })
 
 it('保存、返回首页、继续与读取保留完整状态，不进行隐式初始化', async () => {
   const user = userEvent.setup()
-  const game = eventState()
-  useGameStore.setState({ screen: 'studio', game, report: dayReport() })
+  const game = v3ProducingState()
+  useGameStore.setState({ screen: 'studio', game, report: v3WeekReport() })
   vi.mocked(saveGame).mockResolvedValue()
-  vi.mocked(loadGame).mockResolvedValue(endedState())
+  vi.mocked(loadGame).mockResolvedValue(v3ReadyState())
   render(<App />)
   await user.click(screen.getByRole('button', { name: '保存进度' }))
   expect(saveGame).toHaveBeenCalledWith(game)
   expect(screen.getByText('已保存到此浏览器。')).toBeVisible()
   await user.click(screen.getByRole('button', { name: '返回首页' }))
   await user.click(screen.getByRole('button', { name: '继续经营' }))
-  expect(screen.getByRole('region', { name: '制作事件' })).toBeVisible()
-  expect(screen.getByTestId('day-report')).toBeVisible()
+  expect(screen.getByRole('region', { name: '项目制作' })).toBeVisible()
+  expect(screen.getByTestId('week-report')).toBeVisible()
   expect(core.initializeGame).not.toHaveBeenCalled()
   await user.click(screen.getByRole('button', { name: '读取存档' }))
   expect(loadGame).toHaveBeenCalledTimes(1)
   expect(screen.getByRole('button', { name: '结算项目' })).toBeEnabled()
-  expect(screen.queryByTestId('day-report')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('week-report')).not.toBeInTheDocument()
 })
 
 it('推进等待期间禁止重复请求与所有操作，失败保留状态和回执', async () => {
   const user = userEvent.setup()
-  const game = producingState()
-  const pending = deferred<AdvanceDayResult>()
-  useGameStore.setState({ screen: 'studio', game, report: dayReport() })
-  vi.mocked(core.advanceDay).mockReturnValue(pending.promise)
+  const game = v3ProducingState()
+  const pending = deferred<{ state: GameState; report: ReturnType<typeof v3WeekReport> }>()
+  useGameStore.setState({ screen: 'studio', game, report: v3WeekReport() })
+  vi.mocked(core.advanceWeek).mockReturnValue(pending.promise)
   render(<App />)
-  await user.click(screen.getByRole('button', { name: '推进今天' }))
-  await user.click(screen.getByRole('button', { name: '推进今天' }))
-  for (const control of [...screen.getAllByRole('button'), ...screen.getAllByRole('combobox'), ...screen.getAllByRole('checkbox')]) expect(control).toBeDisabled()
-  expect(core.advanceDay).toHaveBeenCalledTimes(1)
+  await user.click(screen.getByRole('button', { name: '推进本周' }))
+  await user.click(screen.getByRole('button', { name: '推进本周' }))
+  for (const control of screen.getAllByRole('button')) expect(control).toBeDisabled()
+  expect(core.advanceWeek).toHaveBeenCalledTimes(1)
   await act(async () => pending.reject(new Error('核心调用失败：原状态保留')))
   expect(screen.getByRole('alert')).toHaveTextContent('核心调用失败：原状态保留')
-  expect(screen.getByTestId('funds')).toHaveTextContent('10,000,000')
-  expect(screen.getByTestId('progress-pre')).toHaveTextContent('30%')
-  expect(screen.getByTestId('day-report')).toHaveTextContent(dayReport().message)
-  expect(screen.getByRole('button', { name: '推进今天' })).toBeEnabled()
+  expect(screen.getByTestId('funds')).toHaveTextContent('7,000,000')
+  expect(screen.getByTestId('progress-script')).toHaveTextContent('0%')
+  expect(screen.getByTestId('week-report')).toHaveTextContent(v3WeekReport().messages[0])
+  expect(screen.getByRole('button', { name: '推进本周' })).toBeEnabled()
   expect(useGameStore.getState().game).toBe(game)
 })
 
-it('读取损坏存档显示错误，不替换当前工作台', async () => {
-  const game = producingState()
+it('读取旧版存档显示拒绝提示，不替换当前工作台', async () => {
+  const game = v3ProducingState()
   useGameStore.setState({ screen: 'studio', game })
-  vi.mocked(loadGame).mockRejectedValue(new Error('存档损坏或版本不受支持，当前数据未改变。'))
+  vi.mocked(loadGame).mockRejectedValue(new Error('v2 存档不兼容周制经营 v3，请新开游戏；旧存档未被覆盖。'))
   render(<App />)
   await userEvent.click(screen.getByRole('button', { name: '读取存档' }))
-  expect(screen.getByRole('alert')).toHaveTextContent('存档损坏')
+  expect(screen.getByRole('alert')).toHaveTextContent('v2 存档不兼容周制经营 v3')
   expect(useGameStore.getState().game).toBe(game)
-  expect(screen.getByTestId('progress-pre')).toHaveTextContent('30%')
+  expect(screen.getByTestId('progress-script')).toHaveTextContent('0%')
 })
 
 it('加载失败提供可操作重试入口，重试成功前禁止新开', async () => {
@@ -187,13 +182,13 @@ it('加载失败提供可操作重试入口，重试成功前禁止新开', asyn
   expect(screen.getByRole('button', { name: /开始经营/ })).toBeEnabled()
 })
 
-it('核心加载错误不会遮住 v1 存档拒绝提示', async () => {
+it('核心加载错误不会遮住旧存档拒绝提示', async () => {
   vi.mocked(useGameCore).mockReturnValue({ status: 'error', error: '游戏核心加载失败', retry: vi.fn() })
-  vi.mocked(loadGame).mockRejectedValue(new Error('v1 存档不支持载入，请新开游戏；旧存档未被覆盖。'))
+  vi.mocked(loadGame).mockRejectedValue(new Error('v1 存档不兼容周制经营 v3，请新开游戏；旧存档未被覆盖。'))
   render(<App />)
   await userEvent.click(screen.getByRole('button', { name: '读取本地存档' }))
   expect(screen.getByText('游戏核心加载失败')).toBeVisible()
-  expect(screen.getByText(/v1 存档不支持载入/)).toBeVisible()
+  expect(screen.getByText(/v1 存档不兼容周制经营 v3/)).toBeVisible()
   expect(screen.getAllByRole('alert')).toHaveLength(2)
 })
 
@@ -204,20 +199,28 @@ it('加载中的提示可读，新游戏按钮不可用', () => {
   expect(screen.getByRole('button', { name: /开始经营/ })).toBeDisabled()
 })
 
-it.each(['loading', 'error'] as const)('核心 %s 时继续已存在的制作台，生产控件禁用，存档与返回可用', async (status) => {
-  useGameStore.setState({ game: producingState() })
+it.each(['loading', 'error'] as const)('核心 %s 时继续已存在的制作台，推进与结束禁用，存档与返回可用', async (status) => {
+  useGameStore.setState({ game: v3ProducingState() })
   vi.mocked(useGameCore).mockReturnValue({ status, error: status === 'error' ? '加载失败' : null, retry: vi.fn() })
   render(<App />)
   await userEvent.click(screen.getByRole('button', { name: '继续经营' }))
-  expect(screen.getByRole('button', { name: '推进今天' })).toBeDisabled()
-  for (const control of [...screen.getAllByRole('combobox'), ...screen.getAllByRole('checkbox')]) expect(control).toBeDisabled()
+  expect(screen.getByRole('button', { name: '推进本周' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '结束经营' })).toBeDisabled()
   for (const name of ['保存进度', '读取存档', '返回首页']) expect(screen.getByRole('button', { name })).toBeEnabled()
 })
 
+it('核心未就绪时阶段配置控件全部禁用', () => {
+  useGameStore.setState({ screen: 'studio', game: startedState() })
+  vi.mocked(useGameCore).mockReturnValue({ status: 'loading', error: null, retry: vi.fn() })
+  render(<App />)
+  for (const control of [...screen.getAllByRole('combobox'), ...screen.getAllByRole('checkbox')]) expect(control).toBeDisabled()
+  expect(screen.getByRole('button', { name: '锁定阶段方案' })).toBeDisabled()
+})
+
 it.each([
-  { game: idleState(), region: '企划报价' },
-  { game: eventState(), region: '制作事件' },
-  { game: endedState(), region: '项目制作' },
+  { game: v3IdleState(), region: '企划报价' },
+  { game: startedState(), region: '项目制作' },
+  { game: v3ReadyState(), region: '项目制作' },
 ])('核心未就绪时禁用 $region 中的核心操作', ({ game, region }) => {
   useGameStore.setState({ screen: 'studio', game })
   vi.mocked(useGameCore).mockReturnValue({ status: 'loading', error: null, retry: vi.fn() })

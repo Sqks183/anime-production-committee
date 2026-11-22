@@ -1,8 +1,8 @@
 import { create } from 'zustand'
-import { advanceDay, applyDecision, calculateResult, initializeGame, resolveEvent, startProject } from '../services/gameCore'
+import { advanceWeek, applyDecision, calculateCompanyResult, calculateProjectResult, initializeGame, startProject } from '../services/gameCore'
 import { loadGame, saveGame } from '../services/saveGame'
-import { isSeed } from '../types/game'
-import type { DayReport, Decision, GameState, ProjectResult } from '../types/game'
+import { isSeed } from '../types/gameV3'
+import type { CompanyResult, Decision, GameState, WeekReport, WorkRecord } from '../types/gameV3'
 
 interface GameStore {
   screen: 'home' | 'studio'
@@ -10,16 +10,17 @@ interface GameStore {
   busy: boolean
   error: string | null
   notice: string | null
-  report: DayReport | null
-  result: ProjectResult | null
+  report: WeekReport | null
+  result: WorkRecord | null
+  companyResult: CompanyResult | null
   start: (seed?: number) => Promise<void>
   resume: () => void
   goHome: () => void
-  startProject: (projectId: string) => Promise<void>
+  startProject: (offerId: string) => Promise<void>
   decide: (decision: Decision) => Promise<void>
   advance: () => Promise<void>
-  resolveEvent: (optionId: string) => Promise<void>
   settle: () => Promise<void>
+  settleCompany: () => Promise<void>
   save: () => Promise<void>
   load: () => Promise<void>
 }
@@ -67,9 +68,10 @@ export const useGameStore = create<GameStore>((set, get) => {
     notice: null,
     report: null,
     result: null,
+    companyResult: null,
     start: (seed) => run(async () => {
       const { state } = await initializeGame(startingSeed(seed))
-      return { game: state, screen: 'studio', report: null, result: null }
+      return { game: state, screen: 'studio', report: null, result: null, companyResult: null }
     }),
     resume: () => {
       if (!get().busy && get().game) set({ screen: 'studio', error: null, notice: null })
@@ -77,25 +79,27 @@ export const useGameStore = create<GameStore>((set, get) => {
     goHome: () => {
       if (!get().busy) set({ screen: 'home', error: null, notice: null })
     },
-    startProject: (projectId) => withGame(async (game) => {
-      const { state, message } = await startProject(game, projectId)
-      return { game: state, notice: message, report: null, result: null }
+    startProject: (offerId) => withGame(async (game) => {
+      const { state, message } = await startProject(game, offerId)
+      return { game: state, notice: message, report: null, result: null, companyResult: null }
     }),
     decide: (decision) => withGame(async (game) => {
       const { state, message } = await applyDecision(game, decision)
-      return { game: state, notice: message }
+      return decision.type === 'return_to_market'
+        ? { game: state, notice: message, result: null }
+        : { game: state, notice: message }
     }),
     advance: () => withGame(async (game) => {
-      const { state, report } = await advanceDay(game)
+      const { state, report } = await advanceWeek(game)
       return { game: state, report }
     }),
-    resolveEvent: (optionId) => withGame(async (game) => {
-      const { state, message } = await resolveEvent(game, optionId)
-      return { game: state, notice: message }
-    }),
     settle: () => withGame(async (game) => {
-      const { state, result } = await calculateResult(game)
+      const { state, result } = await calculateProjectResult(game)
       return { game: state, result }
+    }),
+    settleCompany: () => withGame(async (game) => {
+      const { state, result } = await calculateCompanyResult(game)
+      return { game: state, companyResult: result }
     }),
     save: () => withGame(async (game) => {
       await saveGame(game)
@@ -104,7 +108,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     load: () => run(async () => {
       const game = await loadGame()
       return game
-        ? { game, report: null, result: null, screen: 'studio', notice: '已读取本地存档。' }
+        ? { game, report: null, result: null, companyResult: null, screen: 'studio', notice: '已读取本地存档。' }
         : { notice: '此浏览器还没有存档。' }
     }),
   }

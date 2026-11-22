@@ -26,8 +26,8 @@ export function HomePage({ core }: { core: ReturnType<typeof useGameCore> }) {
         <span>第一份动画企划</span><span className="frame-count">CUT 001 / TAKE 01</span>
       </div>
       <div className="sheet-title"><h2>制作，准备开始。</h2><span className="seal">筹备中</span></div>
-      <p>接手企划，安排团队，应对制作现场。<br />从今日排班到项目结算，写下工作室的第一章。</p>
-      <div className="sheet-bottom"><span>PRODUCTION SLICE</span><span>v2</span></div>
+      <p>接手企划，安排团队，应对制作现场。<br />从每周排班到项目结算，写下工作室的第一章。</p>
+      <div className="sheet-bottom"><span>PRODUCTION SLICE</span><span>v3</span></div>
     </aside>
   </main>
 }
