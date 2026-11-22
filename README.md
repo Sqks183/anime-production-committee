@@ -159,7 +159,7 @@ v2 验收范围（2026-11-21 本地验收已通过）：
 - 核心与端到端测试：[原生测试](packages/game-core/tests/game_core_test.cpp)、[真实 WASM 测试](packages/game-core/tests/wasm.test.mjs)、[根 WASM 测试入口](scripts/wasm.test.mjs)、[浏览器测试](scripts/browser.test.mjs)。
 - 文档：[README](README.md)、[接口](docs/API.md)、[规则](docs/GAME_RULES.md)、[数据模型](docs/DATA_MODEL.md)、[架构](docs/ARCHITECTURE.md)、[产品范围](docs/PRODUCT.md)、[V1.0 游戏设计总览](docs/GAME_DESIGN.md)。
 
-仓库同步包含上述实现与测试，以及关联的贡献指南、Issue / PR 模板、素材目录占位和来源记录；素材来源记录不代表图片已入库或授权已确认。没有修改构建配置、依赖、CI 工作流或 `.gitignore`，没有执行线上部署；生成图片、工具链、依赖和构建产物不随 Git 提交。
+仓库同步包含上述实现与测试，以及关联的贡献指南、Issue / PR 模板、素材目录、三张已入库的自生成图片与审计记录；素材来源记录本身不构成授权确认。没有修改构建配置、依赖、CI 工作流或 `.gitignore`，没有执行线上部署；工具链、依赖和构建产物不随 Git 提交。
 
 ## 生产构建
 
@@ -191,7 +191,7 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 
 最小纵向切片已合入 `main`，后续不从零重做员工、制作、事件或结算系统。请先阅读 [当前任务认领池](CONTRIBUTING.md#当前任务认领池)，其中六项候选任务分别说明现状、修改目录、接口依赖、交付物、验收与前置条件；所有任务当前待认领，不预设成员已经接单。
 
-优先评审结算经济口径、改善制作台可读性，再根据试玩证据选择规则验证或调参任务；核心共享文件按序修改，三图素材需先明确授权与共享范围。前往 [GitHub 认领池总览 #1](https://github.com/zhengmin486/anime-production-committee/issues/1) 选择任务，在对应子议题评论认领并等待负责人确认；实时分工以议题评论和 Assignee 为准。
+优先评审结算经济口径、改善制作台可读性，再根据试玩证据选择规则验证或调参任务；核心共享文件按序修改，三图素材已按负责人授权自生成入库，UI 接入需与前端负责人协调。前往 [GitHub 认领池总览 #1](https://github.com/zhengmin486/anime-production-committee/issues/1) 选择任务，在对应子议题评论认领并等待负责人确认；实时分工以议题评论和 Assignee 为准。
 
 | 优先级 | 待认领任务 |
 | --- | --- |

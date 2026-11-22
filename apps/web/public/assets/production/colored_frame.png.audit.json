@@ -1,0 +1,28 @@
+{
+  "id": "colored_frame",
+  "output_path": "apps/web/public/assets/production/colored_frame.png",
+  "output_size": [
+    960,
+    540
+  ],
+  "output_sha256": "ed338ddedfacef9fea3383b0cc1864fc4d3ac789ac72a9ed81e2d3e798944dcc",
+  "source_path": "build/assets-raw/One_original_anime_production__2026-11-22T08-55-26.png",
+  "source_size": [
+    1536,
+    1024
+  ],
+  "source_sha256": "69c1a8253e61bbf0326fc11535a9017993003d5a7700f784a3a6c149cc0b871d",
+  "crop": {
+    "x": 0,
+    "y": 0,
+    "width": 1536,
+    "height": 864,
+    "anchor": "top"
+  },
+  "processing": "PNG decode (stdlib zlib), top-anchored crop, bilinear resize, adaptive per-row PNG filters (0-4) with zlib level 9, opaque 24-bit RGB encode; lossless re-encode",
+  "watermark_removal": "generator mark in bottom-right was excluded by the crop; no inpainting",
+  "date": "2026-11-22",
+  "output_bytes": 884506,
+  "source_retained": false,
+  "source_note": "Raw generation file deleted on 2026-11-22 to save local space. Prompt and source hash are kept; a different crop would require regenerating from the recorded prompt."
+}

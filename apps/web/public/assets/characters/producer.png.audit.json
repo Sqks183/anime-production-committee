@@ -1,0 +1,28 @@
+{
+  "id": "producer",
+  "output_path": "apps/web/public/assets/characters/producer.png",
+  "output_size": [
+    512,
+    512
+  ],
+  "output_sha256": "b03e148d91f0c81c4896a3269b58338d7412adb45996bef3fd1160fdf5397fcd",
+  "source_path": "build/assets-raw/One_original_character_portrai_2026-11-22T08-55-11.png",
+  "source_size": [
+    1024,
+    1024
+  ],
+  "source_sha256": "2586da6356043c15c0c4383af4c1b88bccf791cc362c2e0ef3efeaafc824a56f",
+  "crop": {
+    "x": 62,
+    "y": 0,
+    "width": 900,
+    "height": 900,
+    "anchor": "top"
+  },
+  "processing": "PNG decode (stdlib zlib), top-anchored crop, bilinear resize, adaptive per-row PNG filters (0-4) with zlib level 9, opaque 24-bit RGB encode; lossless re-encode",
+  "watermark_removal": "generator mark in bottom-right was excluded by the crop; no inpainting",
+  "date": "2026-11-22",
+  "output_bytes": 316020,
+  "source_retained": false,
+  "source_note": "Raw generation file deleted on 2026-11-22 to save local space. Prompt and source hash are kept; a different crop would require regenerating from the recorded prompt."
+}

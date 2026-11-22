@@ -421,6 +421,93 @@
       "prompt": "Create one original fictional fantasy-girl animation poster, using the first reference only for the portrait 2:3 format, 96x144 logical pixel scale, framing discipline, outline weight and cream/honey/mint/coral/navy palette. Depict a kind young adult girl with a short dark bob, a modest mint coat-dress, coral scarf and honey satchel, holding a small glowing seed lantern in a quiet rooftop garden of oversized mint leaves. A few cream seed-like lights float around her. Make the magical-garden theme clear without copying any known magical-girl costume, wand, mascot, insignia or pose. One clean central figure with coherent anatomy, quiet upper fifth for a frontend title that is NOT drawn. Native uniform square pixel clusters, stepped navy edges, only flat two- or three-tone light shapes, no gradient glow or antialiasing. No text, numbers, logo, watermark, frame, real IP, 3D, painted texture or pixel filter. Opaque PNG, final accepted export 384x576 at 4x."
     }
   ],
+  "self_generated_batch_2026_11_22": {
+    "date": "2026-11-22",
+    "authorization": "On 2026-11-22 the repository owner authorized the asset owner to generate the three images directly or use license-free public assets. This batch is self-generated only; no third-party stock asset was downloaded or modified.",
+    "tool": "WorkBuddy ImageGen",
+    "raw_sources_retained": false,
+    "raw_sources_note": "The three raw generation files were deleted on 2026-11-22 to save local space. Prompts, dimensions, crop rectangles and SHA-256 values are kept here and in each .png.audit.json; changing a crop would require regenerating from these prompts.",
+    "underlying_image_provider": null,
+    "underlying_model": null,
+    "official_public_assets_count": 3,
+    "watermark_note": "The generator stamped an AI mark in the bottom-right corner. It was excluded by a top-anchored crop; no retouching or inpainting was used.",
+    "processing": "Decoded with the Python standard library only (zlib plus PNG filter reconstruction), then top-anchored crop, bilinear resize and opaque 24-bit RGB PNG encode. No third-party image library was installed or required.",
+    "boundary": "Project-internal authorization granted by the repository owner, not a general commercial licence claim. Files contain no real IP, no external stock material and no readable text or third-party marks after cropping.",
+    "assets": [
+      {
+        "id": "studio_office",
+        "role": "official_public_background",
+        "output_path": "apps/web/public/assets/backgrounds/studio_office.png",
+        "output_size": [
+          1280,
+          720
+        ],
+        "output_sha256": "8d2fbbd12ad90c328979a83691d4a64ff456701c4df12b9432698e52314a3011",
+        "source_path": "build/assets-raw/One_original_background_illust_2026-11-22T08-54-55.png",
+        "source_size": [
+          1536,
+          1024
+        ],
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 1536,
+          "height": 864,
+          "anchor": "top"
+        },
+        "prompt": "One original background illustration for a cozy anime-studio management game: a warm Japanese animation studio office interior, 16-bit pixel-style illustration (not a strict low-color grid), honey-colored wooden floor, ivory walls, muted mint and small coral accents, soft blue city skyline through wide rear-left windows, warm daylight entering from the rear-left corner, animation desks with light boxes (tracing tables), stacked paper, pencil cups, a corkboard with blank storyboard sheets (no writing), a small shelf with binders, a potted plant. Wide 16:9 landscape composition, keep the central foreground floor open and uncluttered for UI overlay and characters, clear depth, readable furniture silhouettes. No people. No letters, numbers, captions, logos, branding, watermark, existing anime or game IP, photorealism, 3D render, or generic flat vector art. One opaque PNG, no border, no interface.",
+        "review": "accepted; watermark band cropped out, no readable text, no visible third-party mark, subject fully readable"
+      },
+      {
+        "id": "producer",
+        "role": "official_public_character",
+        "output_path": "apps/web/public/assets/characters/producer.png",
+        "output_size": [
+          512,
+          512
+        ],
+        "output_sha256": "5d631615751285a330655c2f6e1ca9bdd3013c98afa3028e205a7fb73e2f8bf7",
+        "source_path": "build/assets-raw/One_original_character_portrai_2026-11-22T08-55-11.png",
+        "source_size": [
+          1024,
+          1024
+        ],
+        "crop": {
+          "x": 62,
+          "y": 0,
+          "width": 900,
+          "height": 900,
+          "anchor": "top"
+        },
+        "prompt": "One original character portrait for a cozy anime-studio management game: a mature Japanese animation producer around 40 years old, business-casual blazer over a knit shirt, short neat hair, calm confident expression, three-quarter view facing slightly left, upper body including shoulders and upper chest, warm beige plain background, soft warm light from the upper-left, 16-bit pixel-style illustration with clear dark pixel-like outlines and gentle shading (not a strict low-color grid), palette of warm honey, ivory, muted mint and a small coral accent. Centered head-and-shoulders composition with comfortable margin. No text, numbers, logos, watermark, existing anime or game IP, photorealism, 3D render. One opaque PNG, square, no border.",
+        "review": "accepted; watermark band cropped out, no readable text, no visible third-party mark, subject fully readable"
+      },
+      {
+        "id": "colored_frame",
+        "role": "official_public_production_still",
+        "output_path": "apps/web/public/assets/production/colored_frame.png",
+        "output_size": [
+          960,
+          540
+        ],
+        "output_sha256": "6805d7be9a98e2a43dee65bbf8506290647366fd8e1c69f1b7b87a471aac9c4b",
+        "source_path": "build/assets-raw/One_original_anime_production__2026-11-22T08-55-26.png",
+        "source_size": [
+          1536,
+          1024
+        ],
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 1536,
+          "height": 864,
+          "anchor": "top"
+        },
+        "prompt": "One original anime production still, a single colored frame from a fictional film: a small sky-island weather messenger with short dark hair, muted mint short cape, coral scarf and a square leather satchel, stepping to the right across a low stone bridge between floating islands, soft clouds below, warm late-afternoon light, 16-bit pixel-style illustration with clear outlines and gentle shading, palette of warm honey, ivory, mint, coral and soft blue. Wide 16:9 cinematic composition, character clearly readable in the middle, no text or subtitles. No watermark, logos, existing anime or game IP, photorealism or 3D render. One opaque PNG, no border, no interface.",
+        "review": "accepted; watermark band cropped out, no readable text, no visible third-party mark, subject fully readable"
+      }
+    ]
+  },
   "recommended_generation_order": [
     "studio_office",
     "studio_meeting_room",
