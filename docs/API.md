@@ -1,6 +1,8 @@
 # 前端与 C++ 接口协议
 
-## V3.1 M0 冻结接口（目标，不是当前 WASM 实现）
+## 版本状态与 V3 目标接口
+
+V2 是旧版纵向切片；V3 是当前目标协议。M1 已在 C++/WASM 实现部分 V3 周制、五阶段与公司终局行为，但本节列出的完整 V3 接口清单仍是目标契约，不能据此认定所有导出和玩法均已接通。前端主流程仍需完成 V3 接入。
 
 2026-11-21，议题 #2 的目标契约见 [gameV3.ts](../apps/web/src/types/gameV3.ts) 的 CoreRequests/CoreResponses 与 [DATA_MODEL](DATA_MODEL.md)。M0 提供类型、边界校验、静态夹具、只读 v3 存档入口；规则实现属于 #3/#4/#6/#7/#8。下面六个目标导出应在真实实现接入时同步替换，不将 advance_week 指向 advance_day，也不导出返回成功的空函数。
 
@@ -73,9 +75,9 @@ M0 的校验器验证结构与状态关联，不执行产能、付款或阶段�
 
 ---
 
-## V2 实际接口（仅供迁移核对）
+## V2 历史接口（仅供迁移核对）
 
-本文记录最小纵向切片的 v2 实际核心契约，是前后端语言边界的联调依据。完整状态与响应类型见 [DATA_MODEL.md](DATA_MODEL.md)，暂定规则与公式见 [GAME_RULES.md](GAME_RULES.md)。模块职责见 [ARCHITECTURE.md](ARCHITECTURE.md)，产品范围见 [PRODUCT.md](PRODUCT.md)，协议变更流程见 [CONTRIBUTING.md](../CONTRIBUTING.md)。v2 指状态 schema，不代表最终平衡版本或端到端验收已通过。
+本文记录最小纵向切片的 v2 历史核心契约，是前后端语言边界的联调依据。完整状态与响应类型见 [DATA_MODEL.md](DATA_MODEL.md)，暂定规则与公式见 [GAME_RULES.md](GAME_RULES.md)。模块职责见 [ARCHITECTURE.md](ARCHITECTURE.md)，产品范围见 [PRODUCT.md](PRODUCT.md)，协议变更流程见 [CONTRIBUTING.md](../CONTRIBUTING.md)。v2 指状态 schema，不代表最终平衡版本或端到端验收已通过。
 
 ## 传输方式
 
