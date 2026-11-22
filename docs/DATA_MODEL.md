@@ -24,7 +24,7 @@
 | --- | --- | --- |
 | GameState | version=3, seed, phase, company, offers, recruitment_pool, suppliers, project, pending_event, history, last_project_id, company_result, preview | 初始化建立全部字段；无项目/事件/最近结算/总结/预览时用 null。历史与外部资源池可空；running idle 恰有四企划；可选 custom_offer/pending_proposal 独立槽位不占市场四槽（V3.7） |
 | Company | week, status, end_reason, initial_funds, funds, reputation, staff, finance；可选 scout_pity | status=running/closing/ended；仅 running 的理由为 null，其他为 time_limit/bankrupt/voluntary；核心名册可空，人数与能力不固定；初始化名册由核心生成；scout_pity={since_sr,since_ssr} 非负整数保底计数，缺省按 0/0 |
-| Finance | contract_received, investment_paid, commercial_share_received, success_reward_received, costs | 非负实际累计收支；success_reward_received 为委托方支付的承制成功奖励，委员会项目为 0；投资不再计入成本。公司层全生命周期、项目层项目区间，同一笔交易的两个汇总视图，不重复改变现金 |
+| Finance | contract_received, investment_paid, commercial_share_received, costs；可选 success_reward_received | 均为非负实际累计收支；success_reward_received 为委托方支付的承制成功奖励，缺省按 0 兼容旧状态，委员会项目为 0；投资不再计入成本。公司层全生命周期、项目层项目区间，同一笔交易的两个汇总视图，不重复改变现金 |
 | Costs | salary, operations, production, temporary, outsourcing, events, extension, penalty；可选 development, distribution | 八类均出现，无支出填 0；依次为核心工资、固定运营、阶段直接费用、临时合同、外包、独立付费事件、延期费、扣罚。同一笔只归一类。M2 可选 development（前期开发费）与 distribution（付费播出发行支出），核心落地前缺省按 0，见 V3.7 |
 | Staff | id, name, role, employment, abilities, experience, potential, revealed_potential, talent_type, clues, traits, weekly_salary, project_fee, fatigue, morale, departure_warning | employment=core/temporary；核心 project_fee=0，临时 weekly_salary=0。前三个能力对象含六项数值，revealed_potential 含六个布尔值；潜力不低于当前能力，线索 1–2 条，traits 可空；warning 仅预警 |
 | ProjectOffer | id, name, source, scale, total_investment, contract_budget, duration_weeks, target_quality, audience_base, commercial_potential, risk, allowed_modes, workloads, previous_work_id；可选 origin, style, min_reputation, committee_members, channel_potentials, required_works | source=manga/light_novel/game/original；scale=ova/short/tv/movie；risk=low/medium/high；allowed_modes 非空不重复，原创只能 committee；workloads 含五阶段正数；合同预算由核心按总投资 50% 生成。origin=market/custom/incoming/proposal（缺省 market）；style=normal/meme/ai（缺省 normal），非 normal 必须 origin=custom，meme 限定 scale=short；min_reputation 非负整数（缺省 0），声望不足仍展示但锁定；可选 committee_members（拟定委员会阵容，仅 allowed_modes 含 committee）、channel_potentials（{bd 必填 0–100，其余渠道可选}）、required_works（{rating, source?} 非空全满足）见 V3.7 |
@@ -101,7 +101,7 @@ M0 在 services/saveGame.ts 实现 decodeV3SaveRecord 与只读 loadGameV3：拒
 | rating | WorkRecord | S/A/B/C/D，可选 | 作品评价等级（固定分数线，数值 TODO）；与制作质量 quality_score 分列 |
 | channel_breakdown | WorkRecord | {channel, revenue, company_received}[]，可选 | 分渠道对账：Σrevenue=commercial_revenue、Σcompany_received=commercial_share_received、恒含 bd、company_received≤revenue |
 
-分账新口径：company_received 由「BD 收益至少 50% 归公司（独立于投资比例）+ 委员会项目非 BD 渠道按投资比例与分账约定」构成，具体数值待 #8 平衡；承制项目不参与非 BD 渠道分成，V3.3 的 commercial_share_received=floor(revenue×percent/100) 单渠道公式被该框架取代，承制（contract）不参与非 BD 渠道分成，BD 至少 50% 归公司；承制成功奖励由委托方另付并记入 success_reward_received。渠道收入在制作完成后随 calculate_result 统一结算。爆款 ×5 作用于分账前渠道毛收入（判定归 #7）。续作继承商业基础沿用 previous_work_id，属规则数值，无新增契约字段。
+分账新口径：company_received 由「BD 收益至少 50% 归公司（独立于投资比例）+ 委员会项目非 BD 渠道按投资比例与分账约定」构成，具体数值待 #8 平衡；承制项目不参与非 BD 渠道分成，BD 至少 50% 归公司。V3.3 的 commercial_share_received=floor(revenue×percent/100) 单渠道公式被该框架取代。承制成功奖励由委托方另付并记入可选 finance.success_reward_received，缺省为 0。渠道收入在制作完成后随 calculate_result 统一结算。爆款 ×5 作用于分账前渠道毛收入（判定归 #7）。续作继承商业基础沿用 previous_work_id，属规则数值，无新增契约字段。
 
 ---
 
