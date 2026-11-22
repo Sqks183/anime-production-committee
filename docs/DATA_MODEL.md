@@ -28,7 +28,7 @@
 | Costs | salary, operations, production, temporary, outsourcing, events, extension, penalty；可选 development, distribution | 八类均出现，无支出填 0；依次为核心工资、固定运营、阶段直接费用、临时合同、外包、独立付费事件、延期费、扣罚。同一笔只归一类。M2 可选 development（前期开发费）与 distribution（付费播出发行支出），核心落地前缺省按 0，见 V3.7 |
 | Staff | id, name, role, employment, abilities, experience, potential, revealed_potential, talent_type, clues, traits, weekly_salary, project_fee, fatigue, morale, departure_warning | employment=core/temporary；核心 project_fee=0，临时 weekly_salary=0。前三个能力对象含六项数值，revealed_potential 含六个布尔值；潜力不低于当前能力，线索 1–2 条，traits 可空；warning 仅预警 |
 | ProjectOffer | id, name, source, scale, total_investment, contract_budget, duration_weeks, target_quality, audience_base, commercial_potential, risk, allowed_modes, workloads, previous_work_id；可选 origin, style, min_reputation, committee_members, channel_potentials, required_works | source=manga/light_novel/game/original；scale=ova/short/tv/movie；risk=low/medium/high；allowed_modes 非空不重复，原创仍只能 committee；同一企划可同时提供 contract/committee 两种方式，由玩家选择时确定；workloads 含五阶段正数；合同预算由核心按总投资 50% 生成。origin=market/custom/incoming/proposal（缺省 market）；style=normal/meme/ai（缺省 normal），非 normal 必须 origin=custom，meme 限定 scale=short；min_reputation 非负整数（缺省 0），声望不足仍展示但锁定；可选 committee_members（拟定委员会阵容，仅 allowed_modes 含 committee）、channel_potentials（{bd 必填 0–100，其余渠道可选}）、required_works（{rating, source?} 非空全满足）见 V3.7 |
-| Project | offer, mode, investment_percent, opening_funds, start_week, deadline_week, current_stage, stages, extension_count, committee_pressure, finance, temporary_staff, outsourcing, delivery_reason；可选 committee, tv_service | 接约原子建立，offer 保存原报价；opening_funds 在投资/拨款之前记录；实付本金只在 finance.investment_paid；临时人员属于当前项目。committee 为立项固定的委员会阵容（Σ持股+投资比例恰为 100，承制为 null，制作中不追加更换）；委员会投资比例按 0.1（10 个百分点）调整，开工后锁定；tv_service={purchased_week,cost} 每项目至多一次，见 V3.7/V3.8 |
+| Project | offer, mode, investment_percent, opening_funds, start_week, deadline_week, current_stage, stages, extension_count, committee_pressure, finance, temporary_staff, outsourcing, delivery_reason；可选 committee, tv_service | 接约原子建立，offer 保存原报价；opening_funds 在投资/拨款之前记录；实付本金只在 finance.investment_paid；临时人员属于当前项目。committee 为立项固定的委员会成员/渠道快照（成员结构为 {id,name,channel}，一个成员对应一个渠道，不含成员投资比例；承制为 null，制作中不追加更换）；委员会投资比例按 0.1（10 个百分点）调整，开工后锁定；tv_service={purchased_week,cost} 每项目至多一次，见 V3.7/V3.8 |
 | StageConfiguration | assignments, policy, overtime | assignments 每项 staff_id/role/focus，人员不重复；未安排者休整。policy=quality/balanced/deadline；overtime 为整个阶段方案，不逐周清除。是否允许无员工而仅用外包由核心按有效产能校验 |
 | StageState | status, work_done, quality, configuration, recommended_configuration, result | status=pending/ready/active/completed；pending/ready 无提交配置与结果且 work_done=0；active 配置非空；completed 结果非空且工作量完成。推荐配置可 null，不等于已提交 |
 | StageResult | weeks_spent, quality, costs, issues, team | 阶段结束产生；issues 为遗留问题文案。costs 仅归属分析，不能再次扣款或重复累加到项目成本 |
@@ -52,7 +52,7 @@
 5. history 只追加；project_settled 的 last_project_id 必须命中 history，return_to_market 后清空；终局可保留最后作品 ID。
 6. closing 已锁定经营，只允许待交付项目结算和经营总结。company_ended 无项目/事件/报价/预览；总结与公司原因、周数、资金和历史数量相符。
 7. running 必须 week<520；负资金只能属于 bankrupt 的 closing/ended。结算不能解除关闭状态。
-8. TS 校验协议、范围与关联，不重写 20%、本金、产能或利润公式；规则断言由核心负责，M0 手算只出现在测试样例。
+8. TS 校验协议、范围与关联，不重写制作预算比例、本金、产能或利润公式；规则断言由核心负责，M0 手算只出现在测试样例。
 
 ## V3.5 存档与集成切换
 
@@ -93,15 +93,15 @@ M0 在 services/saveGame.ts 实现 decodeV3SaveRecord 与只读 loadGameV3：拒
 | discard_custom_offer | Decision | 无参数 | 仅 idle 且存在自定企划；不退款 |
 | buy_tv_service | Decision | 无参数 | 仅委员会模式在制项目且未购买；支付 costs.distribution，写入 project.tv_service |
 | development / distribution | Costs | 非负整数，可选，缺省 0 | 前期开发费与付费播出发行支出；独立于投资本金、不参与分成；冻结八类不删不改 |
-| committee_members | ProjectOffer | {id, name, share_percent 1–100, channels}[]，可选 | 拟定委员会阵容；仅 allowed_modes 含 committee 的报价可携带；channels 限 publisher/toy/music/tv_broadcast，bd 为基础渠道不挂股东；投资方补足的是公司未承担的剩余投资，不代表自动补足商业渠道；渠道获取独立于投资补足，按企划自带条件及玩家额外拓展规则处理 |
-| committee | Project | 同上或 null；缺省未输出 | 立项时固定整份阵容：Σshare_percent + investment_percent 恰为 100；承制必须 null；制作中不追加更换 |
+| committee_members | ProjectOffer | {id, name, channel}[]，可选 | 拟定委员会阵容；仅 allowed_modes 含 committee 的报价可携带；一个成员对应一个渠道，channel 限 publisher/toy/music/tv_broadcast，bd 为基础渠道不挂成员；成员加入即开放对应渠道；不记录成员投资比例，渠道开放不由玩家投资比例或投资金额推导 |
+| committee | Project | {id, name, channel}[] 或 null；缺省未输出 | 立项时固定委员会成员/渠道快照；一个成员对应一个渠道，不含 share_percent；承制必须 null；制作中不追加更换 |
 | tv_service | Project | {purchased_week, cost 正整数} 或 null | 每项目至多一次电视播出服务购买 |
 | channel_potentials | ProjectOffer | {bd 必填 0–100；其余渠道可选 0–100} | 分渠道商业潜力按企划定位生成；股东未开通的渠道不展示 |
 | required_works | ProjectOffer | {rating S/A/B/C/D, 可选 source} 非空不重复数组 | 成绩类 IP 上门解锁条件，须全部满足；与 min_reputation 并存，未满足仍展示并锁定 |
 | rating | WorkRecord | S/A/B/C/D，可选 | 作品评价等级（固定分数线，数值 TODO）；与制作质量 quality_score 分列 |
 | channel_breakdown | WorkRecord | {channel, revenue, company_received}[]，可选 | 分渠道对账：Σrevenue=commercial_revenue、Σcompany_received=commercial_share_received、恒含 bd、company_received≤revenue |
 
-分账新口径：company_received 由「BD 收益至少 50% 归公司（独立于投资比例）+ 委员会项目非 BD 渠道按投资比例与分账约定」构成，具体数值待 #8 平衡；承制项目不参与非 BD 渠道分成，BD 至少 50% 归公司。V3.3 的 commercial_share_received=floor(revenue×percent/100) 单渠道公式被该框架取代。承制成功奖励由委托方另付并记入可选 finance.success_reward_received，缺省为 0。渠道收入在制作完成后随 calculate_result 统一结算。爆款 ×5 作用于分账前渠道毛收入（判定归 #7）。续作继承商业基础沿用 previous_work_id，属规则数值，无新增契约字段。
+分账新口径：company_received 由「BD 毛收入初始 50% 归公司（另 50% 为综合成本，独立于投资比例）+ 委员会项目非 BD 渠道按玩家投资比例」构成。BD 比例可按产业调查与数值平衡调整，但成本比例必须大于 0；承制项目不参与非 BD 渠道分成。V3.3 的 commercial_share_received=floor(revenue×percent/100) 单渠道公式被该框架取代。承制成功奖励由委托方另付并记入可选 finance.success_reward_received，缺省为 0。渠道收入在制作完成后随 calculate_result 统一结算。爆款 ×5 作用于分账前渠道毛收入（判定归 #7）。续作继承商业基础沿用 previous_work_id，属规则数值，无新增契约字段。
 
 
 ## V3.8 合作模式与渠道规则补充（2026-11-23）
@@ -347,3 +347,19 @@ GameStore 的 `game` 初始为 null，新开必须等待真实 WASM 的 initiali
 - TypeScript：同名字段与 v2 边界校验；store 整体采用 state，report/result 单独展示，不重算经营规则。
 - 测试：C++ 覆盖钳制、整数与阶段边界；真实 WASM 覆盖六接口和同种子重放；前端覆盖空初态、错误保留、互斥和存档版本。原生测试、模拟服务测试与浏览器验证不能互相冒充。
 - 协议变更按 CONTRIBUTING 流程同步 API、本文、实现、调用方与测试，明确旧存档策略；未运行验收不填写通过数量。
+
+
+## V3.9 委员会投资与渠道契约修订（2026-11-23）
+
+本节覆盖 V3.7/V3.8 中将委员会成员投资份额与渠道字段绑定的旧契约描述。
+
+- 委员会投资系统有两个玩法维度：玩家控制自身投资比例，以及拉入委员会成员开放渠道。两者属于同一委员会投资玩法，但没有数值绑定关系。
+- 玩家投资比例仍为 10%–100%，按 10 个百分点调整；其他成员共同补足剩余投资。状态只记录玩家投资比例和公司实际支付的投资本金，不记录其他成员各自的投资比例或投资金额。
+- 委员会成员数据采用 `{id, name, channel}`；一个成员对应一个渠道，成员加入即开放该渠道。不得使用 `share_percent` 或多渠道数组表达成员投资份额/渠道细分比例。
+- 渠道开放由企划自带条件和已加入的委员会成员决定，不由玩家投资比例或投资金额计算。BD 是所有企划自带的基础渠道，不挂接委员会成员。
+- 非 BD 渠道公司所得统一按玩家投资比例分配；不维护每个渠道独立的投资比例或分账比例。
+- BD 在承制和委员会模式下统一按毛收入初始 50% 计入公司收入、另 50% 计为综合成本；比例是可调整的平衡参数，成本比例不得为 0。
+- 制作预算为项目总投资的 50%，开工时并入公司统一现金池；没有独立预算钱包。预算资金用完后继续使用公司现有现金支付制作费用。
+- 制作经营亏损适用于承制与委员会；委员会投资本金亏损单独核算。强制制作费用无法支付时立即破产结算、游戏失败；不贷款、不追加投资。
+
+字段结构调整属于目标契约修订，不代表当前 TypeScript/C++ 实现已经同步。#6 负责人需要据此提交对应实现/迁移方案；集成时同步 gameV3.ts、核心校验、API 和测试。
