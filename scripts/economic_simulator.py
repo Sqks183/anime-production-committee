@@ -103,7 +103,7 @@ def produce_project(rng:random.Random,project:dict,cfg:dict,strategy:str,weeks_l
                 stage+=1; continue
             out_share=out_shares[stage]
             required_internal_rate=need*(1.0-out_share)/remaining_weeks
-            overtime_needed=min(overtime_left,max(0.0,required_internal_rate-regular_left))
+            overtime_needed=min(overtime_left,max(0.0,required_internal_rate-regular_internal))
             internal_available=regular_left+overtime_needed
             amount=min(need,internal_available/max(1e-9,1.0-out_share))
             done[stage]+=amount; work+=amount
