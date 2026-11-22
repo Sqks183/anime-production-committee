@@ -127,9 +127,10 @@ def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
         else:
             if outcome=="normal": completed+=1
             else: low+=1; reputation-=cfg["low_delivery_reputation_penalty"]
-            band=score_band(draw_score(rng,cfg,quality))
+            score=draw_score(rng,cfg,quality)
+            band=score_band(score)
             cash+=budget*cfg["bd_multipliers"][band]*cfg["bd_company_share"]
-            if strategy=="contract" and draw_score(rng,cfg,quality)>=cfg["contract_success_bonus_score"]:
+            if strategy=="contract" and score>=cfg["contract_success_bonus_score"]:
                 cash+=budget*cfg["contract_success_bonus_ratio"]
             if strategy!="contract":
                 cash+=budget*cfg["non_bd_gross_per_budget_per_channel"]*cfg["committee_channel_count"]*pct/100.0
