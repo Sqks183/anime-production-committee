@@ -75,7 +75,7 @@ def draw_score(rng: random.Random, cfg: dict) -> float:
     w = cfg["commercial_score_weights"]
     # Project market attributes are sampled independently of project size/type.
     base = sum(rng.uniform(0, 100) * w[k] for k in ("audience", "heat", "quality", "fit"))
-    return max(0.0, min(100.0, base + rng.gauss(0, cfg["commercial_score_noise_sd"]))
+    return max(0.0, min(100.0, base + rng.gauss(0, cfg["commercial_score_noise_sd"])))
 
 
 def choose_project(rng: random.Random, cfg: dict) -> dict:
