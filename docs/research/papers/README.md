@@ -15,7 +15,7 @@
 |---|---|---:|---|---|
 | 1 | Yoshimi, Management Accounting Issues in Production Committee | 2023 | [J-STAGE](https://www.jstage.jst.go.jp/article/jma/31/1/31_23/_article/-char/en) · [学会整期PDF](https://sitejama.jp/journal/31/1/00.pdf) | 免费阅读；未确认再分发许可，不复制PDF |
 | 2 | Nagata & Matsunaga, How is insourcing / outsourcing chosen | 2025 | [J-STAGE](https://www.jstage.jst.go.jp/article/jamsmedia/107/0/107_131/_article/-char/en) | 免费阅读；未确认再分发许可，不复制PDF |
-| 3 | Yoshimi, Expression and Accounting in Japanese Commercial Animation | 2026 | [J-STAGE](https://www.jstage.jst.go.jp/article/jjas/26/1/26_A-25-009-R3/_article/-char/ja) · [PDF](https://www.jstage.jst.go.jp/article/jjas/26/1/26_A-25-009-R3/_pdf) | 免费阅读；未确认再分发许可，不复制PDF |
+| 3 | Yoshimi, Expression and Accounting in Japanese Commercial Animation | 2025 (online 2026) | [J-STAGE](https://www.jstage.jst.go.jp/article/jjas/26/1/26_A-25-009-R3/_article/-char/ja) · [PDF](https://www.jstage.jst.go.jp/article/jjas/26/1/26_A-25-009-R3/_pdf) | 免费阅读；未确认再分发许可，不复制PDF |
 | 4 | Hernández, The Anime Industry, Networks of Participation | 2018 | [MDPI全文](https://www.mdpi.com/2076-0752/7/3/42) | 开放获取；遵循文章页具体许可和署名要求 |
 | 5 | Yoshimi, The Creativity and Profitability Management: Studio BACU | 2024 | [J-STAGE](https://www.jstage.jst.go.jp/article/mjmar/15/2/15_51/_article/-char/en) · [PDF](https://www.jstage.jst.go.jp/article/mjmar/15/2/15_51/_pdf/-char/en) | 免费阅读；未确认再分发许可，不复制PDF |
 | 6 | Rivera Rusca, Anime Production, Decentralized | 2024 | [Cambridge章节](https://www.cambridge.org/core/books/abs/cambridge-companion-to-manga-and-anime/anime-production-decentralized/C0CF605F9DF80BB673AF8FA94A7587E7) | 章节访问受限；目前仅摘要可读 |
