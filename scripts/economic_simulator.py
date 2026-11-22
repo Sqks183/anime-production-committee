@@ -38,7 +38,7 @@ DEFAULTS: dict[str, Any] = {
     "pressure_reputation_thresholds":[20,40,60,80],
     "pressure_reputation_penalties":[2,4,7,10],
     "low_delivery_reputation_penalty":10, "breach_penalty_ratio":0.50,
-    "strategies":["contract","committee_10","committee_50","committee_100"]
+    "strategies":["contract","committee_10","committee_50","committee_100","dynamic_conservative","dynamic_opportunity","dynamic_aggressive"]
 }
 
 @dataclass
@@ -48,6 +48,7 @@ class Trial:
     total_workload:float; completed_workload:float; avg_final_quality:float
     total_outsourcing_cost:float; total_overtime_cost:float; overtime_weeks:int
     total_payroll:float; total_non_bd_revenue:float
+    contract_projects:int; committee_projects:int; total_investment_ratio:float; min_cash:float
 
 def deep_merge(base:dict, override:dict)->dict:
     out=dict(base)
@@ -70,6 +71,25 @@ def draw_score(rng:random.Random,cfg:dict,quality:float)->float:
 def choose_project(rng:random.Random,cfg:dict)->dict:
     ps=cfg["project_types"]
     return rng.choices(ps,weights=[p["weight"] for p in ps],k=1)[0]
+
+def dynamic_offer_decision(cash:float, offers:list[dict], cfg:dict, policy:str):
+    """Choose an offer and financing mode using only pre-start information."""
+    burn=cfg["weekly_fixed_cost"]+cfg["core_employee_count"]*cfg["weekly_salary_per_employee"]
+    if policy=="dynamic_conservative":
+        project=min(offers,key=lambda p:(p["budget"]*2/max(1.0,p["weeks"]),p["workload"]))
+        reserve=max(cfg["initial_cash"]*0.60,burn*project["weeks"])
+        cap=30
+    elif policy=="dynamic_opportunity":
+        project=max(offers,key=lambda p:(p["target_quality"]*0.55+(p["budget"]/max(1.0,p["workload"]))*20.0))
+        reserve=max(cfg["initial_cash"]*0.35,burn*project["weeks"]*0.5)
+        cap=70
+    else:
+        project=max(offers,key=lambda p:(p["budget"]*p["target_quality"],p["budget"]))
+        reserve=max(cfg["initial_cash"]*0.10,burn*8)
+        cap=100
+    affordable_pct=max(0,int((cash-reserve)/(2.0*float(project["budget"]))*10)*10)
+    pct=min(cap,affordable_pct)
+    return project, ("committee" if pct>=10 else "contract"), pct
 
 def sample_stage_targets(rng:random.Random,requirements:list[float],cfg:dict):
     gates=[rng.uniform(cfg["stage_gate_ratio_min"],cfg["stage_gate_ratio_max"]) for _ in requirements]
@@ -132,21 +152,31 @@ def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
     week=completed=low=breaches=extensions=overtime_weeks=0
     total_work=done_work=quality_sum=quality_count=0.0
     total_outsource=total_overtime=total_payroll=total_non_bd=0.0; bankrupt=False
-    pct=0 if strategy=="contract" else int(strategy.split("_")[1])
+    contract_projects=committee_projects=0; investment_ratio_sum=0.0; min_cash=cash
+    pct=0 if strategy=="contract" or strategy.startswith("dynamic_") else int(strategy.split("_")[1])
     weekly_payroll=cfg["core_employee_count"]*cfg["weekly_salary_per_employee"]
     while week<cfg["weeks"]:
-        offers=[choose_project(rng,cfg) for _ in range(4)]; affordable=[]
-        for p in offers:
-            inv=float(p["budget"])*cfg["committee_investment_multiple"]*pct/100.0
-            if cash>=inv: affordable.append((p,inv))
-        if not affordable:
-            weekly_cost=cfg["weekly_fixed_cost"]+weekly_payroll
-            if cash<weekly_cost: bankrupt=True; break
-            cash-=weekly_cost; total_payroll+=weekly_payroll; week+=1; continue
-        project,investment=rng.choice(affordable); budget=float(project["budget"])
+        offers=[choose_project(rng,cfg) for _ in range(4)]
+        if strategy.startswith("dynamic_"):
+            project,mode,pct=dynamic_offer_decision(cash,offers,cfg,strategy)
+            investment=float(project["budget"])*cfg["committee_investment_multiple"]*pct/100.0
+        else:
+            pct=0 if strategy=="contract" else int(strategy.split("_")[1])
+            affordable=[(p,float(p["budget"])*cfg["committee_investment_multiple"]*pct/100.0) for p in offers
+                        if cash>=float(p["budget"])*cfg["committee_investment_multiple"]*pct/100.0]
+            if not affordable:
+                weekly_cost=cfg["weekly_fixed_cost"]+weekly_payroll
+                if cash<weekly_cost: bankrupt=True; break
+                cash-=weekly_cost; min_cash=min(min_cash,cash); total_payroll+=weekly_payroll; week+=1; min_cash=min(min_cash,cash); continue
+            project,investment=rng.choice(affordable)
+            mode="contract" if strategy=="contract" else "committee"
+        budget=float(project["budget"])
+        if mode=="committee": committee_projects+=1; investment_ratio_sum+=pct
+        else: contract_projects+=1
         cash-=investment; cash+=budget
+        min_cash=min(min_cash,cash)
         outcome,elapsed,pressure,work,required,quality,extended,outsource_by_week,overtime_by_week=produce_project(
-            rng,project,cfg,strategy,cfg["weeks"]-week)
+            rng,project,cfg,mode,cfg["weeks"]-week)
         extensions+=int(extended); total_work+=required; done_work+=work
         quality_sum+=quality; quality_count+=1
         for i in range(elapsed):
@@ -168,9 +198,9 @@ def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
             else: low+=1; reputation-=cfg["low_delivery_reputation_penalty"]
             score=draw_score(rng,cfg,quality); band=score_band(score)
             cash+=budget*cfg["bd_multipliers"][band]*cfg["bd_company_share"]
-            if strategy=="contract" and score>=cfg["contract_success_bonus_score"]:
+            if mode=="contract" and score>=cfg["contract_success_bonus_score"]:
                 cash+=budget*cfg["contract_success_bonus_ratio"]
-            if strategy!="contract" and cfg["non_bd_channel_count"]>0:
+            if mode=="committee" and cfg["non_bd_channel_count"]>0:
                 channels=list(cfg["non_bd_channel_rates"].items())
                 chosen=rng.sample(channels,k=min(cfg["non_bd_channel_count"],len(channels)))
                 channel_gross=0.0
@@ -182,7 +212,8 @@ def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
         if week>=cfg["weeks"]: break
     return Trial(strategy,bankrupt,cash,completed,low,breaches,extensions,reputation,week,
         total_work,done_work,quality_sum/max(1,quality_count),total_outsource,total_overtime,
-        overtime_weeks,total_payroll,total_non_bd)
+        overtime_weeks,total_payroll,total_non_bd,contract_projects,committee_projects,
+        investment_ratio_sum/max(1,committee_projects),min_cash)
 
 def summarize(rows:list[Trial])->dict:
     cash=[r.final_cash for r in rows]; ordered=sorted(cash)
@@ -204,7 +235,11 @@ def summarize(rows:list[Trial])->dict:
       "mean_overtime_cost":statistics.mean(r.total_overtime_cost for r in rows),
       "mean_overtime_weeks":statistics.mean(r.overtime_weeks for r in rows),
       "mean_payroll":statistics.mean(r.total_payroll for r in rows),
-      "mean_non_bd_revenue":statistics.mean(r.total_non_bd_revenue for r in rows)}
+      "mean_non_bd_revenue":statistics.mean(r.total_non_bd_revenue for r in rows),
+      "mean_contract_projects":statistics.mean(r.contract_projects for r in rows),
+      "mean_committee_projects":statistics.mean(r.committee_projects for r in rows),
+      "mean_committee_investment_ratio":statistics.mean(r.total_investment_ratio for r in rows),
+      "median_min_cash":statistics.median(r.min_cash for r in rows)}
 
 def run(cfg:dict):
     all_rows=[]; summaries=[]; master=random.Random(cfg["seed"])
