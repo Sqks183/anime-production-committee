@@ -207,7 +207,7 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 - [贡献与协作指南](CONTRIBUTING.md)
 - [产品定位](docs/PRODUCT.md)
 - [技术架构](docs/ARCHITECTURE.md)
-- [最小经营循环](docs/GAME_DESIGN.md)
+- [V1.0 游戏设计总览](docs/GAME_DESIGN.md)
 - [统一数据模型](docs/DATA_MODEL.md)
 - [规则与暂定参数](docs/GAME_RULES.md)
 - [六接口协议与同步流程](docs/API.md)
@@ -219,7 +219,7 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 
 - 六接口均实现；协议使用 snake_case、完整 GameState v2 往返，每次动作由 C++ 严格校验状态，错误包括 INVALID_PHASE，无前端规则兜底。
 - 外包/加班只安排今天，推进前可撤销；截止日当天结算后仍未完成就强制交付/违约，不无限拖到做完。
-- 所有数值和公式以 `packages/game-core/src/game_core.cpp` 与 `packages/game-core/include/game_rules.hpp` 为准，尚未最终平衡；体验时长与策略质量需实测。
+- 当前运行切片的数值和公式以 `packages/game-core/src/game_core.cpp` 与 `packages/game-core/include/game_rules.hpp` 为准；V1.0 目标规则见 `docs/GAME_RULES.md`，尚未实现的规则不得当作当前功能。
 - 开工资金加上拨款，草案利润 `profit = revenue - spent` 不含拨款，付费事件计入 spent；此经济口径待团队复核。
-- 不做复杂事件库、员工成长、招聘解雇、市场/发行、多企划并行；不做多存档槽、自动保存、旧版迁移或历史结算持久化。
+- 上述招聘成长、企划市场、委员会投资、商业渠道、十年履历与结局等属于 V1.0 目标范围，当前 v2 纵向切片尚未实现；v2 当前不包含这些玩法。存档仍为单槽手动保存，不支持旧版迁移或历史结算持久化。
 - 本地真实 WASM 与浏览器完整循环已按上述记录验证；没有执行线上部署，托管后的 MIME、资源加载和访问策略仍需发布后单独验收。
