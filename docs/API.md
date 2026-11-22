@@ -53,7 +53,7 @@ V2 是旧版纵向切片；V3 是当前目标协议。M1 已在 C++/WASM 实现�
 - 委员会投资玩法包含两个操作维度：控制玩家投资比例、拉入成员开放渠道。两者属于同一玩法，但不能互相推导。
 - BD 是所有企划的基础渠道。承制与委员会统一按初始 50% BD 毛收入计入公司收入、另 50% 作为 BD 综合成本；比例可后续调整，但成本比例必须大于 0。BD 分配不受玩家投资比例影响。
 - 委员会非 BD 渠道公司所得按玩家投资比例分配；不维护每个渠道独立的投资或分账比例。承制不参与非 BD 渠道分成。
-- 项目总投资的 50% 作为制作预算，开工时并入公司统一现金池，不另设独立预算钱包。制作支出持续从公司现金支付；预算资金用完后仍由公司现有现金承担。
+- contract_budget 就是项目制作预算，开工时并入公司统一现金池。所有普通企划可选择承制或委员会，原创仅委员会。仅委员会模式生成 total_investment=contract_budget×2；承制模式不生成投资规模。委员会投资额按 total_investment×investment_percent 计算。制作支出持续从公司现金支付；预算资金用完后仍由公司现有现金承担。
 - 当周强制制作费用无法支付时，`advance_week` 进入破产结算并判定游戏失败；不贷款、不强制追加投资。制作经营亏损与委员会投资本金亏损分开核算，制作经营亏损也可能发生在承制项目。
 
 
@@ -255,3 +255,24 @@ v2 替代三字段工程夹具，不兼容 v1。固定目录、公式和 LCG 以
 4. 明确旧存档迁移或拒绝读取策略；核对通过后才将目标契约标为已实现。
 
 验证入口为 `npm run test:native`、`npm run test:wasm`、`npm run typecheck` 与 `npm run test:unit`；浏览器流程使用 `npm run test:browser`。源码、文档示例与真实 WASM 返回结果必须一致。
+
+## V3.2.2 合同预算与投资规模（2026-11-23，当前目标协议）
+
+- 所有普通企划的 allowed_modes 必须包含 contract 与 committee；原创企划仅允许 committee。
+- contract_budget 始终表示合同预算，同时就是项目制作预算；不是承制专属字段。
+- 仅委员会模式生成 total_investment，公式为 contract_budget × 2。承制模式的 total_investment 为空/不适用，investment_percent=0。
+- 委员会模式的 investment_percent 为10–100、步长10；公司投资额为 floor(total_investment×investment_percent/100)。其他投资方共同补足剩余投资规模。
+- Project.committee 仅委员会模式可携带；承制必须为 null。只有委员会模式可拉入委员会成员开放额外渠道。
+- BD 毛收入初始50%计入公司所得、50%为综合成本。可直接计算 gross_bd_revenue×0.5，也可先记毛收入再扣成本；不得重复扣除。分渠道数据必须能同时核对毛收入与公司实际所得。
+
+以上是目标协议，需由 #6 同步 gameV3.ts、C++ 校验、报价生成、核心校验与测试；当前文档不代表代码已支持。
+## V3.2.2 合同预算与投资规模（2026-11-23，当前目标协议）
+
+- 所有普通企划的 allowed_modes 必须包含 contract 与 committee；原创企划仅允许 committee。
+- contract_budget 始终表示合同预算，同时就是项目制作预算；不是承制专属字段。
+- 仅委员会模式生成 total_investment，公式为 contract_budget × 2。承制模式的 total_investment 为空/不适用，investment_percent=0。
+- 委员会模式的 investment_percent 为10–100、步长10；公司投资额为 floor(total_investment×investment_percent/100)。其他投资方共同补足剩余投资规模。
+- Project.committee 仅委员会模式可携带；承制必须为 null。只有委员会模式可拉入委员会成员开放额外渠道。
+- BD 毛收入初始50%计入公司所得、50%为综合成本。可直接计算 gross_bd_revenue×0.5，也可先记毛收入再扣成本；不得重复扣除。分渠道数据必须能同时核对毛收入与公司实际所得。
+
+以上是目标协议，需由 #6 同步 gameV3.ts、C++ 校验、报价生成、核心校验与测试；当前文档不代表代码已支持。
