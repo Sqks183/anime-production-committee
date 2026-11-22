@@ -20,12 +20,17 @@ DEFAULTS: dict[str, Any] = {
     "committee_investment_multiple":2.0, "bd_company_share":0.5,
     "bd_multipliers":{"D":0.1,"C":0.4,"B":0.8,"A":1.5,"S":3.0},
     "commercial_score_weights":{"audience":0.50,"heat":0.20,"quality":0.20,"fit":0.10},
-    "commercial_score_noise_sd":8.0, "non_bd_gross_per_budget_per_channel":0.0,
-    "committee_channel_count":0, "contract_success_bonus_ratio":0.10,
+    "commercial_score_noise_sd":8.0,
+    "non_bd_channel_rates":{"publisher":0.25,"toy":0.35,"music":0.15,"tv_broadcast":0.30},
+    "non_bd_channel_count":2, "channel_fit_min":20, "channel_fit_max":40,
+    "non_bd_commercial_multipliers":{"D":0.3,"C":0.6,"B":1.0,"A":1.5,"S":2.5}, "contract_success_bonus_ratio":0.10,
     "contract_success_bonus_score":65,
     "stage_shares":[0.10,0.15,0.35,0.25,0.15],
+    "stage_names":["script","storyboard","key_animation","animation_check","postproduction"],
+    "stage_outsource_shares":[0.20,0.25,0.45,0.30,0.35],
+    "stage_outsource_cost_per_unit":[8000,10000,14000,7000,9000],
     "stage_gate_ratio_min":0.65, "stage_gate_ratio_max":0.80,
-    "workload_variation_sd":0.12, "weekly_work_capacity":110.0,
+    "workload_variation_sd":0.12, "weekly_work_capacity":70.0,
     "weekly_capacity_variation_sd":0.12, "polish_probability":0.35,
     "polish_extra_work_ratio":0.20, "polish_quality_gain":1.5,
     "quality_performance_noise_sd":7.0, "minimum_low_delivery_ratio":0.50,
@@ -42,6 +47,8 @@ class Trial:
     strategy:str; bankrupt:bool; final_cash:float; completed:int; low_deliveries:int
     breaches:int; extensions:int; reputation:float; weeks_used:int
     total_workload:float; completed_workload:float; avg_final_quality:float
+    total_outsourcing_cost:float; total_overtime_cost:float; overtime_weeks:int
+    total_payroll:float; total_non_bd_revenue:float
 
 def deep_merge(base:dict, override:dict)->dict:
     out=dict(base)
