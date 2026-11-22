@@ -2,6 +2,11 @@
   "trials": 500,
   "seed": 20261123,
   "strategies": ["contract", "committee_10", "committee_50", "committee_100", "dynamic_conservative", "dynamic_opportunity", "dynamic_aggressive"],
+  "dynamic_policy": {
+    "dynamic_conservative": {"cash_reserve_ratio": 0.60, "project_operating_reserve_ratio": 1.0, "minimum_operating_reserve_weeks": 0, "max_investment_ratio": 30},
+    "dynamic_opportunity": {"cash_reserve_ratio": 0.35, "project_operating_reserve_ratio": 0.5, "minimum_operating_reserve_weeks": 0, "max_investment_ratio": 70},
+    "dynamic_aggressive": {"cash_reserve_ratio": 0.10, "project_operating_reserve_ratio": 0.0, "minimum_operating_reserve_weeks": 8, "max_investment_ratio": 100}
+  },
   "initial_cash": 50000000,
   "weekly_fixed_cost": 200000,
   "core_employee_count": 4,
