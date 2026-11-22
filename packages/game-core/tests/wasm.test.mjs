@@ -5,17 +5,21 @@ import createGameCore from '../../../apps/web/public/wasm/game-core.mjs'
 
 const wasmUrl = new URL('../../../apps/web/public/wasm/game-core.wasm', import.meta.url)
 const core = await createGameCore()
-const methods = ['initialize_game', 'start_project', 'apply_decision', 'advance_day', 'resolve_event', 'calculate_result']
+const methods = ['initialize_game', 'start_project', 'apply_decision', 'advance_week', 'resolve_event', 'calculate_result']
 const call = (method, input, module = core) => JSON.parse(module[method](JSON.stringify(input)))
 function ok(method, input, module = core) {
   const result = call(method, input, module)
   assert.equal(result.error, undefined, JSON.stringify(result))
   return result
 }
-const initial = (seed = 12345) => ok('initialize_game', { seed }).state
-const start = (seed = 12345) => ok('start_project', { state: initial(seed), project_id: 'proj_ova_01' }).state
-const decide = (state, decision) => ok('apply_decision', { state, decision }).state
-const advance = (state) => ok('advance_day', { state })
+const initial = (seed = 12345, module = core) => ok('initialize_game', { seed }, module).state
+const start = (seed = 12345, module = core) => ok('start_project', { state: initial(seed, module), offer_id: 'proj_ova_01', mode: 'contract', investment_percent: 0 }, module).state
+function configure(state, policy = 'balanced', module = core) {
+  const stage = state.project.current_stage
+  const recommended = state.project.stages[stage].recommended_configuration
+  return ok('apply_decision', { state, decision: { type: 'configure_stage', stage, configuration: { assignments: recommended.assignments, policy, overtime: false } } }, module).state
+}
+const advance = (state, module = core) => ok('advance_week', { state }, module)
 function expectError(result, code) {
   assert.deepEqual(Object.keys(result), ['error'])
   assert.deepEqual(Object.keys(result.error).sort(), ['code', 'message'])
@@ -23,27 +27,36 @@ function expectError(result, code) {
   assert.equal(typeof result.error.message, 'string')
   assert.ok(result.error.message.length > 0)
 }
-function run(seed, module = core) {
-  let state = ok('initialize_game', { seed }, module).state
-  state = ok('start_project', { state, project_id: 'proj_ova_01' }, module).state
-  state = ok('apply_decision', { state, decision: { type: 'policy', policy: 'normal' } }, module).state
-  const trace = [state]
-  for (let step = 0; step < 100 && state.phase !== 'ended'; step++) {
-    const result = state.phase === 'event_pending'
-      ? ok('resolve_event', { state, option_id: 'opt_b' }, module)
-      : ok('advance_day', { state }, module)
-    state = result.state
-    trace.push(result)
-    assert.ok(state.project.stages.post.progress <= state.project.stages.mid.progress)
-    assert.ok(state.project.stages.mid.progress <= state.project.stages.pre.progress)
-    assert.ok(state.funds >= 0)
+const stageOrder = ['script', 'storyboard', 'key_animation', 'animation_check', 'postproduction']
+function checkInvariants(state) {
+  if (state.project === null) return
+  const current = state.project.current_stage === null ? 5 : stageOrder.indexOf(state.project.current_stage)
+  let seenActive = false
+  for (const [index, stage] of stageOrder.entries()) {
+    const item = state.project.stages[stage]
+    if (item.status === 'completed') assert.ok(!seenActive && index < current, stage)
+    if (item.status === 'active') { seenActive = true; assert.equal(index, current) }
+    if (item.status === 'ready') { assert.equal(index, current); assert.equal(item.work_done, 0) }
   }
-  assert.equal(state.phase, 'ended')
-  trace.push(ok('calculate_result', { state }, module))
+  assert.ok(state.company.funds >= 0 || state.company.status !== 'running')
+}
+function run(seed, module = core, policy = 'balanced') {
+  let state = configure(start(seed, module), policy, module)
+  const trace = [state]
+  for (let step = 0; step < 60 && state.phase === 'producing'; step++) {
+    const stage = state.project.current_stage
+    if (state.project.stages[stage].status === 'ready') state = configure(state, policy, module)
+    const result = advance(state, module)
+    state = result.state
+    checkInvariants(state)
+    trace.push(result)
+  }
+  assert.equal(state.phase, 'project_ready')
+  trace.push(ok('calculate_result', { state, scope: 'project' }, module))
   return trace
 }
 
-test('工厂加载真实 WASM 二进制并导出全部六接口', async () => {
+test('工厂加载真实 WASM 二进制并导出 v3 六接口', async () => {
   assert.equal(createGameCore.name, 'createGameCore')
   const bytes = await readFile(wasmUrl)
   assert.deepEqual([...bytes.subarray(0, 8)], [0, 97, 115, 109, 1, 0, 0, 0])
@@ -51,103 +64,99 @@ test('工厂加载真实 WASM 二进制并导出全部六接口', async () => {
   for (const method of methods) assert.equal(typeof core[method], 'function')
 })
 
-test('UTF-8 初始化、接手、决策、首日黄金数据通过 Embind', () => {
+test('v3 初始化、接手合同与首周黄金数据通过 Embind', () => {
+  const idle = initial()
+  assert.equal(idle.version, 3)
+  assert.equal(idle.phase, 'idle')
+  assert.equal(idle.company.funds, 2_000_000)
+  assert.equal(idle.offers.length, 4)
+  assert.equal(idle.offers[0].id, 'proj_ova_01')
+  assert.equal(idle.preview.total_cost, 180_000)
   const state = start()
-  assert.equal(state.project.name, '放学后的第七帧')
-  assert.equal(state.staff.length, 4)
-  assert.equal(state.funds, 10_000_000)
-  assert.equal(state.project.deadline_day, 20)
+  assert.equal(state.project.offer.name, '放学后的第七帧')
+  assert.equal(state.company.funds, 6_000_000)
+  assert.equal(state.project.deadline_week, 14)
+  assert.deepEqual(state.seed, idle.seed)
   const request = structuredClone(state)
-  const next = advance(state)
+  const first = advance(configure(state))
   assert.deepEqual(state, request)
-  assert.equal(next.state.funds, 9_700_000)
-  assert.equal(next.state.day, 2)
-  assert.equal(next.state.seed, 87628868)
-  assert.equal(next.state.project.stages.pre.progress, 6)
-  assert.equal(next.state.project.stages.mid.progress, 6)
-  assert.equal(next.state.project.stages.post.progress, 6)
-  assert.equal(next.report.funds_delta, -300000)
+  assert.equal(first.state.company.funds, 5_790_000)
+  assert.equal(first.state.company.week, 1)
+  assert.equal(first.state.project.stages.script.work_done, 10)
+  assert.equal(first.state.project.stages.script.quality, 42)
+  assert.equal(first.state.company.staff[0].morale, 78)
+  assert.equal(first.state.company.staff[0].fatigue, 4)
+  assert.equal(first.state.seed, 12345)
+  assert.equal(first.report.funds_delta, -210_000)
 })
 
-test('相同种子与决策的整局轨迹跨独立 WASM 实例完全相同', async () => {
+test('相同种子的整局轨迹跨独立 WASM 实例与插局干扰完全相同', async () => {
   const second = await createGameCore()
   for (const seed of [0, 1, 13, 12345, 0xffffffff]) {
     const first = run(seed)
-    run(42)
-    assert.deepEqual(run(seed, second), first)
+    run(4242, second, 'quality')
+    assert.deepEqual(run(seed, second), first, `seed ${seed}`)
   }
-  assert.notDeepEqual(run(0), run(1))
 })
 
-test('完整新游戏到按期完成、结算、下一企划且不可重复结算', () => {
-  const trace = run(12345)
-  const settled = trace.at(-1)
-  const ended = trace.at(-2).state
-  assert.equal(settled.result.end_reason, 'completed')
-  assert.equal(settled.state.phase, 'idle')
-  assert.equal(settled.state.project, null)
-  assert.equal(settled.state.offers.length, 3)
-  assert.equal(settled.state.funds, ended.funds + settled.result.revenue)
-  assert.equal(settled.result.profit, settled.result.revenue - settled.result.cost)
-  assert.ok(settled.result.quality_score > 0)
-  expectError(call('calculate_result', { state: settled.state }), 'INVALID_PHASE')
-  const next = ok('start_project', { state: settled.state, project_id: 'proj_tv_01' }).state
-  assert.equal(next.project.start_day, ended.day)
-  assert.equal(next.seed, ended.seed)
+test('完整对局结算、返回市场与企划轮换', () => {
+  let state = configure(start())
+  for (let step = 0; step < 60 && state.phase === 'producing'; step++) {
+    const stage = state.project.current_stage
+    if (state.project.stages[stage].status === 'ready') state = configure(state)
+    state = advance(state).state
+  }
+  assert.equal(state.phase, 'project_ready')
+  assert.equal(state.project.delivery_reason, 'deadline')
+  expectError(call('advance_week', { state }), 'INVALID_PHASE')
+  const settled = ok('calculate_result', { state, scope: 'project' })
+  assert.equal(settled.state.phase, 'project_settled')
+  assert.equal(settled.state.last_project_id, 'proj_ova_01')
+  assert.equal(settled.state.history[0].id, 'proj_ova_01')
+  assert.equal(settled.state.company.funds, state.company.funds - settled.result.finance.costs.penalty)
+  assert.equal(settled.result.finance.costs.penalty, 800_000)
+  assert.equal(settled.result.end_reason, 'deadline')
+  assert.equal(settled.result.commercial_revenue % 15_000, 0)
+  assert.ok(settled.result.quality_score >= 0 && settled.result.quality_score <= 100)
+  expectError(call('calculate_result', { state: settled.state, scope: 'project' }), 'INVALID_PHASE')
+  const returned = ok('apply_decision', { state: settled.state, decision: { type: 'return_to_market' } })
+  assert.equal(returned.state.phase, 'idle')
+  assert.equal(returned.state.seed, 87628868)
+  assert.deepEqual(returned.state.offers.map((offer) => offer.id), ['proj_short_03', 'proj_tv_03', 'proj_ova_04', 'proj_movie_02'])
+  const next = ok('start_project', { state: returned.state, offer_id: 'proj_short_03', mode: 'contract', investment_percent: 0 })
+  assert.equal(next.state.project.start_week, 14)
 })
 
-test('安排可撤销，外包与加班推进才扣款且只生效一天', () => {
-  const before = start()
-  const planned = decide(before, { type: 'outsource', stage: 'pre', enabled: true })
-  assert.equal(planned.funds, before.funds)
-  assert.deepEqual(decide(planned, { type: 'outsource', stage: 'pre', enabled: false }), before)
-  const overtime = decide(planned, { type: 'overtime', staff_id: 'staff_01', enabled: true })
-  const next = advance(overtime).state
-  assert.equal(next.project.spent, 825000)
-  assert.equal(next.project.stages.pre.outsourced, false)
-  assert.equal(next.staff[0].overtime, false)
-  assert.equal(next.staff[0].morale, 73)
-  const poor = { ...before, funds: 300000 }
-  expectError(call('apply_decision', { state: poor, decision: { type: 'outsource', stage: 'pre', enabled: true } }), 'INSUFFICIENT_BUDGET')
-  assert.equal(poor.funds, 300000)
+test('M1 未开放动作返回契约错误且不修改状态', () => {
+  const idle = initial()
+  expectError(call('start_project', { state: idle, offer_id: 'proj_ova_01', mode: 'committee', investment_percent: 0 }), 'MODE_NOT_ALLOWED')
+  expectError(call('apply_decision', { state: idle, decision: { type: 'hire_core', staff_id: 'staff_01' } }), 'INVALID_INPUT')
+  expectError(call('apply_decision', { state: start(), decision: { type: 'hire_temporary', staff_id: 'tmp_01' } }), 'INVALID_INPUT')
+  expectError(call('apply_decision', { state: start(), decision: { type: 'request_extension' } }), 'MODE_NOT_ALLOWED')
+  expectError(call('resolve_event', { state: idle }), 'INVALID_PHASE')
+  const producing = start()
+  expectError(call('resolve_event', { state: producing }), 'INVALID_PHASE')
+  const tampered = structuredClone(producing)
+  tampered.pending_event = { id: 'evt_001' }
+  expectError(call('advance_week', { state: tampered }), 'INVALID_INPUT')
 })
 
-test('确定性事件、未处理时阻止推进、事件费用不足不修改状态', () => {
-  const pending = advance(start(13)).state
-  assert.equal(pending.phase, 'event_pending')
-  assert.equal(pending.seed, 1035543048)
-  assert.equal(pending.pending_event.id, 'evt_001')
-  expectError(call('advance_day', { state: pending }), 'INVALID_PHASE')
-  const poor = { ...pending, funds: 0 }
-  expectError(call('resolve_event', { state: poor, option_id: 'opt_a' }), 'INSUFFICIENT_BUDGET')
-  const next = ok('resolve_event', { state: poor, option_id: 'opt_b' }).state
-  assert.equal(next.phase, 'producing')
-  assert.equal(next.seed, pending.seed)
-  assert.equal(next.day, pending.day)
-  assert.equal(next.project.deadline_day, pending.project.deadline_day + 1)
-  const tampered = structuredClone(pending)
-  tampered.pending_event.options[0].effect.funds = 1_000_000
-  expectError(call('resolve_event', { state: tampered, option_id: 'opt_a' }), 'INVALID_INPUT')
-})
-
-test('截止、破产与末日完成优先级均可结算', () => {
-  const state = start(13)
-  state.project.deadline_day = 1
-  const late = advance(state).state
-  assert.equal(late.end_reason, 'deadline')
-  assert.equal(late.pending_event, null)
-  assert.equal(ok('calculate_result', { state: late }).state.phase, 'idle')
-  const poor = { ...start(), funds: 299999 }
-  const bankrupt = advance(poor).state
-  assert.equal(bankrupt.end_reason, 'bankrupt')
-  assert.equal(bankrupt.day, poor.day)
-  assert.equal(bankrupt.seed, poor.seed)
-  assert.equal(bankrupt.funds, poor.funds)
-  assert.equal(ok('calculate_result', { state: bankrupt }).result.revenue, 0)
-  for (const stage of Object.values(state.project.stages)) { stage.progress = 99; stage.quality = 80 }
-  const completed = advance(state).state
-  assert.equal(completed.end_reason, 'completed')
-  for (const stage of Object.values(completed.project.stages)) assert.equal(stage.progress, 100)
+test('空闲周推进扣款与企划轮换、破产周零修改', () => {
+  const idle = initial()
+  const week = advance(idle)
+  assert.equal(week.state.company.week, 1)
+  assert.equal(week.state.company.funds, 1_820_000)
+  assert.equal(week.state.seed, 87628868)
+  assert.deepEqual(week.state.offers.map((offer) => offer.id), ['proj_short_03', 'proj_tv_03', 'proj_ova_04', 'proj_movie_02'])
+  const poor = { ...initial(), company: { ...idle.company, funds: 179_999 } }
+  const bankrupt = advance(poor)
+  assert.equal(bankrupt.state.company.funds, 179_999)
+  assert.equal(bankrupt.state.company.week, 0)
+  assert.equal(bankrupt.state.company.status, 'closing')
+  assert.equal(bankrupt.state.company.end_reason, 'bankrupt')
+  assert.deepEqual(bankrupt.state.offers, [])
+  expectError(call('advance_week', { state: bankrupt.state }), 'COMPANY_ENDED')
+  expectError(call('apply_decision', { state: bankrupt.state, decision: { type: 'end_company' } }), 'COMPANY_ENDED')
 })
 
 test('JSON 异常在 WASM 内捕获，后续调用正常', () => {
@@ -159,35 +168,35 @@ test('JSON 异常在 WASM 内捕获，后续调用正常', () => {
   }
 })
 
-test('嵌套数值、必填字段、阶段一致性与安全整数边界', () => {
+test('嵌套数值与安全整数边界', () => {
   const invalid = {
     funds: [-1, Number.MAX_SAFE_INTEGER + 1, 0.5, '1', true, null, [], {}],
     seed: [-1, 0x100000000, 1.5, '1', true, null, [], {}],
-    day: [0, -1, 1.5, '1', true, null],
-    reputation: [-1, 1.5, Number.MAX_SAFE_INTEGER + 1],
   }
   for (const [field, values] of Object.entries(invalid)) {
-    for (const value of values) expectError(call('advance_day', { state: { ...start(), [field]: value } }), 'INVALID_INPUT')
-    const state = start(); delete state[field]
-    expectError(call('advance_day', { state }), 'INVALID_INPUT')
-  }
-  for (const field of ['progress', 'quality']) {
-    for (const value of [-1, 101, 0.5, true, null, '1']) {
-      const state = start(); state.project.stages.pre[field] = value
-      expectError(call('advance_day', { state }), 'INVALID_INPUT')
+    for (const value of values) {
+      const state = start()
+      if (field === 'funds') state.company.funds = value
+      else state[field] = value
+      expectError(call('advance_week', { state }), 'INVALID_INPUT')
     }
+    const state = start()
+    if (field === 'funds') delete state.company.funds
+    else delete state[field]
+    expectError(call('advance_week', { state }), 'INVALID_INPUT')
   }
-  const forged = start(); forged.phase = 'ended'; forged.end_reason = 'completed'
-  expectError(call('calculate_result', { state: forged }), 'INVALID_INPUT')
-  const maximum = { ...start(), funds: Number.MAX_SAFE_INTEGER }
-  assert.equal(advance(maximum).state.funds, Number.MAX_SAFE_INTEGER - 300000)
-  expectError(call('start_project', { state: { ...initial(), funds: Number.MAX_SAFE_INTEGER }, project_id: 'proj_ova_01' }), 'INVALID_INPUT')
+  const rich = configure(start())
+  rich.company.funds = Number.MAX_SAFE_INTEGER
+  assert.equal(advance(rich).state.company.funds, Number.MAX_SAFE_INTEGER - 210_000)
+  expectError(call('start_project', { state: { ...initial(), company: { ...initial().company, funds: Number.MAX_SAFE_INTEGER } }, offer_id: 'proj_ova_01', mode: 'contract', investment_percent: 0 }), 'INVALID_INPUT')
 })
 
-test('六接口的状态顺序与声望解锁门槛', () => {
+test('六接口的状态顺序校验', () => {
   const idle = initial()
-  for (const method of ['apply_decision', 'advance_day', 'resolve_event', 'calculate_result']) expectError(call(method, { state: idle }), 'INVALID_PHASE')
-  expectError(call('start_project', { state: idle, project_id: 'proj_movie_01' }), 'INVALID_INPUT')
-  const unlocked = { ...idle, reputation: 20 }
-  assert.equal(ok('start_project', { state: unlocked, project_id: 'proj_movie_01' }).state.project.type, 'movie')
+  expectError(call('apply_decision', { state: idle, decision: { type: 'configure_stage', stage: 'script', configuration: {} } }), 'INVALID_PHASE')
+  expectError(call('calculate_result', { state: idle, scope: 'project' }), 'INVALID_PHASE')
+  const producing = start()
+  expectError(call('calculate_result', { state: producing, scope: 'project' }), 'INVALID_PHASE')
+  expectError(call('start_project', { state: producing, offer_id: 'proj_ova_01', mode: 'contract', investment_percent: 0 }), 'INVALID_PHASE')
+  expectError(call('apply_decision', { state: producing, decision: { type: 'return_to_market' } }), 'INVALID_PHASE')
 })
