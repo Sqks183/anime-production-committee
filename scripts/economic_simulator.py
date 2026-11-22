@@ -80,7 +80,7 @@ def dynamic_offer_decision(cash:float, offers:list[dict], cfg:dict, policy:str):
         reserve=max(cfg["initial_cash"]*0.60,burn*project["weeks"])
         cap=30
     elif policy=="dynamic_opportunity":
-        project=max(offers,key=lambda p:(p["target_quality"]*0.55+(p["budget"]/max(1.0,p["workload"]))*20.0))
+        project=max(offers,key=lambda p:(p["target_quality"]*0.55+(p["budget"]/max(1.0,p["workload"])/10000.0)*20.0))
         reserve=max(cfg["initial_cash"]*0.35,burn*project["weeks"]*0.5)
         cap=70
     else:
@@ -184,14 +184,14 @@ def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
             outsourcing_cost=outsource_by_week[i]
             weekly_cost=cfg["weekly_fixed_cost"]+weekly_payroll+overtime_cost+outsourcing_cost
             if cash<weekly_cost: bankrupt=True; break
-            cash-=weekly_cost; total_payroll+=weekly_payroll
+            cash-=weekly_cost; min_cash=min(min_cash,cash); total_payroll+=weekly_payroll
             total_overtime+=overtime_cost; total_outsource+=outsourcing_cost
             overtime_weeks+=int(overtime_by_week[i]>1e-8); week+=1
         if bankrupt: break
         for threshold,penalty in zip(cfg["pressure_reputation_thresholds"],cfg["pressure_reputation_penalties"]):
             if pressure>=threshold: reputation-=penalty
         if outcome=="breach":
-            breaches+=1; cash-=budget*cfg["breach_penalty_ratio"]
+            breaches+=1; cash-=budget*cfg["breach_penalty_ratio"]; min_cash=min(min_cash,cash)
             if cash<0: bankrupt=True; break
         else:
             if outcome=="normal": completed+=1
