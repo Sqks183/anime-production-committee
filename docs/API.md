@@ -31,6 +31,8 @@
 | raise_salary | staff_id, weekly_salary | running idle 或 project_settled；仅核心员工，新周薪高于当前值；不立即重复收工资，新工资从下次周结算使用；改善士气参数待定 |
 | return_to_market | 无 | running project_settled；清 last_project_id，生成四企划后 idle；不推进周，不重复发放任何结算收入 |
 | end_company | 无 | running 的任意非终局 phase；不推进周，锁 closing/voluntary；有未交付项目先进入 project_ready，已完成或已待交付的成果保留其交付原因 |
+| scout | 无 | running idle 或 project_settled；支付 scouting_fee，按当前种子生成新候选人补充/替换 recruitment_pool；保底计数 scout_pity 随状态持久。**契约已冻结，核心行为由 #7 实现；实现前返回 INVALID_INPUT，与 hire_core 现状同例** |
+| targeted_scout | role 与 focus_ability 二选一 | 同 scout 窗口；费用更高，候选人限定该岗位/能力方向；与普池共享保底计数。**核心行为由 #7 实现，实现前返回 INVALID_INPUT** |
 
 休整不另开人事子系统：空闲周或阶段未安排的人员按周恢复；核心工资照付。事件受控改配通过 resolve_event，而非放开 configure_stage。事件导致的外包/改配由核心复用同一费用、匹配与产能规则。事件库尚未开题，不在 M0 造完整触发器。
 

@@ -13,6 +13,8 @@ export type CompanyEndReason = 'time_limit' | 'bankrupt' | 'voluntary'
 export type DeliveryReason = 'completed' | 'deadline' | 'company_closed'
 export type Source = 'manga' | 'light_novel' | 'game' | 'original'
 export type Scale = 'ova' | 'short' | 'tv' | 'movie'
+export type OfferOrigin = 'market' | 'custom' | 'incoming' | 'proposal'
+export type WorkStyle = 'normal' | 'meme' | 'ai'
 export type CooperationMode = 'contract' | 'committee'
 export type Policy = 'quality' | 'balanced' | 'deadline'
 export type Role = 'director' | 'scriptwriter' | 'animation_director' | 'key_animator' | 'animator' | 'production_manager' | 'postproduction'
@@ -43,6 +45,8 @@ export interface Staff {
   departure_warning: boolean
 }
 
+// M2 扩展字段（origin/style/min_reputation/scout_pity）在 #6/#7 核心实现落地前可选：
+// 缺省按 market/normal/0/零计数解释，M1 核心输出与既有 v3 存档保持合法。见 DATA_MODEL V3.6。
 export interface Company {
   week: number
   status: 'running' | 'closing' | 'ended'
@@ -52,6 +56,7 @@ export interface Company {
   reputation: number
   staff: Staff[]
   finance: Finance
+  scout_pity?: { since_sr: number; since_ssr: number }
 }
 
 export interface ProjectOffer {
@@ -69,6 +74,9 @@ export interface ProjectOffer {
   allowed_modes: CooperationMode[]
   workloads: Record<Stage, number>
   previous_work_id: string | null
+  origin?: OfferOrigin
+  style?: WorkStyle
+  min_reputation?: number
 }
 
 export interface Assignment {
@@ -186,6 +194,8 @@ export interface WorkRecord {
   profit: number
   team: TeamSnapshot[]
   stages: Record<Stage, StageState>
+  origin?: OfferOrigin
+  style?: WorkStyle
 }
 
 export interface CompanyResult {
@@ -230,6 +240,8 @@ export type Decision =
   | { type: 'raise_salary'; staff_id: string; weekly_salary: number }
   | { type: 'return_to_market' }
   | { type: 'end_company' }
+  | { type: 'scout' }
+  | { type: 'targeted_scout'; role?: Role; focus_ability?: Ability }
 
 export interface WeekReport {
   week: number
@@ -293,6 +305,8 @@ export const isCompanyEndReason = (value: unknown): value is CompanyEndReason =>
 export const isDeliveryReason = (value: unknown): value is DeliveryReason => choice(value, ['completed', 'deadline', 'company_closed'])
 export const isSource = (value: unknown): value is Source => choice(value, ['manga', 'light_novel', 'game', 'original'])
 export const isScale = (value: unknown): value is Scale => choice(value, ['ova', 'short', 'tv', 'movie'])
+export const isOfferOrigin = (value: unknown): value is OfferOrigin => choice(value, ['market', 'custom', 'incoming', 'proposal'])
+export const isWorkStyle = (value: unknown): value is WorkStyle => choice(value, ['normal', 'meme', 'ai'])
 export const isCooperationMode = (value: unknown): value is CooperationMode => choice(value, ['contract', 'committee'])
 export const isPolicy = (value: unknown): value is Policy => choice(value, ['quality', 'balanced', 'deadline'])
 export const isRole = (value: unknown): value is Role => choice(value, ['director', 'scriptwriter', 'animation_director', 'key_animator', 'animator', 'production_manager', 'postproduction'])
@@ -323,10 +337,17 @@ export function isCompany(value: unknown): value is Company {
   if (!isRecord(value) || !week(value.week) || !choice(value.status, ['running', 'closing', 'ended'])
     || !integer(value.initial_funds) || !signed(value.funds) || !integer(value.reputation)
     || !arrayOf(value.staff, isStaff) || !uniqueIds(value.staff) || !value.staff.every((staff) => staff.employment === 'core')
-    || !isFinance(value.finance)) return false
+    || !isFinance(value.finance)
+    || !(value.scout_pity === undefined || (isRecord(value.scout_pity) && integer(value.scout_pity.since_sr) && integer(value.scout_pity.since_ssr)))) return false
   if (value.status === 'running') return value.end_reason === null && value.funds >= 0 && value.week < 520
   return isCompanyEndReason(value.end_reason) && (value.funds >= 0 || value.end_reason === 'bankrupt')
     && (value.end_reason !== 'time_limit' || value.week === 520)
+}
+
+// 缺省 style=normal、origin=market；非 normal 风格只能来自自定企划，meme 限定短篇。
+const styleOriginRule = (value: Record<string, unknown>) => {
+  const style = value.style ?? 'normal'
+  return style === 'normal' || (value.origin === 'custom' && (style === 'ai' || value.scale === 'short'))
 }
 
 export function isProjectOffer(value: unknown): value is ProjectOffer {
@@ -338,6 +359,10 @@ export function isProjectOffer(value: unknown): value is ProjectOffer {
     && (value.source !== 'original' || (value.allowed_modes.length === 1 && value.allowed_modes[0] === 'committee'))
     && fields(value.workloads, STAGES, (item): item is number => integer(item, 1)) && nullableText(value.previous_work_id)
     && value.previous_work_id !== value.id
+    && (value.origin === undefined || isOfferOrigin(value.origin))
+    && (value.style === undefined || isWorkStyle(value.style))
+    && (value.min_reputation === undefined || integer(value.min_reputation))
+    && styleOriginRule(value)
 }
 
 export function isAssignment(value: unknown): value is Assignment {
@@ -444,7 +469,9 @@ export function isWorkRecord(value: unknown): value is WorkRecord {
     || !week(value.start_week) || !week(value.end_week) || value.end_week < value.start_week || !isDeliveryReason(value.end_reason)
     || !score(value.quality_score) || !score(value.commercial_score) || !integer(value.commercial_revenue)
     || !isFinance(value.finance) || !modeFinance(value.mode, value.finance) || !signed(value.profit) || !isTeam(value.team)
-    || !fields(value.stages, STAGES, isStageState) || !orderedStages(value.stages)) return false
+    || !fields(value.stages, STAGES, isStageState) || !orderedStages(value.stages)
+    || !(value.origin === undefined || isOfferOrigin(value.origin))
+    || !(value.style === undefined || isWorkStyle(value.style)) || !styleOriginRule(value)) return false
   if ((firstUnfinished(value.stages) === null) !== (value.end_reason === 'completed')) return false
   const ids = new Set(value.team.map(({ staff_id }) => staff_id))
   const stages = value.stages
@@ -516,7 +543,11 @@ export function isGameState(value: unknown): value is GameState {
   const needsPreview = company.status === 'running' && (value.phase === 'idle'
     || (value.phase === 'producing' && project !== null && project.current_stage !== null && project.stages[project.current_stage].status === 'active'))
   if (needsPreview ? value.preview === null || value.preview.next_week !== company.week + 1 : value.preview !== null) return false
-  if (value.phase === 'idle') return project === null && event === null && value.last_project_id === null && value.offers.length === (company.status === 'running' ? 4 : 0)
+  if (value.phase === 'idle') {
+    if (project !== null || event !== null || value.last_project_id !== null || value.offers.length !== (company.status === 'running' ? 4 : 0)) return false
+    // 负责人决策（#1，2026-11-21）：锁定项可展示，但至少 2 个报价可立即承接。
+    return company.status !== 'running' || value.offers.filter((offer) => (offer.min_reputation ?? 0) <= company.reputation).length >= 2
+  }
   if (value.offers.length !== 0) return false
   if (value.phase === 'project_settled') return project === null && event === null && value.last_project_id !== null
   if (project === null) return false
@@ -537,6 +568,12 @@ export function isDecision(value: unknown): value is Decision {
       && integer(value.workload, 1) && choice(value.mode, ['normal', 'emergency'])
     case 'request_extension': case 'return_to_market': case 'end_company': return true
     case 'raise_salary': return isText(value.staff_id) && integer(value.weekly_salary)
+    case 'scout': return true
+    case 'targeted_scout': {
+      const hasRole = value.role !== undefined
+      const hasAbility = value.focus_ability !== undefined
+      return hasRole !== hasAbility && (!hasRole || isRole(value.role)) && (!hasAbility || isAbility(value.focus_ability))
+    }
     default: return false
   }
 }
@@ -567,6 +604,7 @@ function decisionReferences(state: GameState, decision: Decision): boolean {
     case 'raise_salary': return managing && state.company.staff.some((staff) => staff.id === decision.staff_id && decision.weekly_salary > staff.weekly_salary)
     case 'return_to_market': return state.phase === 'project_settled'
     case 'end_company': return true
+    case 'scout': case 'targeted_scout': return managing
   }
 }
 

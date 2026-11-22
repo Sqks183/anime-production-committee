@@ -514,6 +514,7 @@ const decisions: Decision[] = [
   { type: 'outsource', supplier_id: 'v3_supplier', stage: 'script', ability: 'drawing', workload: 20, mode: 'normal' },
   { type: 'request_extension' }, { type: 'raise_salary', staff_id: 'v3_director', weekly_salary: 70_000 },
   { type: 'return_to_market' }, { type: 'end_company' },
+  { type: 'scout' }, { type: 'targeted_scout', role: 'director' },
 ]
 const requests: { [M in CoreMethod]: CoreRequests[M] } = {
   initialize_game: { seed: 0xffffffff },
@@ -594,7 +595,7 @@ describe('所有 action 与核心接口请求/响应', () => {
   })
 
   it('逐项校验 action 的当前引用与锁定阶段，而非成本或人数算法', () => {
-    const states = [stageReadyState(), withCandidates(stageReadyState()), withCandidates(v3IdleState()), stageReadyState(), committeeState(), v3IdleState(), v3SettledState(), v3IdleState()]
+    const states = [stageReadyState(), withCandidates(stageReadyState()), withCandidates(v3IdleState()), stageReadyState(), committeeState(), v3IdleState(), v3SettledState(), v3IdleState(), v3IdleState(), v3IdleState()]
     for (const [index, decision] of decisions.entries()) expect(isCoreRequest('apply_decision', { state: states[index], decision }), decision.type).toBe(true)
     expect(isCoreRequest('apply_decision', { state: v3ProducingState(), decision: decisions[0] })).toBe(false)
     expect(isCoreRequest('apply_decision', { state: stageReadyState(), decision: { ...decisions[0], stage: 'storyboard' } })).toBe(false)
@@ -764,5 +765,107 @@ describe('周回执与手算现金账（不在生产 validator 复制规则）',
     expect(isGameState(changed(v3SettledState(), 'history.0.quality_score', 1))).toBe(true)
     expect(isGameState(changed(v3IdleState(), 'preview.total_cost', 1))).toBe(true)
     expect(isCompanyResult({ ...v3EndedState().company_result, rating: 'renowned', net_cash_change: -42 })).toBe(true)
+  })
+})
+
+describe('M2 契约扩展：origin/style/min_reputation/scout（可选字段与缺省语义）', () => {
+  function extendedIdle(): GameState {
+    const state = v3IdleState()
+    state.company.scout_pity = { since_sr: 3, since_ssr: 12 }
+    state.offers[0].origin = 'incoming'
+    state.offers[0].min_reputation = 0
+    state.offers[1].origin = 'market'
+    state.offers[1].style = 'normal'
+    state.offers[2].min_reputation = 0
+    Object.assign(state.offers[3], { origin: 'custom', style: 'meme', source: 'original', scale: 'short', allowed_modes: ['committee'] })
+    return state
+  }
+
+  it('扩展样本合法；缺省可选字段仍合法，兼容 M1 核心输出与既有 v3 存档', () => {
+    const state = extendedIdle()
+    expect(isGameState(state)).toBe(true)
+    expect(isGameState(JSON.parse(JSON.stringify(state)))).toBe(true)
+    expect(isGameState(v3IdleState())).toBe(true)
+    expect(isGameState(changed(state, 'company.scout_pity', undefined, true))).toBe(true)
+    expect(isGameState(changed(state, 'offers.0.origin', undefined, true))).toBe(true)
+    expect(isGameState(changed(state, 'offers.0.min_reputation', undefined, true))).toBe(true)
+    expect(isGameState(changed(state, 'offers.3.style', undefined, true))).toBe(true)
+    expect(isGameState(changed(state, 'offers.3.origin', undefined, true))).toBe(false)
+  })
+
+  it('origin/style 枚举与交叉约束：非 normal 必须 custom，meme 限定短篇', () => {
+    const state = extendedIdle()
+    expect(isGameState(changed(state, 'offers.0.origin', 'wrong'))).toBe(false)
+    expect(isGameState(changed(state, 'offers.3.style', 'wrong'))).toBe(false)
+    expect(isGameState(changed(state, 'offers.3.style', 'ai'))).toBe(true)
+    expect(isGameState(changed(state, 'offers.3.scale', 'tv'))).toBe(false)
+    expect(isGameState(changed(state, 'offers.1.style', 'meme'))).toBe(false)
+    expect(isGameState(changed(state, 'offers.2.style', 'ai'))).toBe(false)
+    expect(isGameState(changed(state, 'offers.0.origin', 'proposal'))).toBe(true)
+    expect(isGameState(changed(state, 'offers.0.style', 'meme'))).toBe(false)
+    for (const value of [-1, 0.5, NaN, '0']) expect(isGameState(changed(state, 'offers.0.min_reputation', value))).toBe(false)
+  })
+
+  it('idle 市场允许锁定项，但至少 2 个报价可立即承接', () => {
+    const state = v3IdleState()
+    state.offers[0].min_reputation = 0
+    state.offers[1].min_reputation = 0
+    state.offers[2].min_reputation = 10
+    state.offers[3].min_reputation = 20
+    expect(isGameState(state)).toBe(true)
+    state.offers[1].min_reputation = 5
+    expect(isGameState(state)).toBe(false)
+    state.company.reputation = 20
+    expect(isGameState(state)).toBe(true)
+  })
+
+  it('scout_pity 为非负整数计数，结构非法拒绝', () => {
+    const state = v3IdleState()
+    state.company.scout_pity = { since_sr: 0, since_ssr: 0 }
+    expect(isGameState(state)).toBe(true)
+    expect(isGameState(changed(state, 'company.scout_pity.since_sr', -1))).toBe(false)
+    expect(isGameState(changed(state, 'company.scout_pity.since_ssr', 0.5))).toBe(false)
+    expect(isGameState(changed(state, 'company.scout_pity.since_ssr', undefined, true))).toBe(false)
+    expect(isGameState(changed(state, 'company.scout_pity', 3))).toBe(false)
+  })
+
+  it('scout/targeted_scout 仅经营窗口可用，定向参数二选一', () => {
+    const scout: Decision = { type: 'scout' }
+    const targeted: Decision = { type: 'targeted_scout', focus_ability: 'drawing' }
+    for (const state of [v3IdleState(), v3SettledState()]) {
+      expect(isCoreRequest('apply_decision', { state, decision: scout })).toBe(true)
+      expect(isCoreRequest('apply_decision', { state, decision: targeted })).toBe(true)
+    }
+    for (const state of [v3ProducingState(), stageReadyState(), v3EventState(), v3ReadyState(), v3EndedState(), closingState()]) {
+      expect(isCoreRequest('apply_decision', { state, decision: scout })).toBe(false)
+    }
+    expect(isDecision({ type: 'targeted_scout', role: 'director', focus_ability: 'drawing' })).toBe(false)
+    expect(isDecision({ type: 'targeted_scout' })).toBe(false)
+    expect(isDecision({ type: 'targeted_scout', role: 'wrong' })).toBe(false)
+    expect(isDecision({ type: 'targeted_scout', focus_ability: 'wrong' })).toBe(false)
+    expect(isDecision({ type: 'targeted_scout', role: 'animator' })).toBe(true)
+  })
+
+  it('在制与结算快照携带扩展字段仍通过整体校验', () => {
+    const producing = v3ProducingState()
+    producing.project!.offer.origin = 'incoming'
+    producing.project!.offer.min_reputation = 0
+    producing.company.scout_pity = { since_sr: 1, since_ssr: 4 }
+    expect(isGameState(producing)).toBe(true)
+    const settled = v3SettledState()
+    settled.history[0].origin = 'market'
+    settled.history[0].style = 'normal'
+    settled.company.scout_pity = { since_sr: 0, since_ssr: 0 }
+    expect(isGameState(settled)).toBe(true)
+  })
+
+  it('WorkRecord 携带 origin/style 并执行同一交叉约束', () => {
+    const work = v3SettledState('committee').history[0]
+    expect(isWorkRecord({ ...work, origin: 'custom', style: 'meme', source: 'original', scale: 'short' })).toBe(true)
+    expect(isWorkRecord({ ...work, origin: 'custom', style: 'meme', source: 'original', scale: 'tv' })).toBe(false)
+    expect(isWorkRecord({ ...work, style: 'ai' })).toBe(false)
+    expect(isWorkRecord({ ...work, origin: 'custom', style: 'ai', source: 'original' })).toBe(true)
+    expect(isWorkRecord(changed(work, 'style', 'wrong'))).toBe(false)
+    expect(isWorkRecord(changed(work, 'origin', 'wrong'))).toBe(false)
   })
 })

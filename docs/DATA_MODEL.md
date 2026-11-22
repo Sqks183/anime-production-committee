@@ -8,7 +8,7 @@
 
 ## V3.2 字段纪律与所有权
 
-- 以下所有字段均必填；仅 `resolve_event.configuration` 为可选请求字段。null 是明确的无值，不允许省略或用空字符串代替。数组可空的例外按下表说明。
+- 以下所有字段均必填；仅 `resolve_event.configuration` 为可选请求字段，以及 V3.6 列明的 M2 扩展状态字段在核心实现落地前可选。null 是明确的无值，不允许省略或用空字符串代替。数组可空的例外按下表说明。
 - 字段使用 snake_case，只有存档外层 savedAt 保留现名。规则字段由 C++ 产生、变更并整体返回；TS 只提交动作、校验、展示和保存。未提交的配置草稿只属于 UI。
 - 数值均为 JS 安全整数。金额单位日元，默认非负；profit/net_cash_change/回执增量可负。只有 bankrupt 的 closing/ended 状态允许公司 funds 为负，表示强制结算赔付缺口，不增加借贷系统。opening_funds 非负。
 - 能力、潜力、质量、疲劳、士气、压力、受众基础、商业潜力/评分、可靠性为 0–100。经验、工作量、费用、声望非负；阶段总工作量、供应商容量/速度、工期必须正数。概率用 0–1000 千分比，投资用整数百分数。
@@ -23,11 +23,11 @@
 | 对象 | 必填字段 | 产生时机与约束 |
 | --- | --- | --- |
 | GameState | version=3, seed, phase, company, offers, recruitment_pool, suppliers, project, pending_event, history, last_project_id, company_result, preview | 初始化建立全部字段；无项目/事件/最近结算/总结/预览时用 null。历史与外部资源池可空；running idle 恰有四企划 |
-| Company | week, status, end_reason, initial_funds, funds, reputation, staff, finance | status=running/closing/ended；仅 running 的理由为 null，其他为 time_limit/bankrupt/voluntary；核心名册可空，人数与能力不固定；初始化名册由核心生成 |
+| Company | week, status, end_reason, initial_funds, funds, reputation, staff, finance；可选 scout_pity | status=running/closing/ended；仅 running 的理由为 null，其他为 time_limit/bankrupt/voluntary；核心名册可空，人数与能力不固定；初始化名册由核心生成；scout_pity={since_sr,since_ssr} 非负整数保底计数，缺省按 0/0 |
 | Finance | contract_received, investment_paid, commercial_share_received, costs | 非负实际累计收支；投资不再计入成本。公司层全生命周期、项目层项目区间，同一笔交易的两个汇总视图，不重复改变现金 |
 | Costs | salary, operations, production, temporary, outsourcing, events, extension, penalty | 八类均出现，无支出填 0；依次为核心工资、固定运营、阶段直接费用、临时合同、外包、独立付费事件、延期费、扣罚。同一笔只归一类 |
 | Staff | id, name, role, employment, abilities, experience, potential, revealed_potential, talent_type, clues, traits, weekly_salary, project_fee, fatigue, morale, departure_warning | employment=core/temporary；核心 project_fee=0，临时 weekly_salary=0。前三个能力对象含六项数值，revealed_potential 含六个布尔值；潜力不低于当前能力，线索 1–2 条，traits 可空；warning 仅预警 |
-| ProjectOffer | id, name, source, scale, total_investment, contract_budget, duration_weeks, target_quality, audience_base, commercial_potential, risk, allowed_modes, workloads, previous_work_id | source=manga/light_novel/game/original；scale=ova/short/tv/movie；risk=low/medium/high；allowed_modes 非空不重复，原创只能 committee；workloads 含五阶段正数；合同预算由核心按总投资 20% 生成 |
+| ProjectOffer | id, name, source, scale, total_investment, contract_budget, duration_weeks, target_quality, audience_base, commercial_potential, risk, allowed_modes, workloads, previous_work_id；可选 origin, style, min_reputation | source=manga/light_novel/game/original；scale=ova/short/tv/movie；risk=low/medium/high；allowed_modes 非空不重复，原创只能 committee；workloads 含五阶段正数；合同预算由核心按总投资 20% 生成。origin=market/custom/incoming/proposal（缺省 market）；style=normal/meme/ai（缺省 normal），非 normal 必须 origin=custom，meme 限定 scale=short；min_reputation 非负整数（缺省 0），声望不足仍展示但锁定 |
 | Project | offer, mode, investment_percent, opening_funds, start_week, deadline_week, current_stage, stages, extension_count, committee_pressure, finance, temporary_staff, outsourcing, delivery_reason | 接约原子建立，offer 保存原报价；opening_funds 在投资/拨款之前记录；实付本金只在 finance.investment_paid；临时人员属于当前项目 |
 | StageConfiguration | assignments, policy, overtime | assignments 每项 staff_id/role/focus，人员不重复；未安排者休整。policy=quality/balanced/deadline；overtime 为整个阶段方案，不逐周清除。是否允许无员工而仅用外包由核心按有效产能校验 |
 | StageState | status, work_done, quality, configuration, recommended_configuration, result | status=pending/ready/active/completed；pending/ready 无提交配置与结果且 work_done=0；active 配置非空；completed 结果非空且工作量完成。推荐配置可 null，不等于已提交 |
@@ -36,7 +36,7 @@
 | Supplier | id, name, specialties, capacity, quality, speed, unit_price, reliability, unlocked | 固定池；specialties 非空不重复；capacity 为工作量，speed 为工作量/周，unit_price 为每单位工作量报价。解锁不回退；可靠性可在 UI 隐藏 |
 | OutsourceTask | id, supplier_id, stage, ability, work_total, work_done, mode, fee_paid, due_week, status | mode=normal/emergency；status=active/delivered/failed；交付时 work_done=work_total。费用按核心报价确认时一次支付，fee_paid 是快照，不是第二笔支出 |
 | GameEvent | id, category, stage, title, description, trigger, options | category=personnel/quality/budget/schedule；trigger={metric,value,threshold} 说明状态原因。option={id,label,cost,allows_reconfigure,disabled_reason}；disabled_reason 为 null 或拒绝文案。实际效果按核心目录执行，不接收自造 effect |
-| WorkRecord | id, name, source, scale, previous_work_id, mode, investment_percent, start_week, end_week, end_reason, quality_score, commercial_score, commercial_revenue, finance, profit, team, stages | 结算只追加一次；end_reason=completed/deadline/company_closed；commercial_revenue 为作品总商业收入，不是公司所得；公司所得只记 finance.commercial_share_received。五阶段及团队永久快照 |
+| WorkRecord | id, name, source, scale, previous_work_id, mode, investment_percent, start_week, end_week, end_reason, quality_score, commercial_score, commercial_revenue, finance, profit, team, stages；可选 origin, style | 结算只追加一次；end_reason=completed/deadline/company_closed；commercial_revenue 为作品总商业收入，不是公司所得；公司所得只记 finance.commercial_share_received。五阶段及团队永久快照。origin/style 从报价继承，交叉约束与 ProjectOffer 相同 |
 | CompanyResult | reason, weeks, final_funds, net_cash_change, total_projects, best_work_id, rating | 关闭流程完成产生，best_work_id 为历史 ID 或 null；rating=renowned/stable/small/failed，评级阈值待定；总结不再次入账 |
 | WeekPreview | next_week, costs, total_cost, event_probability_per_mille | 仅 running idle 或 active 制作阶段非空；待配置/事件/交付/结算/终局为 null；费用与风险只能使用核心预览 |
 | WeekReport | week, funds_delta, costs, stage_deltas, staff_deltas, messages | stage_deltas={stage,work_done_delta,quality_delta}；staff_deltas={staff_id,experience,fatigue_delta,morale_delta}；预检破产未完成周，week 不变、增量为 0；回执不作为请求状态 |
@@ -46,7 +46,7 @@
 ## V3.4 关联不变量
 
 1. 核心、当前临时、招聘池人员 ID 不重复；招募从池移出，临时人员结算后释放，后续可按招聘规则重新出现。当前配置和推荐引用可用人员；已完成阶段及历史的已提交配置按实际团队快照验证，未采纳的推荐不要求命中实际团队。
-2. 至多一个项目；offers 只在 running idle 存在。当前企划不得已在 history 中。
+2. 至多一个项目；offers 只在 running idle 存在。当前企划不得已在 history 中。running idle 恰有四企划，其中至少 2 个可立即承接（min_reputation 缺省 0，≤ 当前声望）；锁定项照常展示，不占满四个位置。
 3. current_stage 指向首个未完成阶段；之前 completed、之后 pending；全部完成为 null。阶段不并行，完成后下一阶段 ready，重新确认配置才能推进。
 4. contract：investment_percent=0、investment_paid=0、commercial_share_received=0、extension_count=0、committee_pressure=null。committee：整数投资 10–100、压力 0–100、延期次数 0–1。超支不改变投资比例，压力与声望分开。
 5. history 只追加；project_settled 的 last_project_id 必须命中 history，return_to_market 后清空；终局可保留最后作品 ID。
@@ -61,6 +61,24 @@
 M0 在 services/saveGame.ts 实现 decodeV3SaveRecord 与只读 loadGameV3：拒绝 v1/v2，提示“v2 存档不兼容周制经营 v3，请新开游戏；旧存档未被覆盖。”；损坏/未知版本保留原档与会话。读取不迁移、不删除、不覆盖。history、成长、阶段配置、事件、关闭原因和 company_result 都在 state 中保存，report 与 UI 草稿不保存。
 
 当前 v2 页面继续调用原 loadGame/saveGame。#5 在真实 v3 核心就绪时切换读写并移除旧入口；新游戏不自动写档，旧槽被覆盖前须由玩家明确保存并确认。M0 的版本拒绝代码不代表 v2 首页已拒绝自己的存档。
+
+## V3.6 M2 契约扩展（2026-11-22 负责人批准）
+
+来源：#6 企划三来源与 style 提案、#7 抽卡招募与抽象梗彩蛋提案、#1 负责人 2026-11-21 对 min_reputation 的批准。契约由契约负责人统一提交；规则行为由 #6/#7 模块负责人实现，本文不声称 C++ 已实现。
+
+**已落地字段（gameV3.ts 与守卫同步）：**
+
+| 字段 | 位置 | 形状与缺省 | 约束 |
+| --- | --- | --- | --- |
+| origin | ProjectOffer / WorkRecord | 'market'\|'custom'\|'incoming'\|'proposal'，缺省 market | 展示与生成来源标记；proposal 对应员工提案（#6 负责人 2026-11-22 确认口径），不占市场四槽 |
+| style | ProjectOffer / WorkRecord | 'normal'\|'meme'\|'ai'，缺省 normal | 非 normal 必须 origin=custom；meme 限定 scale=short；市场/上门/提案报价恒 normal |
+| min_reputation | ProjectOffer | 非负整数，缺省 0 | 声望不足仍展示并锁定；running idle 至少 2 个报价 min_reputation≤声望（守卫强制，执行 #1 决策 1） |
+| scout_pity | Company | {since_sr,since_ssr} 非负整数，缺省 0/0 | 抽卡保底计数，随存档持久，终局不重置；普池与定向池共享 |
+| scout / targeted_scout | Decision | scout 无参数；targeted_scout 的 role 与 focus_ability 二选一 | 仅 running idle 或 project_settled（与 hire_core 同经营窗口）；费用、稀有度阈值、保底次数进 game_rules.hpp，不在契约 |
+
+**可选字段纪律（修订 V3.2「均必填」）：** 上表字段在 #6/#7 核心实现落地前可选，缺省按表内语义解释。理由：契约先行冻结目标形状，M1 核心输出与既有 v3 存档必须保持合法，不引入存档迁移。核心实现落地后应统一输出这些字段；守卫对存在值执行完整校验。除此之外不得新增可选状态字段。
+
+**暂缓与待决（不在本轮落地）：** create_custom_offer 决策、员工提案采纳/拒绝决策、自定/提案企划的状态存放与生命周期、前期开发费用 ledger 归属、IP 上门成绩类解锁条件字段、09:16 商业渠道框架对 Finance 与分成公式的修订。冲突与待决清单见 GAME_RULES V3.7 与 #6/#7 负责人决定评论；口径确认前核心不得自行发明存放结构。
 
 ---
 

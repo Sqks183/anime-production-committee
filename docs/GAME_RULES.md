@@ -95,6 +95,35 @@
 
 阶段能力权重提案（千分比，供 #4 校准）：script = planning 700 + management 300；storyboard = direction 800 + planning 200；key_animation = drawing 850 + direction 150；animation_check = animation 700 + drawing 300；postproduction = postproduction 850 + management 150。
 
+## V3.7 M2 契约扩展批准与待决清单（2026-11-22，负责人）
+
+对 #6/#7 契约层提案的核对结论。字段形状与可选纪律见 DATA_MODEL V3.6，决策时点见 API V3.2；本节记录规则口径与未决项。数值全部 TODO(待定)，落地集中进 game_rules.hpp，由模块负责人注明来源。
+
+**本轮批准并落地（契约层，行为待 #6/#7 实现）：**
+
+1. ProjectOffer/WorkRecord 增加 origin（market/custom/incoming/proposal）与 style（normal/meme/ai）。proposal 值对齐负责人 2026-11-22 原创企划确认口径（员工提案不占市场四槽、只展示一次）。非 normal 风格只能来自自定企划；meme 限定短篇；市场/上门/提案报价恒 normal。
+2. min_reputation 合入 ProjectOffer（执行 2026-11-21 批准）。running idle 至少 2 个报价可立即承接，由 isGameState 强制；锁定项照常展示并写明解锁条件。
+3. scout/targeted_scout 决策与 Company.scout_pity 保底计数。时机裁定为 idle/project_settled 经营窗口（与 hire_core 一致，制作中不可挖人）；定向参数 role 与 focus_ability 二选一；普池与定向池共享计数；全部走现有 LCG，固定消耗顺序，不引入真随机。稀有度由能力总和推导，不新增 rarity 字段。
+4. 抽象梗彩蛋（咕咕嘎嘎/大肥鱼）机制方向批准：本提案零新增契约字段，解锁复用 history 与 style，爆款判定并入商业表现函数，矮紧灯为固定候选目录。彩蛋目录 4→6 组属 #7 数据落地。
+
+**裁定口径：**
+
+- 扩展字段在核心实现落地前可选，缺省 market/normal/0/零计数；M1 核心输出与既有 v3 存档保持合法，不做存档迁移。核心落地后统一输出。
+- 自定企划首版只开放 source=original，由核心拒绝其他来源；原创必须委员会、投资 10–100% 已由冻结校验承接（isProjectOffer/isWorkRecord）。
+- IP 上门首版只用 min_reputation 表达解锁门槛；成绩类条件（如「交付过 A 级以上游戏改」）待字段口径确认后再加，首版不阻塞。
+- 爆款判定若在结算期抽取种子，属于新增种子消耗点，实现时必须同步随机协议文档并保持同种子重放一致；失败请求不消耗种子。
+
+**冲突与待决（口径确认前不落地，模块负责人不得自行发明结构）：**
+
+| # | 待决项 | 冲突/缺口 | 需要谁确认 |
+| --- | --- | --- | --- |
+| K1 | 自定/员工提案企划的存放与生命周期 | 冻结不变量「running idle 恰有四企划」与提案「自定是第 5 条入口」冲突；提案改动清单未给出状态槽位。员工提案的触发周、展示一次、采纳/拒绝决策与消失时机均无契约表达 | 负责人定存放结构，#6 补提案（含采纳/拒绝决策） |
+| K2 | 前期开发费用 ledger 归属 | 2026-11-22 确认口径：固定前期开发费用独立于投资本金、不参与分成；冻结八类成本无对应分类，提案「会计口径零改动」不成立 | 负责人裁定复用类或新增类（新增即契约变更） |
+| K3 | 商业渠道框架 vs V3.3 分成公式 | 2026-11-22 09:16 确认框架：BD 保底 50% 独立于投资比例、渠道由立项时固定的委员会成员决定、渠道潜力独立数值；与冻结 commercial_share_received=floor(revenue×percent/100) 及 Finance 形状冲突。提案沿用 V3.3 的会计假设需同步修订；爆款×5 的作用渠道未定 | 负责人出契约修订提案（委员会成员、渠道潜力、Finance 语义），#6/#8 会签 |
+| K4 | IP 上门成绩类解锁条件字段 | min_reputation 只覆盖声望阈值；历史成绩类条件需要结构化规则或文案字段，提案未给出形状 | 负责人定字段口径，#6 落地 |
+
+create_custom_offer 决策受 K1/K2 阻塞，本轮不进入 Decision 联合类型；style/origin 字段先行冻结不依赖它。
+
 ---
 
 ## V2 已实现参数（历史对照，不约束 v3）
