@@ -73,5 +73,8 @@ class SimulatorTests(unittest.TestCase):
         self.assertIn("mean_committee_projects",summary)
         self.assertIn("mean_committee_investment_ratio",summary)
         self.assertIn("median_min_cash",summary)
+        self.assertIn("mean_bd_revenue",summary)
+        self.assertIn("mean_contract_success_bonus",summary)
+        self.assertIn("mean_non_bd_revenue",summary)
 
 if __name__=="__main__": unittest.main()
