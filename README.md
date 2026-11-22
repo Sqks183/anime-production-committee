@@ -157,7 +157,7 @@ v2 验收范围（2026-11-21 本地验收已通过）：
 - 前端界面：[应用入口](apps/web/src/App.tsx)、[首页](apps/web/src/pages/HomePage.tsx)、[制作与结算页](apps/web/src/pages/StudioPage.tsx)、[样式](apps/web/src/styles/index.css)。
 - 前端测试：[协议夹具](apps/web/src/test/fixtures.ts)（新增）、[类型校验测试](apps/web/src/types/game.test.ts)、[WASM 服务测试](apps/web/src/services/gameCore.test.ts)、[存档测试](apps/web/src/services/saveGame.test.ts)、[状态层测试](apps/web/src/stores/gameStore.test.ts)、[首页测试](apps/web/src/pages/HomePage.test.tsx)、[应用测试](apps/web/src/App.test.tsx)。
 - 核心与端到端测试：[原生测试](packages/game-core/tests/game_core_test.cpp)、[真实 WASM 测试](packages/game-core/tests/wasm.test.mjs)、[根 WASM 测试入口](scripts/wasm.test.mjs)、[浏览器测试](scripts/browser.test.mjs)。
-- 文档：[README](README.md)、[接口](docs/API.md)、[规则](docs/GAME_RULES.md)、[数据模型](docs/DATA_MODEL.md)、[架构](docs/ARCHITECTURE.md)、[产品范围](docs/PRODUCT.md)、[经营循环](docs/GAME_DESIGN.md)。
+- 文档：[README](README.md)、[接口](docs/API.md)、[规则](docs/GAME_RULES.md)、[数据模型](docs/DATA_MODEL.md)、[架构](docs/ARCHITECTURE.md)、[产品范围](docs/PRODUCT.md)、[V1.0 游戏设计总览](docs/GAME_DESIGN.md)。
 
 仓库同步包含上述实现与测试，以及关联的贡献指南、Issue / PR 模板、素材目录占位和来源记录；素材来源记录不代表图片已入库或授权已确认。没有修改构建配置、依赖、CI 工作流或 `.gitignore`，没有执行线上部署；生成图片、工具链、依赖和构建产物不随 Git 提交。
 
