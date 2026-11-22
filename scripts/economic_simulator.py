@@ -52,7 +52,7 @@ class Trial:
     breaches:int; extensions:int; reputation:float; weeks_used:int
     total_workload:float; completed_workload:float; avg_final_quality:float
     total_outsourcing_cost:float; total_overtime_cost:float; overtime_weeks:int
-    total_payroll:float; total_non_bd_revenue:float
+    total_payroll:float; total_bd_revenue:float; total_contract_bonus:float; total_non_bd_revenue:float
     contract_projects:int; committee_projects:int; total_investment_ratio:float; min_cash:float
 
 def deep_merge(base:dict, override:dict)->dict:
@@ -157,7 +157,7 @@ def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
     rng=random.Random(seed); cash=float(cfg["initial_cash"]); reputation=100.0
     week=completed=low=breaches=extensions=overtime_weeks=0
     total_work=done_work=quality_sum=quality_count=0.0
-    total_outsource=total_overtime=total_payroll=total_non_bd=0.0; bankrupt=False
+    total_outsource=total_overtime=total_payroll=total_bd=total_bonus=total_non_bd=0.0; bankrupt=False
     contract_projects=committee_projects=0; investment_ratio_sum=0.0; min_cash=cash
     pct=0 if strategy=="contract" or strategy.startswith("dynamic_") else int(strategy.split("_")[1])
     weekly_payroll=cfg["core_employee_count"]*cfg["weekly_salary_per_employee"]
@@ -203,9 +203,11 @@ def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
             if outcome=="normal": completed+=1
             else: low+=1; reputation-=cfg["low_delivery_reputation_penalty"]
             score=draw_score(rng,cfg,quality); band=score_band(score)
-            cash+=budget*cfg["bd_multipliers"][band]*cfg["bd_company_share"]
+            bd_income=budget*cfg["bd_multipliers"][band]*cfg["bd_company_share"]
+            cash+=bd_income; total_bd+=bd_income
             if mode=="contract" and score>=cfg["contract_success_bonus_score"]:
-                cash+=budget*cfg["contract_success_bonus_ratio"]
+                bonus=budget*cfg["contract_success_bonus_ratio"]
+                cash+=bonus; total_bonus+=bonus
             if mode=="committee" and cfg["non_bd_channel_count"]>0:
                 channels=list(cfg["non_bd_channel_rates"].items())
                 chosen=rng.sample(channels,k=min(cfg["non_bd_channel_count"],len(channels)))
@@ -218,7 +220,7 @@ def simulate_one(seed:int,strategy:str,cfg:dict)->Trial:
         if week>=cfg["weeks"]: break
     return Trial(strategy,bankrupt,cash,completed,low,breaches,extensions,reputation,week,
         total_work,done_work,quality_sum/max(1,quality_count),total_outsource,total_overtime,
-        overtime_weeks,total_payroll,total_non_bd,contract_projects,committee_projects,
+        overtime_weeks,total_payroll,total_bd,total_bonus,total_non_bd,contract_projects,committee_projects,
         investment_ratio_sum/max(1,committee_projects),min_cash)
 
 def summarize(rows:list[Trial])->dict:
@@ -241,6 +243,8 @@ def summarize(rows:list[Trial])->dict:
       "mean_overtime_cost":statistics.mean(r.total_overtime_cost for r in rows),
       "mean_overtime_weeks":statistics.mean(r.overtime_weeks for r in rows),
       "mean_payroll":statistics.mean(r.total_payroll for r in rows),
+      "mean_bd_revenue":statistics.mean(r.total_bd_revenue for r in rows),
+      "mean_contract_success_bonus":statistics.mean(r.total_contract_bonus for r in rows),
       "mean_non_bd_revenue":statistics.mean(r.total_non_bd_revenue for r in rows),
       "mean_contract_projects":statistics.mean(r.contract_projects for r in rows),
       "mean_committee_projects":statistics.mean(r.committee_projects for r in rows),
