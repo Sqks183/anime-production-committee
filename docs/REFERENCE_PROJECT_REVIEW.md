@@ -2,16 +2,18 @@
 
 - 调研日期：2026-11-22
 - 调研对象：《动画制作委员会》（Anime Production Committee）
-- 目标：从公开 GitHub 项目中寻找可借鉴的经营玩法、制作流程、系统架构、事件反馈、员工管理和 UI 表达。
-- 本文性质：第一轮案头调研，不是完整代码审计，也不构成新增需求或改动已确认规则的授权。
+- 目标：从公开 GitHub 项目中寻找可借鉴的经营玩法、制作流程、系统架构、事件反馈、员工管理、UI 表达和数值平衡方法。
+- 本文性质：第一轮案头调研 + 一轮补充搜索。不是完整代码审计，也不构成新增需求或改动已确认规则的授权。
+- 补充搜索（2026-11-22 晚）：新增 3 个项目，见标注「补」的行；结论从三类扩展为四类。
 
 ## 一、结论摘要
 
-值得继续深入的项目分成三类：
+值得继续深入的项目分成四类：
 
 1. **经营模拟与项目循环**：SimDev、Agency Simulation、Tech Empire。
 2. **模拟引擎、经济与可测试性**：SimCorp、MarketForce、Game Inc.。
 3. **动画制作流程与员工工作流**：Animation Workflow Manager、Stalker、SHS_infoGal_tycoonGame。
+4. **数值设计与平衡（补）**：econ。与 SimCorp 互补——SimCorp 保证账目记对，econ 提供验证数值不崩的校验方法。
 
 对本项目最有价值的不是照搬功能，而是借鉴以下做法：
 
@@ -25,19 +27,22 @@
 
 ## 二、候选项目清单
 
-下列项目均已核对 GitHub 仓库地址及 README；部分项目另检查了 LICENSE。README 中的功能和测试数据属于项目作者自述，本轮没有逐项运行或独立验证。
+下列项目均已核对 GitHub 仓库地址及 README；部分项目另检查了 LICENSE。README 中的功能和测试数据属于项目作者自述，本轮没有逐项运行或独立验证。标注「补」的三项来自 2026-11-22 晚的补充搜索，同样只看 README 与目录结构。
 
 | 项目 | 主要研究方向 | 与本项目的关系 | 本轮判断 |
 |---|---|---|---|
 | [SuitedTom/SimDev](https://github.com/SuitedTom/SimDev) | 游戏开发公司经营、员工、项目周期、声望 | 行业题材接近，且同样采用浏览器形态 | 高优先级，适合研究循环与信息呈现 |
+| [dev-alt/AnimeStudioSimulator](https://github.com/dev-alt/AnimeStudioSimulator)（补） | 动画公司经营：项目、制作、质量、员工、交易流水、市场事件 | 题材在九个之外最近，直接就是动画制作经营 | 中优先级；有实质模型目录，但 0 star、2025-09 后无更新、README 模板味重，仅作模型划分参照 |
 | [banyapon/agency-empire](https://github.com/banyapon/agency-empire) | 制作公司接单、团队、预算、账单、随机事件 | 与承制路线、项目现金流最接近 | 高优先级，适合研究合同与财务反馈 |
-| [stark-studio-labs/game-dev-empire](https://github.com/stark-studio-labs/game-dev-empire) | 周制模拟、员工、疲劳、士气、财务、事件、进度解锁 | 系统覆盖面广，可作为经营系统清单参照 | 中高优先级；README 内容丰富，但需核验实际实现 |
+| [stark-studio-labs/game-dev-empire](https://github.com/stark-studio-labs/game-dev-empire) | 周制模拟、员工、疲劳、士气、财务、事件、进度解锁 | 系统覆盖面广，可作为经营系统清单参照 | 中高优先级；README 自称系统多、测试全，但未独立核验，故不列入下一轮深读；若深读名额调整，优先换入 econ |
 | [Splortch/Simcorp](https://github.com/Splortch/Simcorp) | 确定性经济模拟、SQLite、双重记账、流水审计、测试 | 可借鉴资金与模拟引擎的正确性设计 | 高优先级，重点看账目与测试 |
+| [samw3/economy](https://github.com/samw3/economy)（补） | 游戏经济平衡校验：YAML 规则、漏洞 linter、Lean 4 证明、Monte Carlo 模拟 | 补上「数值怎么调平」这一整类，SimCorp 只解决「账怎么记对」 | 高优先级，下一轮深读；RPG 经济域，迁移的是校验方法而非公式，0 star 且未运行验证 |
 | [scottwleonard/marketforce](https://github.com/scottwleonard/marketforce) | 竞争市场、需求、定价、财务报表、AI 对手 | 可参考市场反馈与结算报告 | 中高优先级，重点看市场结果如何解释 |
 | [pierreyoda/GameInc](https://github.com/pierreyoda/GameInc) | JSON 数据驱动、事件脚本、市场模拟、员工生成 | 适合研究内容配置与事件条件表达 | 中优先级；仓库 README 明确标记早期且暂停 |
 | [Rak2k6/WorkFlow-Manager](https://github.com/Rak2k6/WorkFlow-Manager) | 动画场景任务、人员分配、素材、评论、审计日志 | 真实动画制作流程工具，不是游戏 | 高优先级，仅借鉴流程概念 |
 | [eoyilmaz/stalker](https://github.com/eoyilmaz/stalker) | 动画/VFX 项目、任务、里程碑、素材引用、版本关系 | 专业动画资产与项目管理模型 | 中高优先级，适合研究项目/任务/素材关系 |
 | [8feet/SHS_infoGal_tycoonGame](https://github.com/8feet/SHS_infoGal_tycoonGame) | 员工分配、工作进度、压力恢复、可视化反馈 | 经营模拟中的员工状态反馈 | 中优先级；体量和完成度有限，且 README 未列明确许可证 |
+| [limoaCatherine/numeric-kit](https://github.com/limoaCatherine/numeric-kit)（补） | 中文游戏数值工具链：框架表单一事实来源、表驱动模拟、场景覆盖、平衡提案 | 方法论与本项目「参数集中配置、不在前端另算」一致 | 边缘参考；战斗数值向、依赖本机 Excel 工件（仓库无框架表）、0 star |
 
 ## 三、逐项观察
 
@@ -195,6 +200,36 @@ README 描述 GameMaker 员工与建筑经营原型：员工被分配到工作�
 - 其空间建筑/拖拽分配机制与本项目周制岗位配置不同。
 - 不应复制其代码或素材；仅参考状态反馈思路。
 
+### 10. econ — 游戏经济平衡校验工具（补）
+
+仓库：[samw3/economy](https://github.com/samw3/economy)
+
+README 描述一个用 YAML 描述游戏经济规则、再用三种手段交叉验证的 Python 工具链：linter 找 money pump、物品复制、死亡刷钱、惩罚规避、风险收益倒挂、生命周期过长/过短和缺少回收口；Lean 4 内核检查「任何交易/合成组合都不能凭空创造价值」这类证明；Monte Carlo 模拟器按策略跑多次并输出成长与财富曲线。命令包括 `lint`、`sim`、`prove`、`tables`、`diff`。
+
+**值得借鉴**
+- 验证账目正确不止靠手算样例和回归测试，还可以检查「是否存在无中生有的操作路径」。线性规划 + 内核证明给了一个更强的正确性边界。
+- `diff old.yaml new.yaml` 这类「一次参数改动修好了什么、弄坏了什么」的输出，适合本项目的待定参数表。
+- 规则用数据表描述、校验与游戏运行时分离，和本项目「公式集中在核心、前端不另算」的分层一致。
+
+**不宜照搬**
+- 其模型是 RPG 战斗掉落经济，与承制/委员会、周制制作、分账不是同一域；迁移的是校验方法，不是公式和 YAML 格式。
+- 0 star、2026-10 新建、README 的方法自述未独立运行验证；本项目首版不需要引入 Lean 4 工具链。
+- 可作为后续「参数平衡验收」的思路储备，不进入当前实现范围。
+
+### 11. numeric-kit — 中文游戏数值工具链（补）
+
+仓库：[limoaCatherine/numeric-kit](https://github.com/limoaCatherine/numeric-kit)
+
+README 描述以框架工作簿为单一事实来源，做表驱动战斗模拟、场景覆盖率、属性边际分析和多场景平衡提案，并配本机 Excel MCP；仓库明确不包含框架表。
+
+**值得借鉴**
+- 「框架表是唯一事实来源、代码只读表再出提案」的工作流，与本项目参数集中配置的约束同向。
+- 模拟跑完先写回结果，再由单独步骤生成平衡提案，避免边模拟边改参数。
+
+**限制**
+- 战斗数值向，不覆盖经营游戏的现金流与声望平衡。
+- 缺框架表就无法复现流程，0 star，仅参考工作流，不作为实现范本。
+
 ## 四、跨项目归纳：对本项目真正有用的点
 
 | 主题 | 可借鉴的通用做法 | 本项目落点 | 是否新增系统 |
@@ -204,6 +239,7 @@ README 描述 GameMaker 员工与建筑经营原型：员工被分配到工作�
 | 员工状态 | 能力、工作进度、疲劳/士气同时可读 | 员工与外包模块 | 否 |
 | 事件机制 | 条件触发、次数限制、效果范围、处理结果 | 制作事件模块 | 否，已有规则 |
 | 资金结算 | 每笔收入/支出有来源，能复核 | 财务与作品结算 | 否，强化正确性 |
+| 数值校验（补） | 检查是否存在无中生有的资金路径；参数改动出 diff | 待定参数表、结算回归 | 否，方法储备 |
 | 市场反馈 | 结果拆解为评价、需求、收益等可理解因素 | 作品结算、市场热度 | 否 |
 | 制作履历 | 记录任务/事件/版本/处理结果 | 作品历史与重大事件履历 | 否，按既定契约实现 |
 | UI 反馈 | 进度、状态、风险和结果有一致视觉语言 | 游戏经营与制作界面 | 否 |
@@ -244,6 +280,7 @@ README 描述 GameMaker 员工与建筑经营原型：员工被分配到工作�
 | 仓库 | README / LICENSE 核查 | 使用边界 |
 |---|---|---|
 | SimDev | 存在 MIT LICENSE | 允许按 MIT 条款使用代码，保留版权与许可声明 |
+| AnimeStudioSimulator（补） | README 声明 MIT | 本轮仅看模型目录，不复制代码或素材 |
 | Agency Simulation | 存在 MIT LICENSE | 允许按 MIT 条款使用代码，保留版权与许可声明 |
 | Stalker | README 声明 LGPL-3.0 | 需遵守 LGPL-3.0；本轮仅参考概念 |
 | Game Inc. | 本轮未找到 LICENSE | 不复制代码或素材 |
@@ -251,7 +288,9 @@ README 描述 GameMaker 员工与建筑经营原型：员工被分配到工作�
 | SimCorp | README 声明 MIT；应以仓库 LICENSE 文件为准 | 未完成许可证文件核查前不复制代码 |
 | MarketForce | README 声明 MIT | 仍需核对仓库许可证文件及第三方资产 |
 | Animation Workflow Manager | 本轮未找到 LICENSE | 不复制代码或素材 |
+| numeric-kit（补） | 存在 MIT LICENSE | 工作流参考，不复制代码或素材；框架表不在仓库 |
 | SHS_infoGal_tycoonGame | 本轮未找到 LICENSE | 不复制代码或素材 |
+| econ（补） | 本轮未核查 LICENSE 文件 | 仅参考校验方法，不复制代码 |
 
 **默认原则：借鉴玩法思路、状态建模和交互表达，不复制他人的代码、图片、音频、文案或数据。** 即使仓库标注 MIT，也必须遵守其版权声明和许可证条件；素材可能另有独立许可。
 
@@ -259,15 +298,18 @@ README 描述 GameMaker 员工与建筑经营原型：员工被分配到工作�
 
 本轮完成：
 - 核对 9 个仓库的公开 README。
+- 补充搜索另核对 3 个仓库的 README 与目录结构，未运行、未审计代码。
 - 对部分仓库检查 LICENSE。
 - 按玩法关联度、实现价值和对首版范围的影响进行初筛。
 - 未克隆完整仓库、未运行游戏、未审计全部代码，也未验证 README 中所有功能是否真实可用。
 
-建议下一轮只深入 4 个项目：
+建议下一轮只深入 4 个项目（Tech Empire 因实现未核验让位给 econ）：
 1. SimDev：项目经营循环与阶段决策。
 2. Agency Simulation：项目合同、现金流与通知。
 3. SimCorp：确定性模拟、资金流水和测试。
-4. Animation Workflow Manager：动画制作流程、任务状态和履历。
+4. econ：经济规则校验、无中生有路径检查、参数改动的 diff 输出。
+
+如需保留动画流程视角，可把 Animation Workflow Manager 作为第 5 个可选深读，不占用前四个名额。每个项目重点读核心状态模型、周/日推进入口、结算函数、事件触发、测试用例和 UI 反馈；econ 额外读 linter 的规则分类与 `diff` 输出格式。最终输出只形成“现有设计验证/体验优化提案”，不直接新增需求。
 
 每个项目重点读核心状态模型、周/日推进入口、结算函数、事件触发、测试用例和 UI 反馈。最终输出只形成“现有设计验证/体验优化提案”，不直接新增需求。
 
@@ -276,11 +318,14 @@ README 描述 GameMaker 员工与建筑经营原型：员工被分配到工作�
 ## 参考链接
 
 - https://github.com/SuitedTom/SimDev
+- https://github.com/dev-alt/AnimeStudioSimulator
 - https://github.com/banyapon/agency-empire
 - https://github.com/stark-studio-labs/game-dev-empire
 - https://github.com/Splortch/Simcorp
+- https://github.com/samw3/economy
 - https://github.com/scottwleonard/marketforce
 - https://github.com/pierreyoda/GameInc
 - https://github.com/Rak2k6/WorkFlow-Manager
 - https://github.com/eoyilmaz/stalker
 - https://github.com/8feet/SHS_infoGal_tycoonGame
+- https://github.com/limoaCatherine/numeric-kit
