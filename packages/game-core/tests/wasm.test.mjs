@@ -191,6 +191,212 @@ test('嵌套数值与安全整数边界', () => {
   expectError(call('start_project', { state: { ...initial(), company: { ...initial().company, funds: Number.MAX_SAFE_INTEGER } }, offer_id: 'proj_ova_01', mode: 'contract', investment_percent: 0 }), 'INVALID_INPUT')
 })
 
+function probeValidation(state, code = 'INVALID_PHASE') {
+  const before = JSON.stringify(state)
+  const { seed, company: { funds, week } } = state
+  expectError(call('resolve_event', { state }), code)
+  assert.equal(JSON.stringify(state), before)
+  assert.equal(state.seed, seed)
+  assert.equal(state.company.funds, funds)
+  assert.equal(state.company.week, week)
+}
+
+test('动态名册和两类招聘候选通过真实核心校验，候选不计工资', () => {
+  for (const count of [0, 1, 4, 7]) {
+    const state = initial()
+    const template = state.company.staff[0]
+    state.company.staff = Array.from({ length: count }, (_, index) => ({ ...structuredClone(template), id: `dynamic_${index}`, weekly_salary: 1000 }))
+    state.recruitment_pool = [
+      { ...structuredClone(template), id: 'candidate_core' },
+      { ...structuredClone(template), id: 'candidate_temp', employment: 'temporary', weekly_salary: 0, project_fee: 1234 },
+    ]
+    state.preview.costs.salary = count * 1000
+    state.preview.total_cost = count * 1000 + 30_000
+    probeValidation(state)
+    const next = advance(state).state
+    assert.equal(next.company.funds, state.company.funds - state.preview.total_cost)
+    assert.deepEqual(next.recruitment_pool, state.recruitment_pool)
+    const duplicate = structuredClone(state)
+    duplicate.recruitment_pool.push(structuredClone(duplicate.recruitment_pool[0]))
+    probeValidation(duplicate, 'INVALID_INPUT')
+  }
+})
+
+test('动态报价快照决定工期和工作量，结算不重复扣已支付费用', () => {
+  const idle = initial()
+  Object.assign(idle.offers[0], { id: 'dynamic_work_r123', name: '动态作品', duration_weeks: 5, origin: 'incoming', style: 'normal', min_reputation: 0 })
+  for (const stage of stageOrder) idle.offers[0].workloads[stage] = 1
+  let state = ok('start_project', { state: idle, offer_id: idle.offers[0].id, mode: 'contract', investment_percent: 0 }).state
+  assert.equal(state.project.deadline_week, 5)
+  for (const [key, value] of Object.entries({ temporary: 100, outsourcing: 200, development: 300, distribution: 400 })) {
+    state.project.finance.costs[key] = value
+    state.company.finance.costs[key] = value
+    state.company.funds -= value
+  }
+  for (let index = 0; index < 5; index++) state = advance(configure(state)).state
+  assert.equal(state.phase, 'project_ready')
+  assert.equal(state.project.delivery_reason, 'completed')
+  assert.equal(state.company.week, 5)
+  const settled = ok('calculate_result', { state, scope: 'project' })
+  assert.equal(settled.state.company.funds, state.company.funds)
+  assert.equal(settled.result.id, 'dynamic_work_r123')
+  assert.equal(settled.result.origin, 'incoming')
+  assert.equal(settled.result.style, 'normal')
+  assert.equal(settled.result.profit, 4_000_000 - 5 * 210_000 - 1000)
+  probeValidation(settled.state)
+  const previous = structuredClone(settled.state)
+  previous.history.push({ ...structuredClone(previous.history[0]), id: 'dynamic_sequel', previous_work_id: previous.history[0].id, start_week: 5, end_week: 10 })
+  previous.company.week = 10
+  previous.last_project_id = 'dynamic_sequel'
+  probeValidation(previous)
+  previous.history[0].previous_work_id = 'dynamic_sequel'
+  probeValidation(previous, 'INVALID_INPUT')
+})
+
+test('临时人员配置可校验但无专业来源的制作周被原子拒绝', () => {
+  const state = start()
+  const person = { ...structuredClone(state.company.staff[0]), id: 'dynamic_temp', employment: 'temporary', weekly_salary: 0, project_fee: 500 }
+  state.project.temporary_staff = [person]
+  state.project.stages.script.recommended_configuration.assignments = [{ staff_id: person.id, role: person.role, focus: 'planning' }]
+  probeValidation(state)
+  const active = configure(state)
+  const before = structuredClone(active)
+  expectError(call('advance_week', { state: active }), 'MODE_NOT_ALLOWED')
+  assert.deepEqual(active, before)
+  const invalid = structuredClone(active)
+  invalid.project.stages.script.configuration.assignments[0].staff_id = 'missing'
+  probeValidation(invalid, 'INVALID_INPUT')
+})
+
+test('供应商外包和事件结构通过校验，未实现执行明确拒绝', () => {
+  const state = configure(start())
+  state.suppliers = [{ id: 'supplier_dynamic', name: '供应商', specialties: ['planning'], capacity: 50, quality: 60, speed: 10, unit_price: 100, reliability: 90, unlocked: true }]
+  state.project.outsourcing = [{ id: 'task_dynamic', supplier_id: 'supplier_dynamic', stage: 'script', ability: 'planning', work_total: 10, work_done: 0, mode: 'normal', fee_paid: 1000, due_week: 1, status: 'active' }]
+  probeValidation(state)
+  expectError(call('advance_week', { state }), 'MODE_NOT_ALLOWED')
+  const dangling = structuredClone(state)
+  dangling.project.outsourcing[0].supplier_id = 'missing'
+  probeValidation(dangling, 'INVALID_INPUT')
+  state.phase = 'event_pending'
+  state.preview = null
+  state.pending_event = { id: 'dynamic_event', category: 'schedule', stage: 'script', title: '事件', description: '工期变化', trigger: { metric: 'delay', value: -1, threshold: 0 }, options: [{ id: 'wait', label: '等待', cost: 0, allows_reconfigure: false, disabled_reason: null }] }
+  probeValidation(state, 'MODE_NOT_ALLOWED')
+  for (const mutate of [
+    (item) => { item.pending_event.stage = 'storyboard' },
+    (item) => { item.phase = 'producing' },
+    (item) => { item.pending_event.options[0].effect = { funds: 9999 } },
+    (item) => { item.pending_event = null },
+  ]) {
+    const invalid = structuredClone(state)
+    mutate(invalid)
+    probeValidation(invalid, 'INVALID_INPUT')
+  }
+  const closed = ok('apply_decision', { state, decision: { type: 'end_company' } }).state
+  assert.equal(closed.phase, 'project_ready')
+  assert.equal(closed.pending_event, null)
+  probeValidation(closed)
+})
+
+test('独立槽位及新旧可选字段兼容，关闭和终局不允许残留', () => {
+  const state = initial()
+  state.custom_offer = { ...structuredClone(state.offers[0]), id: 'custom', origin: 'custom' }
+  state.pending_proposal = { ...structuredClone(state.offers[0]), id: 'proposal', origin: 'proposal', source: 'original', allowed_modes: ['committee'] }
+  state.company.scout_pity = { since_sr: 0, since_ssr: 0 }
+  state.preview.costs.development = 0
+  state.preview.costs.distribution = 0
+  probeValidation(state)
+  const started = ok('start_project', { state, offer_id: state.offers[0].id, mode: 'contract', investment_percent: 0 }).state
+  assert.equal(started.custom_offer, null)
+  assert.equal(started.pending_proposal, null)
+  const closing = ok('apply_decision', { state, decision: { type: 'end_company' } }).state
+  probeValidation(closing)
+  const ended = ok('calculate_result', { state: closing, scope: 'company' }).state
+  probeValidation(ended)
+  for (const mutate of [
+    (item) => { item.offers = state.offers },
+    (item) => { item.project = started.project },
+    (item) => { item.custom_offer = state.custom_offer },
+    (item) => { item.preview = state.preview },
+  ]) {
+    const invalid = structuredClone(ended)
+    mutate(invalid)
+    probeValidation(invalid, 'INVALID_INPUT')
+  }
+})
+
+test('委员会可选阵容与空团队阶段快照在 WASM 具有相同校验边界', () => {
+  const committee = start()
+  committee.project.mode = 'committee'
+  committee.project.investment_percent = 100
+  committee.project.committee_pressure = 0
+  committee.project.offer.allowed_modes = ['committee']
+  probeValidation(committee)
+  committee.project.committee = []
+  probeValidation(committee)
+  committee.project.investment_percent = 99
+  probeValidation(committee, 'INVALID_INPUT')
+
+  const state = start()
+  state.company.week = 1
+  state.project.current_stage = 'storyboard'
+  Object.assign(state.project.stages.script, {
+    status: 'completed', work_done: state.project.offer.workloads.script, quality: 50,
+    configuration: { assignments: [], policy: 'balanced', overtime: false },
+    result: { weeks_spent: 1, quality: 50, costs: initial().company.finance.costs, issues: [], team: [] },
+  })
+  state.project.stages.storyboard.status = 'ready'
+  probeValidation(state)
+  state.project.stages.script.configuration.assignments = [{ staff_id: 'missing_snapshot', role: 'director', focus: 'planning' }]
+  probeValidation(state, 'INVALID_INPUT')
+})
+
+test('动态状态仍拒绝非法金额、枚举、可选字段 null 和阶段顺序', () => {
+  for (const mutate of [
+    (state) => { state.company.finance.costs.development = -1 },
+    (state) => { state.company.scout_pity = null },
+    (state) => { state.company.staff[0].potential.direction = 0 },
+    (state) => { state.project.offer.origin = null },
+    (state) => { state.project.offer.allowed_modes = ['contract', 'contract'] },
+    (state) => { state.project.offer.workloads.script = 0 },
+    (state) => { state.project.stages.storyboard.status = 'ready' },
+    (state) => { state.project.committee = [] },
+  ]) {
+    const invalid = start()
+    mutate(invalid)
+    probeValidation(invalid, 'INVALID_INPUT')
+  }
+})
+
+test('累计成本溢出及载入特殊风格项目不会返回伪成功', () => {
+  const fullLedger = initial()
+  fullLedger.company.finance.costs.events = Number.MAX_SAFE_INTEGER
+  probeValidation(fullLedger)
+  const before = structuredClone(fullLedger)
+  expectError(call('advance_week', { state: fullLedger }), 'INVALID_INPUT')
+  assert.deepEqual(fullLedger, before)
+  const styled = start()
+  styled.project.offer.origin = 'custom'
+  styled.project.offer.style = 'ai'
+  probeValidation(styled)
+  expectError(call('advance_week', { state: configure(styled) }), 'MODE_NOT_ALLOWED')
+  const ready = ok('apply_decision', { state: styled, decision: { type: 'end_company' } }).state
+  expectError(call('calculate_result', { state: ready, scope: 'project' }), 'MODE_NOT_ALLOWED')
+})
+
+test('阶段人员岗位变化保留各阶段快照，结算状态仍可再次校验', () => {
+  const idle = initial()
+  for (const stage of stageOrder) idle.offers[0].workloads[stage] = 1
+  let state = ok('start_project', { state: idle, offer_id: idle.offers[0].id, mode: 'contract', investment_percent: 0 }).state
+  state = advance(configure(state)).state
+  state.company.staff[0].role = 'scriptwriter'
+  state.project.stages.storyboard.recommended_configuration.assignments[0].role = 'scriptwriter'
+  for (let index = 1; index < 5; index++) state = advance(configure(state)).state
+  const settled = ok('calculate_result', { state, scope: 'project' }).state
+  assert.equal(settled.history[0].stages.script.result.team[0].role, 'director')
+  assert.equal(settled.history[0].stages.storyboard.result.team[0].role, 'scriptwriter')
+  probeValidation(settled)
+})
+
 test('六接口的状态顺序校验', () => {
   const idle = initial()
   expectError(call('apply_decision', { state: idle, decision: { type: 'configure_stage', stage: 'script', configuration: {} } }), 'INVALID_PHASE')
