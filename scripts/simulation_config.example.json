@@ -1,6 +1,7 @@
 {
   "trials": 500,
   "seed": 20261123,
+  "strategies": ["contract", "committee_10", "committee_50", "committee_100", "dynamic_conservative", "dynamic_opportunity", "dynamic_aggressive"],
   "initial_cash": 50000000,
   "weekly_fixed_cost": 200000,
   "core_employee_count": 4,
