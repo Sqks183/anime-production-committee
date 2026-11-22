@@ -268,6 +268,8 @@ test('读取临近截止的合法边界存档并强制违约交付结算', async
     const page = await context.newPage()
     await page.goto(baseUrl); await ready(page)
     const state = await realCoreFixture(page)
+    // 校验器要求 deadline_week == start_week + offer.duration_weeks，只改截止周会造出非法存档。
+    state.project.offer.duration_weeks = 1
     state.project.deadline_week = 1
     await putSave(page, { version: 3, state, savedAt: new Date().toISOString() })
     await page.getByRole('button', { name: '读取本地存档' }).click()
