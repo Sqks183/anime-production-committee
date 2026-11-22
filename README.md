@@ -10,7 +10,7 @@ ANIME PRODUCTION COMMITTEE · 浏览器经营模拟游戏最小纵向切片 · v
 
 v3 目标结构、合法动作、周结算顺序、同周破产优先级、承制/委员会手算账与旧档拒绝策略见 [DATA_MODEL](docs/DATA_MODEL.md)、[API](docs/API.md)、[GAME_RULES](docs/GAME_RULES.md) 的 V3 部分。可编译契约与校验在 [gameV3.ts](apps/web/src/types/gameV3.ts)，静态夹具与契约测试供后续前后端独立开发。交接与尚未实现项见 [TEAM_PLAN](docs/TEAM_PLAN.md)。
 
-**运行中的游戏仍为 v2。** M0 没有更换 C++ 规则或 WASM 导出，也未将 v3 静态样本接入生产。v3 旧档只读拒绝入口已隔离实现，首页的版本切换由 #5 随真实核心接入完成。
+**M0 没有更换运行时。** M1 已由 `9e2d023` 将 C++/WASM 核心切到 v3，但前端仍调用 v2 六接口；浏览器端没有 v3 端到端证据，由 #5 完成切换。当前进度见 [docs/PROGRESS.md](docs/PROGRESS.md)。
 
 ## 当前可玩内容
 
@@ -213,6 +213,7 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 - [六接口协议与同步流程](docs/API.md)
 - [V1.0 差距审查与迁移计划](docs/V1_GAP_REVIEW.md)
 - [本轮分工（V1.0 迁移）](docs/TEAM_PLAN.md)
+- [当前进度与方向](docs/PROGRESS.md)
 
 ## 当前范围与未完项
 
