@@ -1,6 +1,6 @@
 # 本轮分工（V1.0 迁移）
 
-状态：2026-11-23 · 基线沿用 V1.0 分工 · 对应议题 [#1](https://github.com/zhengmin486/anime-production-committee/issues/1)、#6、#7、#8、#9、#11 及内容设计协作议题（待创建）。
+状态：2026-11-23 · 基线沿用 V1.0 分工 · 对应议题 [#1](https://github.com/zhengmin486/anime-production-committee/issues/1)、#6、#7、#8、#9、#11 及 [#13 内容协作](https://github.com/zhengmin486/anime-production-committee/issues/13)。
 
 > 本文取代 2026-11-21 的旧分工。旧版 T01–T06 认领池验证的是按天推进、三工序、固定名册，已随 V1.0 迁移作废；历史内容见议题编辑记录。
 
