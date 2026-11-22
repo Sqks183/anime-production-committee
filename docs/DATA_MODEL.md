@@ -27,8 +27,8 @@
 | Finance | contract_received, investment_paid, commercial_share_received, costs；可选 success_reward_received | 均为非负实际累计收支；success_reward_received 为委托方支付的承制成功奖励，缺省按 0 兼容旧状态，委员会项目为 0；投资不再计入成本。公司层全生命周期、项目层项目区间，同一笔交易的两个汇总视图，不重复改变现金 |
 | Costs | salary, operations, production, temporary, outsourcing, events, extension, penalty；可选 development, distribution | 八类均出现，无支出填 0；依次为核心工资、固定运营、阶段直接费用、临时合同、外包、独立付费事件、延期费、扣罚。同一笔只归一类。M2 可选 development（前期开发费）与 distribution（付费播出发行支出），核心落地前缺省按 0，见 V3.7 |
 | Staff | id, name, role, employment, abilities, experience, potential, revealed_potential, talent_type, clues, traits, weekly_salary, project_fee, fatigue, morale, departure_warning | employment=core/temporary；核心 project_fee=0，临时 weekly_salary=0。前三个能力对象含六项数值，revealed_potential 含六个布尔值；潜力不低于当前能力，线索 1–2 条，traits 可空；warning 仅预警 |
-| ProjectOffer | id, name, source, scale, total_investment, contract_budget, duration_weeks, target_quality, audience_base, commercial_potential, risk, allowed_modes, workloads, previous_work_id；可选 origin, style, min_reputation, committee_members, channel_potentials, required_works | source=manga/light_novel/game/original；scale=ova/short/tv/movie；risk=low/medium/high；普通企划 allowed_modes 固定包含 contract/committee，原创仅 committee；workloads 含五阶段正数；contract_budget 是合同预算且就是制作预算，按企划规模与报价规则生成；仅 committee 模式生成 total_investment，且等于 contract_budget×2，contract 模式不适用投资规模。origin=market/custom/incoming/proposal（缺省 market）；style=normal/meme/ai（缺省 normal），非 normal 必须 origin=custom，meme 限定 scale=short；min_reputation 非负整数（缺省 0），声望不足仍展示但锁定；可选 committee_members（拟定委员会阵容，仅 allowed_modes 含 committee）、channel_potentials（{bd 必填 0–100，其余渠道可选}）、required_works（{rating, source?} 非空全满足）见 V3.7 |
-| Project | offer, mode, investment_percent, opening_funds, start_week, deadline_week, current_stage, stages, extension_count, committee_pressure, finance, temporary_staff, outsourcing, delivery_reason；可选 committee, tv_service | 接约原子建立，offer 保存原报价；opening_funds 在投资/拨款之前记录；实付本金只在 finance.investment_paid；临时人员属于当前项目。committee 为立项固定的委员会成员/渠道快照（成员结构为 {id,name,channel}，一个成员对应一个渠道，不含成员投资比例；仅委员会模式可有成员，承制为 null，制作中不追加更换）；委员会投资比例按 0.1（10 个百分点）调整，开工后锁定；tv_service={purchased_week,cost} 每项目至多一次，见 V3.7/V3.8 |
+| ProjectOffer | id, name, source, scale, contract_budget, duration_weeks, target_quality, audience_base, commercial_potential, risk, allowed_modes, workloads, previous_work_id；可选 origin, style, min_reputation, committee_members, channel_potentials, required_works | source=manga/light_novel/game/original；scale=ova/short/tv/movie；risk=low/medium/high；普通企划 allowed_modes 固定包含 contract/committee，原创仅 committee；workloads 含五阶段正数；contract_budget 是合同预算且就是制作预算，按企划规模与报价规则生成；仅 committee 模式生成 total_investment，且等于 contract_budget×2，contract 模式不适用投资规模。origin=market/custom/incoming/proposal（缺省 market）；style=normal/meme/ai（缺省 normal），非 normal 必须 origin=custom，meme 限定 scale=short；min_reputation 非负整数（缺省 0），声望不足仍展示但锁定；可选 committee_members（拟定委员会阵容，仅 allowed_modes 含 committee）、channel_potentials（{bd 必填 0–100，其余渠道可选}）、required_works（{rating, source?} 非空全满足）见 V3.7 |
+| Project | offer, mode, investment_percent, opening_funds, start_week, deadline_week, current_stage, stages, extension_count, committee_pressure, finance, temporary_staff, outsourcing, delivery_reason；可选 total_investment, committee, tv_service | 接约原子建立，offer 保存原报价；opening_funds 在投资/制作预算入账之前记录；仅选择 committee 后在 Project 上生成 total_investment=offer.contract_budget×2，contract 模式不生成；实付本金只在 finance.investment_paid；临时人员属于当前项目。committee 为立项固定的委员会成员/渠道快照（成员结构为 {id,name,channel}，一个成员对应一个渠道，不含成员投资比例；仅委员会模式可有成员，承制为 null，制作中不追加更换）；委员会投资比例按 0.1（10 个百分点）调整，开工后锁定；tv_service={purchased_week,cost} 每项目至多一次，见 V3.7/V3.8 |
 | StageConfiguration | assignments, policy, overtime | assignments 每项 staff_id/role/focus，人员不重复；未安排者休整。policy=quality/balanced/deadline；overtime 为整个阶段方案，不逐周清除。是否允许无员工而仅用外包由核心按有效产能校验 |
 | StageState | status, work_done, quality, configuration, recommended_configuration, result | status=pending/ready/active/completed；pending/ready 无提交配置与结果且 work_done=0；active 配置非空；completed 结果非空且工作量完成。推荐配置可 null，不等于已提交 |
 | StageResult | weeks_spent, quality, costs, issues, team | 阶段结束产生；issues 为遗留问题文案。costs 仅归属分析，不能再次扣款或重复累加到项目成本 |
@@ -372,24 +372,11 @@ GameStore 的 `game` 初始为 null，新开必须等待真实 WASM 的 initiali
 本节覆盖本文前文及 V3.9 中“制作预算=项目总投资50%”的旧字段生成规则。旧描述仅作历史记录，不再作为当前契约。
 
 - ProjectOffer.contract_budget：必填，表示项目合同预算，同时就是制作预算。按企划规模和报价规则生成；不再从投资规模反推。
-- ProjectOffer.total_investment：仅委员会模式适用。委员会投资规模直接按 contract_budget × 2 生成；承制模式应为 null/不适用，不应生成数值。
+- Project.total_investment：仅在 start_project 选择 committee 模式后生成，值为 offer.contract_budget × 2；选择 contract 模式时该字段不生成/不适用。投资规模不属于未选择合作模式的 ProjectOffer。
 - 所有普通企划的 allowed_modes 必须同时包含 contract 与 committee；原创企划仅包含 committee。企划来源与规模不能将普通企划排除在委员会模式之外。
 - Project.investment_percent：承制为0；委员会为10–100且步长10。委员会公司投资额为 floor(total_investment × investment_percent / 100)。
 - Project.committee：仅委员会模式可携带成员快照；承制必须为 null。只有委员会模式可以拉入成员开放额外渠道，一个成员对应一个渠道。
-- contract_budget 是制作预算，total_investment 是委员会投资规模，两者不可混用。制作预算开工时进入公司统一现金池；委员会投资本金单独支付并单独核算。
-- BD 公司所得为毛收入的初始50%。可以通过“毛收入−50%综合成本”或“毛收入×0.5”实现，必须避免重复扣除；分渠道对账需分别保留毛收入与公司实际所得。
-
-字段空值表达、条件字段校验及 allowed_modes 生成由 #6 同步 TypeScript/C++ 契约与测试；本文只冻结目标口径，不代表实现已经完成。
-## V3.10 合同预算与委员会投资规模修订（2026-11-23，当前有效）
-
-本节覆盖本文前文及 V3.9 中“制作预算=项目总投资50%”的旧字段生成规则。旧描述仅作历史记录，不再作为当前契约。
-
-- ProjectOffer.contract_budget：必填，表示项目合同预算，同时就是制作预算。按企划规模和报价规则生成；不再从投资规模反推。
-- ProjectOffer.total_investment：仅委员会模式适用。委员会投资规模直接按 contract_budget × 2 生成；承制模式应为 null/不适用，不应生成数值。
-- 所有普通企划的 allowed_modes 必须同时包含 contract 与 committee；原创企划仅包含 committee。企划来源与规模不能将普通企划排除在委员会模式之外。
-- Project.investment_percent：承制为0；委员会为10–100且步长10。委员会公司投资额为 floor(total_investment × investment_percent / 100)。
-- Project.committee：仅委员会模式可携带成员快照；承制必须为 null。只有委员会模式可以拉入成员开放额外渠道，一个成员对应一个渠道。
-- contract_budget 是制作预算，total_investment 是委员会投资规模，两者不可混用。制作预算开工时进入公司统一现金池；委员会投资本金单独支付并单独核算。
+- offer.contract_budget 是制作预算，Project.total_investment 是委员会投资规模，两者属于不同实体和不同口径。制作预算开工时进入公司统一现金池；委员会投资本金单独支付并单独核算。
 - BD 公司所得为毛收入的初始50%。可以通过“毛收入−50%综合成本”或“毛收入×0.5”实现，必须避免重复扣除；分渠道对账需分别保留毛收入与公司实际所得。
 
 字段空值表达、条件字段校验及 allowed_modes 生成由 #6 同步 TypeScript/C++ 契约与测试；本文只冻结目标口径，不代表实现已经完成。
