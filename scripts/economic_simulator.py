@@ -39,9 +39,9 @@ DEFAULTS: dict[str, Any] = {
     "pressure_reputation_penalties":[2,4,7,10],
     "low_delivery_reputation_penalty":10, "breach_penalty_ratio":0.50,
     "dynamic_policy": {
-        "dynamic_conservative":{"cash_reserve_ratio":0.60,"project_operating_reserve_ratio":1.0,"minimum_operating_reserve_weeks":0,"max_investment_ratio":30},
-        "dynamic_opportunity":{"cash_reserve_ratio":0.35,"project_operating_reserve_ratio":0.5,"minimum_operating_reserve_weeks":0,"max_investment_ratio":70},
-        "dynamic_aggressive":{"cash_reserve_ratio":0.10,"project_operating_reserve_ratio":0.0,"minimum_operating_reserve_weeks":8,"max_investment_ratio":100}
+        "dynamic_conservative":{"cash_reserve_ratio":0.60,"project_operating_reserve_ratio":1.0,"minimum_operating_reserve_weeks":0,"committee_activation_cash_multiple":1.5,"max_investment_ratio":30},
+        "dynamic_opportunity":{"cash_reserve_ratio":0.35,"project_operating_reserve_ratio":0.5,"minimum_operating_reserve_weeks":0,"committee_activation_cash_multiple":1.0,"max_investment_ratio":70},
+        "dynamic_aggressive":{"cash_reserve_ratio":0.10,"project_operating_reserve_ratio":0.0,"minimum_operating_reserve_weeks":8,"committee_activation_cash_multiple":1.0,"max_investment_ratio":100}
     },
     "strategies":["contract","committee_10","committee_50","committee_100","dynamic_conservative","dynamic_opportunity","dynamic_aggressive"]
 }
@@ -89,6 +89,8 @@ def dynamic_offer_decision(cash:float, offers:list[dict], cfg:dict, policy:str):
     else:
         raise ValueError(f"Unknown dynamic policy: {policy}")
     policy_cfg=cfg["dynamic_policy"][policy]
+    if cash < cfg["initial_cash"]*policy_cfg["committee_activation_cash_multiple"]:
+        return project, "contract", 0
     reserve=max(cfg["initial_cash"]*policy_cfg["cash_reserve_ratio"],
                 burn*max(policy_cfg["minimum_operating_reserve_weeks"],
                          project["weeks"]*policy_cfg["project_operating_reserve_ratio"]))
