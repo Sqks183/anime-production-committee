@@ -43,4 +43,35 @@ class SimulatorTests(unittest.TestCase):
         r=sim.simulate_one(123,"contract",cfg)
         self.assertLessEqual(r.total_payroll,10*4*50000)
 
+    def test_dynamic_policies_choose_only_visible_offers(self):
+        offers=[
+            {"name":"small","budget":20_000_000,"weeks":12,"workload":1200,"target_quality":60},
+            {"name":"large","budget":300_000_000,"weeks":72,"workload":8000,"target_quality":75},
+        ]
+        for policy in ["dynamic_conservative","dynamic_opportunity","dynamic_aggressive"]:
+            project,mode,pct=sim.dynamic_offer_decision(500_000_000,offers,sim.DEFAULTS,policy)
+            self.assertIn(project,offers)
+            self.assertIn(mode,["contract","committee"])
+            self.assertIn(pct,range(0,101,10))
+            self.assertEqual(mode=="committee",pct>=10)
+
+    def test_dynamic_strategies_are_reproducible_and_report_mix(self):
+        cfg=sim.deep_merge(sim.DEFAULTS,{"weeks":160,"trials":3})
+        for policy in ["dynamic_conservative","dynamic_opportunity","dynamic_aggressive"]:
+            first=sim.simulate_one(98765,policy,cfg)
+            second=sim.simulate_one(98765,policy,cfg)
+            self.assertEqual(first,second)
+            self.assertEqual(first.contract_projects+first.committee_projects,
+                             first.completed+first.low_deliveries+first.breaches)
+            self.assertGreaterEqual(first.min_cash,0)
+
+    def test_dynamic_strategy_summary_contains_decision_metrics(self):
+        cfg=sim.deep_merge(sim.DEFAULTS,{"weeks":120,"trials":2})
+        rows=[sim.simulate_one(i,"dynamic_opportunity",cfg) for i in [1,2]]
+        summary=sim.summarize(rows)
+        self.assertIn("mean_contract_projects",summary)
+        self.assertIn("mean_committee_projects",summary)
+        self.assertIn("mean_committee_investment_ratio",summary)
+        self.assertIn("median_min_cash",summary)
+
 if __name__=="__main__": unittest.main()
