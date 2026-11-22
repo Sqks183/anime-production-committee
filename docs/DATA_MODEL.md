@@ -93,7 +93,7 @@ M0 在 services/saveGame.ts 实现 decodeV3SaveRecord 与只读 loadGameV3：拒
 | discard_custom_offer | Decision | 无参数 | 仅 idle 且存在自定企划；不退款 |
 | buy_tv_service | Decision | 无参数 | 仅委员会模式在制项目且未购买；支付 costs.distribution，写入 project.tv_service |
 | development / distribution | Costs | 非负整数，可选，缺省 0 | 前期开发费与付费播出发行支出；独立于投资本金、不参与分成；冻结八类不删不改 |
-| committee_members | ProjectOffer | {id, name, share_percent 1–100, channels}[]，可选 | 拟定委员会阵容；仅 allowed_modes 含 committee 的报价可携带；channels 限 publisher/toy/music/tv_broadcast，bd 为基础渠道不挂股东；其他投资方补足公司未提供的渠道，渠道贡献不改变按投资比例及既定分账约定执行的收益分配 |
+| committee_members | ProjectOffer | {id, name, share_percent 1–100, channels}[]，可选 | 拟定委员会阵容；仅 allowed_modes 含 committee 的报价可携带；channels 限 publisher/toy/music/tv_broadcast，bd 为基础渠道不挂股东；投资方补足的是公司未承担的剩余投资，不代表自动补足商业渠道；渠道获取独立于投资补足，按企划自带条件及玩家额外拓展规则处理 |
 | committee | Project | 同上或 null；缺省未输出 | 立项时固定整份阵容：Σshare_percent + investment_percent 恰为 100；承制必须 null；制作中不追加更换 |
 | tv_service | Project | {purchased_week, cost 正整数} 或 null | 每项目至多一次电视播出服务购买 |
 | channel_potentials | ProjectOffer | {bd 必填 0–100；其余渠道可选 0–100} | 分渠道商业潜力按企划定位生成；股东未开通的渠道不展示 |
@@ -113,7 +113,7 @@ M0 在 services/saveGame.ts 实现 decodeV3SaveRecord 与只读 loadGameV3：拒
 - 承制与委员会共用同一制作能力、人员、资源和制作流程。投资比例不改变制作责任/工作量、作品质量上限或项目决策权；两种模式在相同制作条件下具有相同质量上限。
 - 委员会项目允许投资亏损：公司结算所得可低于投资额，最低为 0；不产生负收益、额外债务或超过公司实际投资额的追偿。
 - 渠道规则：IP 上门企划自带成熟渠道；普通合同企划至少自带一个渠道；原创企划需要自行寻找渠道。所有企划均可在原有基础上额外引入渠道。
-- 委员会项目中，公司未提供的渠道由其他投资方补足。渠道提供方只决定渠道是否开放，不产生额外渠道贡献奖励；渠道收益仍按投资比例及既定分账约定分配，不因渠道由谁提供而改变。
+- 委员会项目中，其他投资方补足的是公司未承担的剩余投资份额，不是商业渠道。渠道获取与投资补足相互独立，按企划自带条件及玩家额外拓展规则处理；非 BD 渠道收益仍按投资比例及既定分账约定分配。
 - 当前 committee_members.channels 可记录委员会其他投资方提供的渠道。所有企划额外引入渠道的完整状态表达，尤其承制企划的外部渠道来源，若现有字段不足，须由 #6 提交契约扩展方案；本轮不擅自新增字段或宣称代码已支持。
 
 
