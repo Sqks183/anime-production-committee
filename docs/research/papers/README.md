@@ -2,6 +2,7 @@
 
 本目录收录《动画制作委员会》项目使用的十项学术研究资料入口、许可状态和精读笔记。
 
+- [十篇论文文献综述](LITERATURE_REVIEW.md)
 - [十篇论文精读笔记](REVIEW_NOTES.md)
 - [产业研究主文档](../../INDUSTRY_RESEARCH.md)
 
