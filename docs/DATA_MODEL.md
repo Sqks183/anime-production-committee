@@ -36,7 +36,7 @@
 | Supplier | id, name, specialties, capacity, quality, speed, unit_price, reliability, unlocked | 固定池；specialties 非空不重复；capacity 为工作量，speed 为工作量/周，unit_price 为每单位工作量报价。解锁不回退；可靠性可在 UI 隐藏 |
 | OutsourceTask | id, supplier_id, stage, ability, work_total, work_done, mode, fee_paid, due_week, status | mode=normal/emergency；status=active/delivered/failed；交付时 work_done=work_total。费用按核心报价确认时一次支付，fee_paid 是快照，不是第二笔支出 |
 | GameEvent | id, category, stage, title, description, trigger, options | category=personnel/quality/budget/schedule；trigger={metric,value,threshold} 说明状态原因。option={id,label,cost,allows_reconfigure,disabled_reason}；disabled_reason 为 null 或拒绝文案。实际效果按核心目录执行，不接收自造 effect |
-| WorkRecord | id, name, source, scale, previous_work_id, mode, investment_percent, start_week, end_week, end_reason, quality_score, commercial_score, commercial_revenue, finance, profit, team, stages；可选 origin, style, rating, channel_breakdown | 结算只追加一次；end_reason=completed/deadline/company_closed；commercial_revenue 为作品总商业收入，不是公司所得；公司渠道所得只记 finance.commercial_share_received；委托方另付的承制成功奖励记 finance.success_reward_received，不计入作品商业收入或 channel_breakdown。五阶段及团队永久快照。origin/style 从报价继承，交叉约束与 ProjectOffer 相同。rating 为作品评价 S/A/B/C/D（固定分数线，与制作质量 quality_score 分列）；channel_breakdown 分渠道对账：Σrevenue=commercial_revenue、Σcompany_received=commercial_share_received 且恒含 bd，见 V3.7 |
+| WorkRecord | id, name, source, scale, previous_work_id, mode, investment_percent, start_week, end_week, end_reason, quality_score, commercial_score, commercial_revenue, finance, profit, team, stages；可选 origin, style, rating, channel_breakdown, commercial_rank | 结算只追加一次；end_reason=completed/deadline/company_closed；commercial_revenue 为作品总商业收入，不是公司所得；公司渠道所得只记 finance.commercial_share_received；委托方另付的承制成功奖励记 finance.success_reward_received，不计入作品商业收入或 channel_breakdown。五阶段及团队永久快照。origin/style 从报价继承，交叉约束与 ProjectOffer 相同。rating 为作品评价 S/A/B/C/D（固定分数线，与制作质量 quality_score 分列）；channel_breakdown 分渠道对账：Σrevenue=commercial_revenue、Σcompany_received=commercial_share_received 且恒含 bd，见 V3.7。commercial_rank 为本轮玩家作品与实际生成竞争作品按商业收入统一排名后的正整数名次；只保存玩家作品自己的名次，不保存完整榜单或竞争作品历史。未参与排名的特殊作品及缺少该字段的旧存档可为空。正常参与排名的玩家作品即使未进入前一半，也记录名次并正常结算收入。前一半数量按 ceil(N/2) 向上取整，见 GAME_RULES V3.13 |
 | CompanyResult | reason, weeks, final_funds, net_cash_change, total_projects, best_work_id, rating | 关闭流程完成产生，best_work_id 为历史 ID 或 null；rating=renowned/stable/small/failed，评级阈值待定；总结不再次入账 |
 | WeekPreview | next_week, costs, total_cost, event_probability_per_mille | 仅 running idle 或 active 制作阶段非空；待配置/事件/交付/结算/终局为 null；费用与风险只能使用核心预览 |
 | WeekReport | week, funds_delta, costs, stage_deltas, staff_deltas, messages | stage_deltas={stage,work_done_delta,quality_delta}；staff_deltas={staff_id,experience,fatigue_delta,morale_delta}；预检破产未完成周，week 不变、增量为 0；回执不作为请求状态 |
@@ -385,3 +385,11 @@ GameStore 的 `game` 初始为 null，新开必须等待真实 WASM 的 initiali
 - BD 公司所得为毛收入的初始50%。可以通过“毛收入−50%综合成本”或“毛收入×0.5”实现，必须避免重复扣除；分渠道对账需分别保留毛收入与公司实际所得。
 
 字段空值表达、条件字段校验及 allowed_modes 生成由 #6 同步 TypeScript/C++ 契约与测试；本文只冻结目标口径，不代表实现已经完成。
+
+
+## V3.11 作品商业排名历史字段补充（2026-11-23）
+
+- WorkRecord.commercial_rank 为可选正整数或 null/缺省字段。正常参与当轮商业排名的玩家作品记录其最终名次；未参与排名的特殊作品可为空，旧 v3 存档缺少该字段仍合法，不要求迁移。
+- 只持久化玩家作品自己的名次，不持久化完整榜单、竞争作品列表或竞争作品展示详情；历史档案不能据此回顾完整榜单。
+- 当轮实际参与排名的作品总数为 N，前一半入榜数量为 ceil(N / 2)。该取整只影响竞争作品展示详情生成，不影响玩家作品的收入结算。
+- 名次只作历史成绩展示，不改变商业收入、分账、作品评价或声望。
