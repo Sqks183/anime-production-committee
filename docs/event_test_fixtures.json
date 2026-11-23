@@ -1,0 +1,255 @@
+{
+  "schema_version": 1,
+  "catalog": "docs/event_catalog.example.json",
+  "note": "事件机制的原生测试夹具。given 只列出与判定相关的状态切片，实际测试需在完整 GameState 上构造；expect 描述唯一正确结果。",
+  "required_covers": [
+    "performance_trigger",
+    "random_trigger",
+    "priority_order",
+    "cooldown",
+    "major_once",
+    "pause_resume",
+    "stage_effect_scope",
+    "cash_disabled_option",
+    "ledger_once"
+  ],
+  "cases": [
+    {
+      "id": "performance_quality_rework",
+      "covers": ["performance_trigger"],
+      "given": {
+        "seed": 12345,
+        "week": 12,
+        "phase": "producing",
+        "stage": "key_animation",
+        "stage_quality": 40,
+        "max_fatigue": 50,
+        "weeks_in_project": 5,
+        "weeks_to_deadline": 8,
+        "funds": 1500000,
+        "morale": 60,
+        "cooldowns": {},
+        "major_seen": []
+      },
+      "expect": {
+        "pending_event": "key_cut_rework",
+        "reason": "stage_quality 40 < 55，表现触发优先于随机",
+        "phase": "event_pending"
+      }
+    },
+    {
+      "id": "performance_beats_random",
+      "covers": ["performance_trigger"],
+      "given": {
+        "seed": 12345,
+        "week": 20,
+        "phase": "producing",
+        "stage": "animation_check",
+        "stage_quality": 80,
+        "max_fatigue": 90,
+        "weeks_in_project": 8,
+        "weeks_to_deadline": 2,
+        "funds": 2000000,
+        "morale": 55,
+        "cooldowns": {},
+        "major_seen": []
+      },
+      "expect": {
+        "pending_event": "director_illness",
+        "reason": "疲劳 90 >= 65 同时工期压力成立，重大事件 priority 1 最小",
+        "phase": "event_pending"
+      }
+    },
+    {
+      "id": "random_pool_station_visit",
+      "covers": ["random_trigger"],
+      "given": {
+        "seed": 7,
+        "week": 14,
+        "phase": "producing",
+        "stage": "key_animation",
+        "stage_quality": 60,
+        "max_fatigue": 50,
+        "weeks_in_project": 5,
+        "weeks_to_deadline": 8,
+        "funds": 1500000,
+        "morale": 60,
+        "cooldowns": {},
+        "major_seen": [],
+        "roll_permille": 10
+      },
+      "expect": {
+        "pending_event": "station_visit",
+        "reason": "无表现条件成立；抽样 10 < 60‰，随机池仅 station_visit（weight 25）",
+        "phase": "event_pending"
+      }
+    },
+    {
+      "id": "random_roll_miss",
+      "covers": ["random_trigger"],
+      "given": {
+        "seed": 7,
+        "week": 14,
+        "phase": "producing",
+        "stage": "key_animation",
+        "stage_quality": 60,
+        "max_fatigue": 50,
+        "weeks_in_project": 5,
+        "weeks_to_deadline": 8,
+        "funds": 1500000,
+        "morale": 60,
+        "cooldowns": {},
+        "major_seen": [],
+        "roll_permille": 900
+      },
+      "expect": {
+        "pending_event": null,
+        "reason": "抽样 900 >= 60‰，本周无事件；seed 仍按一次 LCG 消耗",
+        "phase": "producing"
+      }
+    },
+    {
+      "id": "priority_within_week",
+      "covers": ["priority_order"],
+      "given": {
+        "seed": 99,
+        "week": 16,
+        "phase": "producing",
+        "stage": "animation_check",
+        "stage_quality": 40,
+        "max_fatigue": 80,
+        "weeks_in_project": 9,
+        "weeks_to_deadline": 2,
+        "funds": 300000,
+        "morale": 40,
+        "cooldowns": {},
+        "major_seen": []
+      },
+      "expect": {
+        "pending_event": "director_illness",
+        "reason": "四个条件同时成立，取 priority 最小（1）；同种子重放结果一致",
+        "phase": "event_pending"
+      }
+    },
+    {
+      "id": "cooldown_blocks_repeat",
+      "covers": ["cooldown"],
+      "given": {
+        "seed": 12345,
+        "week": 12,
+        "phase": "producing",
+        "stage": "key_animation",
+        "stage_quality": 40,
+        "max_fatigue": 50,
+        "weeks_in_project": 5,
+        "weeks_to_deadline": 8,
+        "funds": 1500000,
+        "morale": 60,
+        "cooldowns": { "quality_rework": 15 },
+        "major_seen": []
+      },
+      "expect": {
+        "pending_event": null,
+        "reason": "quality_rework 冷却到第 15 周，本周不进入候选",
+        "phase": "producing"
+      }
+    },
+    {
+      "id": "major_event_once",
+      "covers": ["major_once"],
+      "given": {
+        "seed": 99,
+        "week": 18,
+        "phase": "producing",
+        "stage": "animation_check",
+        "stage_quality": 70,
+        "max_fatigue": 70,
+        "weeks_in_project": 8,
+        "weeks_to_deadline": 6,
+        "funds": 1500000,
+        "morale": 60,
+        "cooldowns": {},
+        "major_seen": ["director_illness"]
+      },
+      "expect": {
+        "pending_event": null,
+        "reason": "director_illness 已在本项目触发过，once_per_project 生效",
+        "phase": "producing"
+      }
+    },
+    {
+      "id": "pause_then_resume",
+      "covers": ["pause_resume"],
+      "given": {
+        "seed": 12345,
+        "week": 12,
+        "phase": "event_pending",
+        "stage": "key_animation",
+        "pending_event": "key_cut_rework"
+      },
+      "expect": {
+        "action": "advance_week",
+        "error": "INVALID_PHASE",
+        "reason": "事件待处理时周推进被拒绝，state、funds、week、seed 全部不变",
+        "after_resolve": "phase=producing，再次推进成功"
+      }
+    },
+    {
+      "id": "stage_effect_not_retroactive",
+      "covers": ["stage_effect_scope"],
+      "given": {
+        "seed": 12345,
+        "week": 14,
+        "phase": "producing",
+        "stage": "key_animation",
+        "completed_stages": ["script", "storyboard"],
+        "pending_event": "director_illness",
+        "choice": "accept"
+      },
+      "expect": {
+        "stage_effect": { "stage": "animation_check", "target": "quality", "value": -5 },
+        "unchanged": ["script", "storyboard"],
+        "reason": "阶段效果只在 animation_check 完成时应用一次；已写 StageResult 的阶段不变",
+        "phase": "producing"
+      }
+    },
+    {
+      "id": "cash_blocks_expensive_option",
+      "covers": ["cash_disabled_option"],
+      "given": {
+        "seed": 12345,
+        "week": 12,
+        "phase": "event_pending",
+        "stage": "key_animation",
+        "funds": 100000,
+        "pending_event": "key_cut_rework"
+      },
+      "expect": {
+        "option": "rework",
+        "disabled_reason": "现金不足",
+        "available_options": ["accept"],
+        "reason": "cost 180000 > funds 100000，选项禁用但事件照常展示"
+      }
+    },
+    {
+      "id": "paid_option_ledger_once",
+      "covers": ["ledger_once"],
+      "given": {
+        "seed": 12345,
+        "week": 12,
+        "phase": "event_pending",
+        "stage": "key_animation",
+        "funds": 1000000,
+        "pending_event": "key_cut_rework",
+        "choice": "rework"
+      },
+      "expect": {
+        "funds_delta": -180000,
+        "costs_events_delta": 180000,
+        "reject_if_charged_twice": true,
+        "reason": "现金只扣一次，events 账目恰增一次，同笔支出不进入项目账的第二条现金流",
+        "phase": "producing"
+      }
+    }
+  ]
+}

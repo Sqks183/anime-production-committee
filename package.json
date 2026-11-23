@@ -25,7 +25,7 @@
     "test:native": "node scripts/build-core.mjs test",
     "test:browser": "npm run build && node --test scripts/browser.test.mjs",
     "verify:dist": "node scripts/verify-dist.mjs",
-    "validate:events": "node scripts/validate-event-catalog.mjs"
+    "validate:events": "node scripts/validate-event-catalog.mjs && node scripts/validate-event-fixtures.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.65.1"

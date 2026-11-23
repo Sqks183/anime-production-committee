@@ -187,6 +187,8 @@
 
 ## 9. 测试夹具矩阵（原生测试，等工具链）
 
+机器可读版本见 [`event_test_fixtures.json`](event_test_fixtures.json)：11 条用例覆盖下表 9 类场景，`node scripts/validate-event-fixtures.mjs` 会校验夹具与目录的交叉引用（事件 id、阶段、冷却 tag、禁用选项的金额关系）。夹具只描述状态切片与唯一正确结果，测试代码仍需在完整 GameState 上构造。
+
 | 验收项 | 用例 | 断言 |
 | --- | --- | --- |
 | 表现触发 | 阶段质量设为 40，推进一周 | `phase=event_pending`，`pending_event.id=key_cut_rework` |
