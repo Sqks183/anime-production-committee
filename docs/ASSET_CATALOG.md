@@ -153,9 +153,39 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
+## 2026-11-23 页面接入与验收记录
+
+三张图已在提交 `21547d2` 接入页面，接入位置如下：
+
+| 素材 | 页面位置 | 呈现方式 |
+| --- | --- | --- |
+| `backgrounds/studio_office.png` | 制作台标题区 | 18% 不透明度的背景底纹，不遮挡文字与控件 |
+| `characters/producer.png` | 制作台标题区 | 64px 圆形头像，375px 视口下缩到 48px |
+| `production/colored_frame.png` | 首页企划卡、项目结算 | 16:9 等比展示，`object-fit: cover`，不拉伸 |
+
+真实浏览器检查（Microsoft Edge，`vite preview` 构建产物，1440 / 768 / 375 三档）：
+
+| 视口 | 结果 | 证据 |
+| --- | --- | --- |
+| 1440×900 | 无横向溢出，图片未变形 | [`evidence/assets/home-1440.png`](evidence/assets/home-1440.png) |
+| 768×1024 | 无横向溢出（`scrollWidth <= innerWidth`） | [`evidence/assets/home-768.png`](evidence/assets/home-768.png) |
+| 375×812 | 单列堆叠正常，图片完整 | [`evidence/assets/home-375.png`](evidence/assets/home-375.png) |
+
+命令结果：
+
+| 命令 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm run test:unit` | 225 / 225 通过 |
+| `npm run build:web` | 通过，`dist/assets` 内含三张图 |
+| `npm run build` | **失败**：`build:wasm` 报 `Emscripten 4.0.23 is missing` |
+| `npm run verify:dist` | **未执行**：依赖 `dist/wasm/game-core.mjs`，构建链缺失 |
+| `npm run test:browser` | **未执行**：同上，`public/wasm` 为空 |
+
+阻塞原因：本机没有 Emscripten 工具链，`.tools/emsdk` 不存在，`emsdk` 的 npm 包不支持 win32。上述三条命令需要在装有 emsdk 的机器上补跑；**在补跑前不把 #9 关闭为「三图接入完成」**。
+
 ## 当前剩余工作
 
 1. 2026-11-20 那批 `.tools/` 图片的适用授权仍未核查；它们不随仓库同步，也不再用作正式素材来源。
-2. 三张已入库图的 UI 接入属于前端文件边界，需与前端负责人协调后再改页面；本轮只交付素材、审计记录和接入说明，未改 `pages/`、`components/`。
-3. 接入后须在 375 / 768 / 1440px 真实浏览器复核，并跑 `npm run build`、`npm run verify:dist`、`npm run test:browser`。
-4. 只有新功能确实需要时才继续原画、分镜、中间稿或海报，不再按 16 张总量提前生产。
+2. `npm run build`、`npm run verify:dist`、`npm run test:browser` 需在有 emsdk 的环境补跑并附输出。
+3. 只有新功能确实需要时才继续原画、分镜、中间稿或海报，不再按 16 张总量提前生产。
