@@ -1,0 +1,160 @@
+# WP10 前端原型交付说明（公司总览 / 作品详情 / 每周经营）
+
+- 日期：2026-11-24
+- 范围：Issue [#39](https://github.com/zhengmin486/anime-production-committee/issues/39) 的「当前可立即做」优先项——三个核心界面的可点击静态原型。
+- 代码位置：`apps/web/src/prototype/`，随 PR [#46](https://github.com/zhengmin486/anime-production-committee/pull/46) 合并进 `main`（合并提交 `e30c040`，内容提交 `63d9c11`，10 个文件 +1717/−2）。
+- 本文补齐 #39 交付物 1（信息架构与导航图）、交付物 3（关键组件清单与 mock data 结构说明）、交付物 4（需要接入的读模型/命令字段映射清单），并登记验收对照与实测证据。
+- 权威关系：玩法规则以 [DECISION_LOG.md](DECISION_LOG.md) 为准；读模型、命令与错误码以 [M0_CONTRACT_FREEZE.md](M0_CONTRACT_FREEZE.md)、[DOMAIN_ARCHITECTURE.md](DOMAIN_ARCHITECTURE.md) v1.4 为准；工作项与门槛口径以 [BLUEPRINT_SPEC.md](BLUEPRINT_SPEC.md) 为准；已确认的重大玩法决策见 [CORE_GAMEPLAY_REBUILD_FRAMEWORK.md](CORE_GAMEPLAY_REBUILD_FRAMEWORK.md) §12。**本文不定义任何规则数值。**
+
+---
+
+## 1. 入口与运行边界
+
+| 项 | 实况 |
+| --- | --- |
+| 入口 | `index.html?view=prototype`，由 `apps/web/src/main.tsx` 判断查询参数后 `lazy()` 加载 `PrototypeApp`；`main.tsx` 改动量为 +5/−2 |
+| 默认路径 | 不带 `?view=prototype` 时渲染原 `App`，v3 运行时与 WASM 链路不变 |
+| 隔离 | 原型目录不引用 `types/gameV3.ts`、`gameStore`、`gameCore`、`indexedDB`，不发网络请求；`PrototypeApp.test.tsx` 有源码扫描断言，命中 `gameV3|gameCore|gameStore|useGameCore|indexedDB|fake-indexeddb|wasm|fetch(` 即失败 |
+| 确定性 | 原型内无 `Math.random`、无 `Date.now`、无种子参与；同一份 `prototypeData` 渲染结果恒定 |
+| 样式 | `prototype.css` 复用 `styles/index.css` 的 `--site-*` token，不新增颜色变量 |
+| 图标 | 复用 `lucide-react@0.468.0`（ISC，许可声明保留在 [ASSET_CATALOG.md](ASSET_CATALOG.md)），未新增依赖 |
+| 产物增量 | `build:web` 后 `PrototypeApp` 分块 JS 65.93 kB / gzip 21.82 kB，CSS 17.30 kB / gzip 3.58 kB |
+
+## 2. 页面信息架构与导航图
+
+```text
+?view=prototype
+└─ PrototypeApp（三页导航，页面切换不推进时间、不重置数据）
+   ├─ 公司总览 CompanyOverview
+   │    同时在制的作品 ──点击「打开作品详情」──▶ 作品详情（带入该作品）
+   │    公司现金与承诺 / 谁在哪个项目上 / 并行经营的真实约束
+   │    需要留意的经营问题 / 市场企划与长期合作
+   ├─ 作品详情 WorkDetail
+   │    作品选择（3 部）→ 单个作品视图：
+   │    {project.title}（头部）→ 公共制作与单集制作是两层
+   │    → {episodeCount} 集各自的制作进度（单集选择）→ 第 n 集《标题》
+   │    → 持续方针与实际差距 → 这个项目本周占了谁 → 风险从哪来 → {project.title}的花费与回款
+   └─ 每周经营 WeeklyOperations
+        周次快照选择（3 份回执，覆盖 正常 / 事件待处理 / 资金危机 三态）
+        {receipt.headline} → 本周真正需要玩家处理的 N 件事
+        → 自动执行与仅报告 → 产出与原因
+        → {事件标题}（事件态）/ 期限内允许做什么、不允许做什么（危机态）
+        → 最值得盯住的事
+```
+
+三页的关系：**总览定位问题 → 详情解释缺口 → 周经营给出此刻能做的动作**。事件处理与财务归因分别落在每周经营的事件面板与作品详情的花费回款面板，没有独立页面，这是本批的刻意取舍（见 §6 与 #39 交付物缺口）。
+
+与 `design/frontend-multi-space-direction-20261124`（D8/D9/D10 已裁决为「4 个场景」并取消独立周经营页）的迁移映射，供后续重构对照：
+
+| 本批页面 | 方向稿落点 |
+| --- | --- |
+| 公司总览 | 办公室场景 + 全局状态栏 |
+| 作品详情 | 制作现场（L1 作品 / L2 单集 / L3 阶段 / L4 工作项折叠） |
+| 每周经营 | 全局事务中心（事件、回执、危机三块）+ 各场景命令入口 |
+| 花名册中的归属与切换 | 办公室人物面板 |
+| 市场企划与长期合作 | 会议室（决策）+ 发行与市场（结果） |
+
+## 3. 关键组件清单
+
+| 文件 | 行数 | 职责 |
+| --- | ---: | --- |
+| `model.ts` | 375 | 原型领域类型、枚举中文名表、展示派生函数（`isDelivered`、`projectWork`、`projectCompletion`、`itemsByStage`、`deliveredEpisodes`） |
+| `mockData.ts` | 413 | `EPISODE_ITEM_SPECS` / `COMMON_ITEM_SPECS`（逐字对齐 `tv_standard.blueprint.json` 的 6 公共项 + 14 单集项）与 `prototypeData` |
+| `PrototypeApp.tsx` | 42 | 三页导航壳与当前页状态 |
+| `CompanyOverview.tsx` | 119 | 公司总览 6 个面板 + 决策标记图例 |
+| `WorkDetail.tsx` | 204 | 作品详情 8 个面板 + 依赖/门槛状态机 |
+| `WeeklyOperations.tsx` | 134 | 周经营 7 个面板 + 三态 banner + 危机自救清单 |
+| `bits.tsx` | 37 | 面板容器、标记徽章、进度条等复用件 |
+| `prototype.css` | 227 | 三页布局与状态色，仅使用既有 token |
+| `PrototypeApp.test.tsx` | 161 | 11 条交互与数据自证测试 |
+
+## 4. mock data 结构说明
+
+`prototypeData: PrototypeData`（11 个顶层字段）：
+
+| 字段 | 内容 | 口径来源 |
+| --- | --- | --- |
+| `company` | 公司名、周数、现金、声望 | DEC-FIN-001 唯一现金池；样本数值 |
+| `staff[7]` | 6 名核心 + 1 名临时，含 6 维能力、疲劳、士气、周薪/项目计酬、离职预警、状态说明 | 角色枚举对齐 `DOMAIN_ARCHITECTURE` 契约 7 角色；数值为原型样本 |
+| `allocations` | 每周每人唯一项目归属 + 上周归属 | DEC-STAFF-001 / 框架 D1 |
+| `suppliers[3]` | 供应商产能与剩余容量 | DEC-PROD-003 外包约束；容量为样本 |
+| `outsourcing` | 已签外包任务 | 同上 |
+| `projects[3]` | 《雾港II》12 集 TV、《夜行电车》3 集 OVA、《小满》1 集剧场版（已交付） | 每项含 6 公共项 + 每集 14 项，`workTotal` 与 `deliverAt` 逐字来自蓝图 |
+| `ledger` | 分类账目（13 类：投资、承制、商业、工资、运营、制作、临时、外包、事件、延期、违约金、开发费、发行） | DEC-FIN-001；项目账只是按 `work_id` 过滤的归因视图 |
+| `receipts[3]` | 三份周回执，分别处于 `normal` / `event_pending` / `cash_crisis` | DEC-PLAY-002、DEC-FIN-003 |
+| `marketOffers` | 企划机会与热度 | 样本 |
+| `relationships` | 长期合作方关系 | 无读模型，见 §5 缺口 |
+| `history` | 已交付作品履历 | 无读模型，见 §5 缺口 |
+
+工作项口径（`docs/BLUEPRINT_SPEC.md`）：1 个工作点 = 1/100 人周（`centi_staff_week`）；`deliver_at` 取 1–1000‰；`is_gate` 只允许出现在单集项上；《雾港II》的门槛项是 `delivery_master`（12 工作点、`deliver_at=1000`）。
+
+界面上的工作项三态由 `model.ts` 判定并显示为「可开始 / 进行中，未达门槛 / 被依赖阻塞 / 已达标，可继续完善 / 已完成」。
+
+> **本批最需要负责人确认的一点**：因为还没有 v4 读模型，`model.ts` 在 TS 里实现了 `isDelivered = workDone × 1000 ≥ deliverAt × workTotal`（与 `BLUEPRINT_SPEC.md:75` 同式）以及完成度、门槛达成的汇总。这是**展示态推导**，不是新增规则，接入 `work_detail` / `production_board` 后必须删除。见 #39 验收第 6 条「所有业务字段可追溯到 v1.4 架构、M0 契约或 DECISION_LOG」。
+
+## 5. 读模型与命令字段映射清单（#39 交付物 4）
+
+M0 现有 9 个读模型：`company_overview`、`work_detail`、`production_board`、`staff_board`、`finance_summary`、`crisis_board`、`market_board`、`event_card`、`week_receipt`。
+
+| 界面展示 | 读模型 | 现状 |
+| --- | --- | --- |
+| 现金 / 声望 / 周数 | `company.week`、`company.reputation`、`finance_summary.balance` | 有 |
+| 在制作品列表、剩余工期、计划完成度 | `company_overview` 项目组合 | 有 |
+| 单集列表、六阶段进度、门槛项、质量 | `work_detail(id)` | 有 |
+| 工作项依赖三态 | `production_board(id)` | 有 |
+| 员工姓名 / 角色 / 能力 / 疲劳 / 士气 / 归属 | `staff_board`（含 `assignment_work_id`） | 有 |
+| 供应商产能与已签外包 | `work_detail` 人员与外包占用 | 部分（产能需 `suppliers` 视图） |
+| 账目分类与项目归因 | `finance_summary` | 有 |
+| 危机缺口、剩余期限、自救清单 | `crisis_board` | 有 |
+| 企划机会与热度 | `market_board` | 有 |
+| 事件卡（标题 / 影响对象 / 选项代价 / 后果） | `event_card` | 有 |
+| 周回执（产出与原因、人员变化、下周关注） | `week_receipt` | 有 |
+| **设施列表与效果** | 无 | **缺口**：需 `company_overview` 扩展一节，或由架构侧新增 |
+| **合作方 / 委员会** | 无 | **缺口**：`relationships[]`、`committees[]` 展示投影；M4 前只做结构验证 |
+| **已交付作品履历** | 无 | **缺口**：`archive.works` 展示投影，M2 Archive 落地后补 `archive_board` |
+
+命令入口（原型全部为按钮占位，不提交）：`advance_week`、`start_work`、`set_work_plan`、`assign_staff`、`hire_core`、`scout`、`hire_temporary`、`dismiss_staff`、`sign_outsourcing`、`deliver_work`、`abort_work`、`request_extension`、`arrange_financing`、`resolve_event`、`adopt_proposal`、`reject_proposal`、`create_custom_offer`、`buy_tv_service`。
+
+需要在接入时专门处理的错误码：`GATE_UNMET`（必须列出未达标门槛项并跳到 `production_board` 对应行，不能只报错）、`DEPENDENCY_UNMET`（指向阻塞项）、`CAPACITY_EXCEEDED`（显示该供应商剩余产能）、`INSUFFICIENT_FUNDS`（显示缺口与出路）、`INVALID_PHASE`（说明为什么此刻不能做，而不是把按钮静默置灰）。
+
+## 6. #39 验收对照
+
+| 验收条目 | 结果 | 证据 |
+| --- | --- | --- |
+| 新用户能从公司总览理解经营状态与当前最重要的问题 | 满足 | 「需要留意的经营问题」面板 + 每部作品的门槛缺口与落后周数；总览可一跳进入作品详情 |
+| 项目详情能区分公共制作和每集六阶段，不误导为整部作品同步推进 | 满足 | 「公共制作与单集制作是两层」独立区块；单集网格为 `{集数} × 6 段`，无「一条 6 段流水线」表达 |
+| 周经营界面体现员工每周唯一项目归属与计划自动执行边界 | 满足 | 归属表每人单行 + 上周归属与切换标记；「自动执行与仅报告」与「本周真正需要玩家处理的 N 件事」分列 |
+| 事件待处理、资金危机、正常经营三种状态有清晰的操作差异 | 满足（三种状态）；**「关闭中」未覆盖** | 三份周回执对应三态 banner 与不同面板；危机态给出缺口、期限、允许与禁止清单。方向稿 §6 的第四窗口「关闭中」本批未实现 |
+| 页面使用 mock data，不依赖未冻结 API | 满足 | 源码扫描断言（§1） |
+| 所有业务字段可追溯到架构、M0 契约或 DECISION_LOG | 部分满足 | §4、§5 给出映射与 3 处缺口；`model.ts` 的展示态推导待负责人裁决（§4 末尾） |
+
+已冻结基线的一致性检查（本批重构 `63d9c11` 的验收点）：单集六阶段与蓝图逐字对齐；无跨项目借调/拆分工时入口；界面无「管理负荷」数值（框架 D3 已确认首版不引入，而非作废）；D1–D6 不重列为待决事项；门槛达标与完成状态全部由工作点推导；单项目完成度与手算一致；`?view=prototype` 之外的路径行为不变。
+
+## 7. 实测证据与验证记录
+
+浏览器实测方式：`npm run build:web` 产物由本机 `127.0.0.1:8915` 静态服务，`playwright-core@1.65.1` 驱动系统 Edge（`channel: 'msedge'`，headless，视口高 1000）逐屏点击操作并整页截图；每屏用 `document.documentElement.scrollWidth` 断言无横向溢出。这不是 `npm run test:browser`（该命令需要 WASM 产物，本机没有 Emscripten）。
+
+| 证据 | 视口 | 检查点 |
+| --- | --- | --- |
+| [`v2-1440-company.png`](evidence/wp10-prototype/v2-1440-company.png) | 1440×1000 | 公司总览 6 面板、唯一现金池、派生完成度 |
+| [`v2-1440-work.png`](evidence/wp10-prototype/v2-1440-work.png) | 1440×1000 | 作品详情两层结构、12 集网格、第 6 集「已达标，可继续完善」与等待主动交付 |
+| [`v2-1440-week.png`](evidence/wp10-prototype/v2-1440-week.png) | 1440×1000 | 事件待处理态：待处理面板 + 需要玩家处理的动作清单 |
+| [`v2-768-week-crisis.png`](evidence/wp10-prototype/v2-768-week-crisis.png) | 768×1000 | 第 16 周资金危机态：缺口、剩余期限、允许与禁止清单，窄屏无溢出 |
+| [`v2-375-work.png`](evidence/wp10-prototype/v2-375-work.png) | 375×1000 | 作品详情单列堆叠、六阶段条带可读 |
+| [`v2-375-company.png`](evidence/wp10-prototype/v2-375-company.png) | 375×1000 | 公司总览单列堆叠与溢出检查 |
+
+命令结果（Node v22.23.5 便携版，工作区内；Windows 10 19045 x64）：
+
+| 命令 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm run test:unit` | 258 / 258 通过（9 个测试文件；本批新增 `PrototypeApp.test.tsx` 11 条，v3 的 8 个测试文件全部未改且通过） |
+| `npm run build:web` | 通过 |
+| `npm run build` / `verify:dist` / `test:wasm` / `test:native` | **未运行**：本机无 Emscripten 4.0.23 与 `cl.exe`/`g++`，`.tools/emsdk` 不存在；需在装有工具链的机器补跑（与 Issue #9、#11 的同类阻塞合并处理） |
+
+## 8. 未包含与后续
+
+- 事件处理独立界面、财务与历史 Archive 视图（#39 交付物缺口）；「关闭中」窗口。
+- 低保真线框：本批以可点击原型替代，未另出 4 张线框图。
+- 素材：按方向稿 D8「像素场景 + 现代面板」，本批未使用任何位图素材，人物与场景为 CSS 色块占位；四场景所需的 3 张背景与透明底人物 sprite 仍缺，需先定 `staff_id → 文件名` 映射再生成。
+- 方向稿合入后：三页按 §2 末尾的映射表重构为「全局壳 + 4 场景」，本批数据形状与字段映射清单直接复用。
