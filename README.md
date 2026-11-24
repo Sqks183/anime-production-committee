@@ -1,18 +1,18 @@
 # 动画制作委员会
 
-ANIME PRODUCTION COMMITTEE · 浏览器经营模拟游戏最小纵向切片 · v2 状态协议
+ANIME PRODUCTION COMMITTEE · 动画制作公司经营模拟游戏
 
-当前范围是初始化公司、选择企划、安排团队、推进制作、处理事件、结算并接取下一部的最小循环，不是完整游戏或最终平衡版本。React 通过 Emscripten 的真实 WebAssembly 调用 C++ 六接口；没有用 TypeScript 伪造核心计算，也没有独立后端。
+《动画制作委员会》目标形态是参考开罗游戏的轻量经营模拟：公司可并行经营多部作品，项目制作由项目级公共制作与单集六阶段组成；单集工作按依赖、最低交付和并行关系推进。核心玩法决策见 [docs/DECISION_LOG.md](docs/DECISION_LOG.md)，目标领域架构见 [docs/DOMAIN_ARCHITECTURE.md](docs/DOMAIN_ARCHITECTURE.md)。
 
-> **V1.0 迁移进行中。** 下面的玩法、协议与验收描述的是已合入的 v2 纵向切片，仍然准确，但不是目标形态。《游戏设计总案 V1.0》要求周制经营、五阶段、企划市场、委员会投资、六能力用工与公司终局，差距见 [docs/V1_GAP_REVIEW.md](docs/V1_GAP_REVIEW.md)，本轮分工与顺序见 [docs/TEAM_PLAN.md](docs/TEAM_PLAN.md)，任务在 [议题 #1](https://github.com/zhengmin486/anime-production-committee/issues/1) 与 #2–#9。
+> **当前代码仍是旧版运行时。** 本仓库中的 V2/V3 页面、数据结构、五阶段与单项目测试记录描述历史纵向切片，不能代表目标玩法已实现。研究阶段已结束，当前进入整体架构设计与迁移准备；架构、规则、代码和测试状态见 [docs/PROGRESS.md](docs/PROGRESS.md)。
 
-## M0 契约交付
+## M0/M1 历史契约与验收记录
 
 v3 目标结构、合法动作、周结算顺序、同周破产优先级、承制/委员会手算账与旧档拒绝策略见 [DATA_MODEL](docs/DATA_MODEL.md)、[API](docs/API.md)、[GAME_RULES](docs/GAME_RULES.md) 的 V3 部分。可编译契约与校验在 [gameV3.ts](apps/web/src/types/gameV3.ts)，静态夹具与契约测试供后续前后端独立开发。交接与尚未实现项见 [TEAM_PLAN](docs/TEAM_PLAN.md)。
 
-**M0 没有更换运行时。** M1 已由 `9e2d023` 将 C++/WASM 核心切到 v3，但前端仍调用 v2 六接口；浏览器端没有 v3 端到端证据，由 #5 完成切换。当前进度见 [docs/PROGRESS.md](docs/PROGRESS.md)。
+**以下是历史验收记录。** M1 曾将 C++/WASM 核心切到 V3，随后完成前端接入；这些验收针对旧单项目/五阶段运行时。当前目标玩法尚未按新架构实现，进度见 [docs/PROGRESS.md](docs/PROGRESS.md)。
 
-## 当前可玩内容
+## 旧运行时已实现内容（不代表目标玩法）
 
 ```text
 新开公司 → 接手企划 → 排班 / 方针 / 外包 / 加班 → 推进一天
@@ -205,10 +205,17 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 ## 文档
 
 - [贡献与协作指南](CONTRIBUTING.md)
+- [权威玩法决策登记册](docs/DECISION_LOG.md)
+- [项目文档导航](docs/README.md)
+- [研究与审计成果目录](docs/RESEARCH_CATALOG.md)
 - [核心玩法重构框架（当前设计基线）](docs/CORE_GAMEPLAY_REBUILD_FRAMEWORK.md)
+- [领域架构设计（目标架构，v1.4）](docs/DOMAIN_ARCHITECTURE.md)
+- [制作蓝图规范](docs/BLUEPRINT_SPEC.md) · [TV 样例](docs/blueprints/tv_standard.blueprint.json)
+- [M0 契约冻结（v4.0）](docs/M0_CONTRACT_FREEZE.md)
+- [领域架构评审材料（2026-11-24）](docs/ARCHITECTURE_REVIEW_2026-11-24.md)
 - [2026-11-24 仓库审查与合并登记](docs/REBUILD_REVIEW_AND_MERGE_REGISTER_2026-11-24.md)
 - [产品定位](docs/PRODUCT.md)
-- [技术架构](docs/ARCHITECTURE.md)
+- [技术架构（当前运行切片）](docs/ARCHITECTURE.md)
 - [V1.0 游戏设计总览](docs/GAME_DESIGN.md)
 - [统一数据模型](docs/DATA_MODEL.md)
 - [规则与暂定参数](docs/GAME_RULES.md)
