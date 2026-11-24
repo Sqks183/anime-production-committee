@@ -1,6 +1,8 @@
 # 开发初期游戏美术素材
 
-更新日期：2026-11-20。
+更新日期：2026-11-24（本文保留 2026-11-20 与 2026-11-22 两批历史记录，仅修正与仓库实际不符的条目）。
+
+> 2026-11-24 已对全仓库图片、图标、背景、字体与空素材目录做过一次逐项实测盘点，结论、哈希、引用行号与差异登记见 [ASSET_INVENTORY_2026-11-24.md](ASSET_INVENTORY_2026-11-24.md)。本文与盘点冲突处以盘点为准。
 
 ## 当前范围与结果
 
@@ -28,19 +30,19 @@
 - 三张均由 WorkBuddy ImageGen 生成；背景与制作示意生成尺寸 1536×1024，头像 1024×1024。
 - 生成器在右下角打了「AI生成 / WORKBUDDY」标记，统一用**顶部对齐裁切**把标记所在的底部条带裁掉，没有修图、补绘或局部重生成。
 - 处理链只用 Python 标准库：PNG 解码（zlib + 滤波还原）、裁切、双线性缩放、输出不透明 24 位 RGB。没有为此安装第三方图像库。
-- 每张图旁有 `.png.audit.json`，记录源文件、裁切矩形、最终尺寸与源/成品 SHA-256；完整提示词、哈希与授权说明见 [asset_prompts.json](asset_prompts.json) 的 `self_generated_batch_2026_11_22`。
+- 每张图旁有 `.png.audit.json`，记录源文件、裁切矩形、最终尺寸与源/成品 SHA-256；完整提示词与授权说明见 [asset_prompts.json](asset_prompts.json) 的 `self_generated_batch_2026_11_22`。**成品哈希以 sidecar 为准**：2026-11-24 实测三个 sidecar 的 `output_sha256` 与仓库字节逐一相符，而 JSON 早前记录的三个哈希对应的是另一次编码输出，已按实际字节改正。
 - 视觉复核：无可读文字、无商标、无水印；人物头肩与四肢结构可读，家具透视正常；三图共用蜂蜜木色 / 米白 / 薄荷 / 珊瑚的暖色基调。
 - **边界**：这是仓库负责人对本项目的使用授权，不是通用商用许可结论，也不把 AI 生成等同于 CC0。2026-11-20 那批 `.tools/` 图片仍在本地、未入库、授权未核查，不再是正式素材来源。
 
-## 开发初期三张图
+## 开发初期三张图（2026-11-20 本机评估包）
 
-本地评估包根目录：`.tools/asset_review/early_development/`。以下链接指向实际存在的文件，不是文件名计划表。
+本地评估包根目录：`.tools/asset_review/early_development/`。**`.tools/` 被 `.gitignore` 忽略，只存在于素材负责人本机，克隆仓库后这些文件不可获取**，因此本节不再提供文件链接，只保留历史记录。当前正式发布在仓库里的三张图见上文「2026-11-22 自生成三图」。
 
-| 素材 | 实际文件 | 用途 | 尺寸 / 格式 | 美术审核 | 授权 |
+| 素材 | 本机路径（不随仓库同步） | 用途 | 尺寸 / 格式 | 美术审核 | 授权 |
 | --- | --- | --- | --- | --- | --- |
-| 办公室背景 | [backgrounds/studio_office.png](../.tools/asset_review/early_development/backgrounds/studio_office.png) | 公司主场景，中央留白供日后叠加员工或 UI | 1280×720 / PNG | 通过；复用首版 | 待核查 |
-| 制作人头像 | [characters/producer.png](../.tools/asset_review/early_development/characters/producer.png) | 验证单个人物卡片、角色介绍的视觉效果 | 512×512 / PNG | 通过；人物基准 | 待核查 |
-| 制作示意图 | [production/colored_frame.png](../.tools/asset_review/early_development/production/colored_frame.png) | 展示一个原创动画画面，不表示完整制作阶段系统 | 960×540 / PNG | 通过 | 待核查 |
+| 办公室背景 | `.tools/asset_review/early_development/backgrounds/studio_office.png` | 公司主场景，中央留白供日后叠加员工或 UI | 1280×720 / PNG | 通过；复用首版 | 待核查 |
+| 制作人头像 | `.tools/asset_review/early_development/characters/producer.png` | 验证单个人物卡片、角色介绍的视觉效果 | 512×512 / PNG | 通过；人物基准 | 待核查 |
+| 制作示意图 | `.tools/asset_review/early_development/production/colored_frame.png` | 展示一个原创动画画面，不表示完整制作阶段系统 | 960×540 / PNG | 通过 | 待核查 |
 
 ### 实际检查结论
 
@@ -52,16 +54,16 @@
 
 ## 已生成的备用图
 
-备用根目录：`.tools/asset_review/revised_16bit/prepared/`。它们均已查看原图和最终 PNG、完成规格整理，不需要为了“做完清单”立刻接入游戏。
+备用根目录：`.tools/asset_review/revised_16bit/prepared/`。它们均已查看原图和最终 PNG、完成规格整理，不需要为了“做完清单”立刻接入游戏。**这 6 张同样只存在于素材负责人本机（`.tools/` 被忽略），仓库里没有对应文件**；下表不再给链接，避免被当成可下载的素材。
 
-| 素材 | 实际备用文件 | 尺寸 | 当前处理 |
+| 素材 | 本机备用路径（不随仓库同步） | 尺寸 | 当前处理 |
 | --- | --- | --- | --- |
-| 会议室 | [backgrounds/studio_meeting_room.png](../.tools/asset_review/revised_16bit/prepared/backgrounds/studio_meeting_room.png) | 1280×720 | 美术通过，开发初期暂不用 |
-| 导演 | [characters/director.png](../.tools/asset_review/revised_16bit/prepared/characters/director.png) | 512×512 | 美术通过，备用 |
-| 作画监督 | [characters/animation_supervisor.png](../.tools/asset_review/revised_16bit/prepared/characters/animation_supervisor.png) | 512×512 | 美术通过，备用 |
-| 原画师 | [characters/key_animator.png](../.tools/asset_review/revised_16bit/prepared/characters/key_animator.png) | 512×512 | 美术通过，备用 |
-| 动画师 | [characters/inbetween_animator.png](../.tools/asset_review/revised_16bit/prepared/characters/inbetween_animator.png) | 512×512 | 美术通过，备用 |
-| 制作进行 | [characters/production_coordinator.png](../.tools/asset_review/revised_16bit/prepared/characters/production_coordinator.png) | 512×512 | 修订外形后通过，备用 |
+| 会议室 | `.tools/…/prepared/backgrounds/studio_meeting_room.png` | 1280×720 | 美术通过，开发初期暂不用 |
+| 导演 | `.tools/…/prepared/characters/director.png` | 512×512 | 美术通过，备用 |
+| 作画监督 | `.tools/…/prepared/characters/animation_supervisor.png` | 512×512 | 美术通过，备用 |
+| 原画师 | `.tools/…/prepared/characters/key_animator.png` | 512×512 | 美术通过，备用 |
+| 动画师 | `.tools/…/prepared/characters/inbetween_animator.png` | 512×512 | 美术通过，备用 |
+| 制作进行 | `.tools/…/prepared/characters/production_coordinator.png` | 512×512 | 修订外形后通过，备用 |
 
 六名员工（含制作人）分别独立生成，没有合照裁切。其他五人始终以同一制作人图为风格基准；制作进行的第二次生成另外上传第一次结果作为编辑目标。人物共享暖米色背景、略朝画面左侧的视角、相近头部大小及左上光照。发型、服装、眼镜和配件形成区别，不依赖文字岗位标签。
 
@@ -119,19 +121,26 @@
 
 ## 功能图标继续复用 Lucide
 
-现有 `lucide-react@0.468.0` 已验证以下导出，不重复生成图标，也未接入新页面。
+现有 `lucide-react@0.468.0`，不重复生成图标。2026-11-24 实测代码里是 **13 个去重图标、14 处用法、分布在 4 个文件**，全部带 `aria-hidden="true"`：
 
-| 功能 | 导出 |
+| 文件 | 在用导出 |
 | --- | --- |
-| 资金 | Coins |
-| 日期 | CalendarDays |
-| 员工 | Users |
-| 企划 | Clapperboard |
-| 制作进度 | ChartNoAxesCombined |
-| 作品质量 | Sparkles |
-| 事件 | Zap |
-| 收益 | TrendingUp |
-| 成就 | Trophy |
+| `apps/web/src/App.tsx` | Clapperboard、RotateCw |
+| `apps/web/src/components/StatusBadge.tsx` | CircleCheck、CircleAlert、LoaderCircle |
+| `apps/web/src/pages/HomePage.tsx` | ArrowUpRight、FolderOpen |
+| `apps/web/src/pages/StudioPage.tsx` | ArrowLeft、ArrowRight、Coins、Save、FolderOpen、FileText、Flag |
+
+下表是 2026-11-20 按功能预选、**至今仍未接入任何页面**的候选导出（保留备用，不代表已使用）：
+
+| 预定功能 | 候选导出 | 接入状态 |
+| --- | --- | --- |
+| 日期 | CalendarDays | 未接入 |
+| 员工 | Users | 未接入 |
+| 制作进度 | ChartNoAxesCombined | 未接入 |
+| 作品质量 | Sparkles | 未接入 |
+| 事件 | Zap | 未接入 |
+| 收益 | TrendingUp | 未接入 |
+| 成就 | Trophy | 未接入 |
 
 已阅读本地 `node_modules/lucide-react/LICENSE`；许可原文保留如下，复用或分发时保留适用声明。
 
@@ -157,11 +166,11 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 三张图已在提交 `21547d2` 接入页面，接入位置如下：
 
-| 素材 | 页面位置 | 呈现方式 |
+| 素材 | 页面位置 | 呈现方式（按 2026-11-24 代码实测） |
 | --- | --- | --- |
-| `backgrounds/studio_office.png` | 制作台标题区 | 18% 不透明度的背景底纹，不遮挡文字与控件 |
-| `characters/producer.png` | 制作台标题区 | 64px 圆形头像，375px 视口下缩到 48px |
-| `production/colored_frame.png` | 首页企划卡、项目结算 | 16:9 等比展示，`object-fit: cover`，不拉伸 |
+| `backgrounds/studio_office.png` | 制作台标题区 `index.css:221` | 18% 不透明度的背景底纹，`center / cover`，不遮挡文字与控件 |
+| `characters/producer.png` | 制作台标题区 `StudioPage.tsx:66` | **56×56 圆角方图**（`border-radius: 10px`，不是圆形），`@media (max-width: 720px)` 缩到 44×44，`object-fit: cover` |
+| `production/colored_frame.png` | 首页企划卡 `HomePage.tsx:25`、项目结算 `StudioPage.tsx:118` | 首页 16:9 `object-fit: cover`；结算区 `max-width: 420px` 原比例，不拉伸 |
 
 真实浏览器检查（Microsoft Edge，`vite preview` 构建产物，1440 / 768 / 375 三档）：
 
@@ -176,11 +185,13 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 | 命令 | 结果 |
 | --- | --- |
 | `npm run typecheck` | 通过 |
-| `npm run test:unit` | 225 / 225 通过 |
+| `npm run test:unit` | 225 / 225 通过（2026-11-23 接入当时） |
 | `npm run build:web` | 通过，`dist/assets` 内含三张图 |
 | `npm run build` | **失败**：`build:wasm` 报 `Emscripten 4.0.23 is missing` |
 | `npm run verify:dist` | **未执行**：依赖 `dist/wasm/game-core.mjs`，构建链缺失 |
 | `npm run test:browser` | **未执行**：同上，`public/wasm` 为空 |
+
+> 计数说明：[#9 的 2026-11-23 交付评论](https://github.com/zhengmin486/anime-production-committee/issues/9) 记录同一批接入为 247 / 247，两处数字对应同日不同提交时点，不是相互矛盾的结论。**2026-11-24 的素材盘点没有重新执行任何测试命令**（本机仍无 emsdk），因此不给出当日计数。
 
 阻塞原因：本机没有 Emscripten 工具链，`.tools/emsdk` 不存在，`emsdk` 的 npm 包不支持 win32。上述三条命令需要在装有 emsdk 的机器上补跑；**在补跑前不把 #9 关闭为「三图接入完成」**。
 
@@ -189,3 +200,8 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 1. 2026-11-20 那批 `.tools/` 图片的适用授权仍未核查；它们不随仓库同步，也不再用作正式素材来源。
 2. `npm run build`、`npm run verify:dist`、`npm run test:browser` 需在有 emsdk 的环境补跑并附输出。
 3. 只有新功能确实需要时才继续原画、分镜、中间稿或海报，不再按 16 张总量提前生产。
+4. **2026-11-22 已入库这批的适用条款同样未核查**：`asset_prompts.json` 记录的生成工具是 WorkBuddy ImageGen，底层服务商与模型均为 `null`；本文「来源、版权与正式入库边界」一节核查的是 Qoder 条款，两者不能互相顶替。
+5. **AI 生成标识靠裁切移除**：若发布平台要求保留生成标识，需要重新生成或补标识，属于发布前决定项。
+6. **源图已删、处理脚本未入库**：改裁切只能凭提示词重生成，素材不可复现；建议把处理脚本纳入 `scripts/` 或明确声明成品唯一。
+7. **成品与提示词存在偏差**：入库制作人头像实际是米褐外套 + 薄荷针织衫 + 眼镜，而 11-20 提示词要求深海军蓝外套 + 珊瑚点缀。批量生成其余 5 张头像前，必须先确定以哪一版作为风格锚，否则名册图会互相不一致。
+8. 建议新增最小素材校验（存在性、尺寸、SHA 与 sidecar 一致、文档图片链接可达），把 2026-11-24 盘点发现的哈希与死链类失真挡在合入前。

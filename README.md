@@ -218,6 +218,7 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 - [制作事件模块设计（M2 提案）](docs/EVENT_MODULE_DESIGN.md)
 - [事件内容填写指南](docs/EVENT_CONTENT_GUIDE.md)
 - [当前进度与方向](docs/PROGRESS.md)
+- [素材盘点：图片、图标、背景、字体与缺口（2026-11-24）](docs/ASSET_INVENTORY_2026-11-24.md)
 
 ## 当前范围与未完项
 

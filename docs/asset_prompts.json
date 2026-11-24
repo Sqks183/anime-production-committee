@@ -2,6 +2,20 @@
   "version": 1,
   "recorded_on": "2026-11-20",
   "status": "partial_review_only",
+  "records_status": {
+    "verified_on": "2026-11-24",
+    "authoritative_inventory": "docs/ASSET_INVENTORY_2026-11-24.md",
+    "authoritative_hashes": "the .png.audit.json sidecar next to each shipped PNG",
+    "historical_only_fields": [
+      "current_delivery",
+      "generated_attempts",
+      "planned_assets",
+      "recommended_generation_order"
+    ],
+    "note": "current_delivery / generated_attempts / planned_assets / recommended_generation_order are 2026-11-20 history, not a work list. The 16-asset plan they describe was superseded; do not regenerate from planned_assets or recommended_generation_order. The only shipped assets are the three files in self_generated_batch_2026_11_22.",
+    "inaccessible_paths": "Every path under .tools/, build/assets-raw/ and E:/vibe_images/ is local to the asset owner's machine. .tools/ and build/ are gitignored, the raw 2026-11-22 generations were deleted after processing (source_retained = false), and E:/ is a private drive, so none of these are obtainable from a clone. They are provenance records, not downloadable files.",
+    "count_reconciliation": "current_delivery.official_public_assets_count = 0 was true on 2026-11-20; self_generated_batch_2026_11_22.official_public_assets_count = 3 is the current state after the 2026-11-22 commit b3eee2a."
+  },
   "tool": "Qoder ImageGen",
   "underlying_image_provider": null,
   "underlying_model": null,
@@ -430,7 +444,8 @@
     "underlying_image_provider": null,
     "underlying_model": null,
     "official_public_assets_count": 3,
-    "watermark_note": "The generator stamped an AI mark in the bottom-right corner. It was excluded by a top-anchored crop; no retouching or inpainting was used.",
+    "watermark_note": "The generator stamped an AI mark in the bottom-right corner. It was excluded by a top-anchored crop; no retouching or inpainting was used. If a publishing platform requires a visible AI-generation mark, this crop has to be revisited before release.",
+    "hash_correction": "On 2026-11-24 the three output_sha256 values below were corrected to the bytes actually committed in this repository; the previous values recorded an earlier encode pass. The per-file .png.audit.json sidecars already carried the correct hashes and remain the authoritative record.",
     "processing": "Decoded with the Python standard library only (zlib plus PNG filter reconstruction), then top-anchored crop, bilinear resize and opaque 24-bit RGB PNG encode. No third-party image library was installed or required.",
     "boundary": "Project-internal authorization granted by the repository owner, not a general commercial licence claim. Files contain no real IP, no external stock material and no readable text or third-party marks after cropping.",
     "assets": [
@@ -442,7 +457,8 @@
           1280,
           720
         ],
-        "output_sha256": "8d2fbbd12ad90c328979a83691d4a64ff456701c4df12b9432698e52314a3011",
+        "output_sha256": "4cb2341abe2a971322314fe5ba63c759ede4ec50b8b5df54d5119fd64855d348",
+        "output_bytes": 973117,
         "source_path": "build/assets-raw/One_original_background_illust_2026-11-22T08-54-55.png",
         "source_size": [
           1536,
@@ -466,7 +482,8 @@
           512,
           512
         ],
-        "output_sha256": "5d631615751285a330655c2f6e1ca9bdd3013c98afa3028e205a7fb73e2f8bf7",
+        "output_sha256": "b03e148d91f0c81c4896a3269b58338d7412adb45996bef3fd1160fdf5397fcd",
+        "output_bytes": 316020,
         "source_path": "build/assets-raw/One_original_character_portrai_2026-11-22T08-55-11.png",
         "source_size": [
           1024,
@@ -490,7 +507,8 @@
           960,
           540
         ],
-        "output_sha256": "6805d7be9a98e2a43dee65bbf8506290647366fd8e1c69f1b7b87a471aac9c4b",
+        "output_sha256": "ed338ddedfacef9fea3383b0cc1864fc4d3ac789ac72a9ed81e2d3e798944dcc",
+        "output_bytes": 884506,
         "source_path": "build/assets-raw/One_original_anime_production__2026-11-22T08-55-26.png",
         "source_size": [
           1536,
