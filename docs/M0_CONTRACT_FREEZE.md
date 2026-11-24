@@ -84,7 +84,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | `Committee` | id, work_id, members, formed_week, status | closed_week | 一成员一渠道，bd 不挂成员 |
 | `MarketState` | heat, slots, refresh_week, competitors | custom_offer, proposal, last_competition_round | slots ≤ 4；自定/提案为独立槽 |
 | `Finance` | opening_funds, balance, entries, loans, solvency | — | balance = opening + Σentries；负余额仅危机/关闭 |
-| `EventState` | pending, last_event_week, per_work | pending | pending 至多一个，带 work_id |
+| `EventState` | pending[], last_event_week, per_work | pending 数组可为空 | 每条待处理事件带 work_id；同一项目每周最多一条；不同项目可同周各有事件 |
 | `Archive` | works, series | company_result | 只追加 |
 
 ---
@@ -115,7 +115,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | INV-20 | 合同 `item_id` 属于同一 `work_id`；累计交付不超过该项 `work_total` | INVALID_STATE |
 | INV-21 | `running ⇒ week < 520`；`week` 只由 `advance_week` 改变 | INVALID_PHASE |
 | INV-22 | Archive 只追加；`WorkRecord.id` 唯一；`previous_work_id` 指向更早记录 | INVALID_STATE |
-| INV-23 | `events.pending` 至多一个；同一事件在冷却期内不重复触发 | INVALID_STATE |
+| INV-23 | `events.pending[]` 可同时包含多个项目事件；同一项目每周最多触发一个；事件必须归属有效项目且未处理事件不得覆盖/丢弃 | INVALID_STATE |
 | INV-24 | `market.slots ≤ 4`；自定/提案槽与市场槽、历史 id 互斥 | INVALID_STATE |
 | INV-25 | 负余额只出现在 `solvency=crisis` 或 `company.status=closing(bankrupt)` | INVALID_STATE |
 | INV-26 | 存档中不含派生值（§2 列表）；加载时重算 | SAVE_CORRUPT |
@@ -147,7 +147,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | 15 | `buy_tv_service(work_id)` | 委员会模式 ∧ 未购买 ∧ 非危机 ∧ 现金 | MODE_NOT_ALLOWED / INSUFFICIENT_FUNDS | 渠道+发行费 |
 | 16 | `request_extension(work_id)` | 委员会模式 ∧ 未用过 ∧ 未过截止 ∧ 非危机 ∧ 现金 | MODE_NOT_ALLOWED / INSUFFICIENT_FUNDS | 延期+费用 |
 | 17 | `arrange_financing(provider, amount)` | 危机中或资金压力周 ∧ 额度未超 | INSUFFICIENT_FUNDS / INVALID_PHASE | 现金入账+贷款 |
-| 18 | `advance_week()` | running ∧ 无待处理事件 ∧ week<520 ∧ 非 closing | INVALID_PHASE | 整周结算（正常 13 阶段 / 危机 7 步） |
+| 18 | `advance_week()` | running ∧ `events.pending[]` 为空 ∧ week<520 ∧ 非 closing | INVALID_PHASE | 整周结算（正常 13 阶段 / 危机 7 步） |
 | 19 | `resolve_event(event_id, option_id)` | 存在该待处理事件 ∧ 选项合法 ∧ 现金充足 | NOT_FOUND / INSUFFICIENT_FUNDS | 效果分派+清空事件 |
 | 20 | `end_company()` | running | INVALID_PHASE | 锁 closing，未交付转 delivering |
 | 21 | `finalize_delivery(work_id)` | 项目 delivering（关闭路径） | INVALID_PHASE | 交付结算 |
@@ -362,3 +362,31 @@ npm run validate:handover
 v3 的单项目、五阶段、全局 phase、单事件槽、双份财务汇总全部废止（见架构 §19.2 C1–C13）。v3 代码与文档保留为历史与迁移参照，**不得**作为 v4 的实现起点。
 
 本文件不宣称 v3 行为正确，也不为其提供兼容层。
+
+
+---
+
+## 14. 2026-11-25 规则补充修订（不改变 v4 根版本）
+
+本节是对冻结基线的正式增补。玩法权威来源为 [DECISION_LOG.md](DECISION_LOG.md)；本节将其已确认语义落实到 v4 工程契约。若本节与旧表格冲突，以本节修订后的语义为准。
+
+### 14.1 事件状态与仲裁（覆盖旧 INV-23）
+
+- `EventState.pending` 是待处理事件数组，不是全局单槽。
+- 每条待处理事件必须包含项目标识 `work_id`，并指向仍有效的项目。
+- 每个项目每周最多触发一个事件；多个项目可以在同一周分别触发事件。
+- 未处理事件必须留在数组中；新事件不得覆盖、丢弃或自动合并旧事件。
+- 玩家可以按任意顺序处理待处理事件；不要求全局 FIFO。
+- 数组非空时禁止 `advance_week()`；全部事件处理完成后才允许推进。
+- 校验器必须覆盖：同周多个项目各一事件合法、同一项目同周第二事件非法、处理一条不清除其他项目事件、事件未清空时推进周失败。
+
+### 14.2 负现金与资金危机语义确认
+
+- `DEC-FIN-003` 允许资金危机期间现金暂时为负，负数表示欠付，不代表自动借款。
+- `INV-25` 的“负余额只出现在 `solvency=crisis` 或 `company.status=closing(bankrupt)`”与上述规则一致，不得收紧为余额始终非负。
+- 危机期间按 DEC-FIN-003 推进周数并继续计提固定成本，不生产、不计制作费；危机白名单仍然有效。
+- 资金危机的期限、融资额度、利率及判定阈值属于标定参数，不在本次契约修订中冻结。
+
+### 14.3 版本与实现状态
+
+本次修订不把文档契约等同于已实现功能。M1 已将 v4 runtime 基础切片合入 main；事件完整闭环、跨项目事件数组校验及 v4 完整存档恢复仍须按 M2/工程契约任务实现并验收。不得继续以旧版“全局单事件槽”作为目标行为。
