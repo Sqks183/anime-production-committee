@@ -206,6 +206,7 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 
 - [贡献与协作指南](CONTRIBUTING.md)
 - [核心玩法重构框架（当前设计基线）](docs/CORE_GAMEPLAY_REBUILD_FRAMEWORK.md)
+- [2026-11-24 仓库审查与合并登记](docs/REBUILD_REVIEW_AND_MERGE_REGISTER_2026-11-24.md)
 - [产品定位](docs/PRODUCT.md)
 - [技术架构](docs/ARCHITECTURE.md)
 - [V1.0 游戏设计总览](docs/GAME_DESIGN.md)
