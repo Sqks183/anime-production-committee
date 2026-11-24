@@ -1,8 +1,78 @@
-import type { PrototypeData } from './model'
+import type { Ability, EpisodeStage, PrototypeData, WorkItem } from './model'
 
 const ab = (planning: number, direction: number, drawing: number, animation: number, management: number, postproduction: number) => ({
   planning, direction, drawing, animation, management, postproduction,
 })
+
+/* 单集工作项模板取自 docs/blueprints/tv_standard.blueprint.json 的 episode[]，
+   工作点、千分比门槛与依赖关系与 docs/BLUEPRINT_SPEC.md 一致。
+   短篇与 OVA 在本样本中复用同一模板，正式模板差异属于制作蓝图范畴，不由界面决定。 */
+interface ItemSpec {
+  key: string
+  name: string
+  stage: EpisodeStage
+  ability: Ability
+  workTotal: number
+  deliverAt: number
+  isGate: boolean
+  deps: string[]
+}
+
+const EPISODE_ITEM_SPECS: ItemSpec[] = [
+  { key: 'script', name: '单集脚本', stage: 'content_design', ability: 'planning', workTotal: 42, deliverAt: 900, isGate: false, deps: ['common:series_composition'] },
+  { key: 'episode_direction_plan', name: '演出构想', stage: 'content_design', ability: 'direction', workTotal: 18, deliverAt: 850, isGate: false, deps: ['script'] },
+  { key: 'storyboard', name: '分镜', stage: 'storyboard_key_animation', ability: 'direction', workTotal: 55, deliverAt: 900, isGate: false, deps: ['episode_direction_plan'] },
+  { key: 'layout', name: '构图与Layout', stage: 'storyboard_key_animation', ability: 'drawing', workTotal: 48, deliverAt: 850, isGate: false, deps: ['storyboard', 'common:character_design'] },
+  { key: 'key_animation', name: '原画', stage: 'storyboard_key_animation', ability: 'drawing', workTotal: 95, deliverAt: 900, isGate: false, deps: ['layout'] },
+  { key: 'inbetween', name: '动画（中割）', stage: 'animation', ability: 'animation', workTotal: 78, deliverAt: 900, isGate: false, deps: ['key_animation'] },
+  { key: 'animation_check', name: '作画检查', stage: 'animation', ability: 'direction', workTotal: 34, deliverAt: 950, isGate: false, deps: ['inbetween'] },
+  { key: 'background', name: '背景', stage: 'art_visual', ability: 'drawing', workTotal: 62, deliverAt: 850, isGate: false, deps: ['layout', 'common:art_setting'] },
+  { key: 'art_check', name: '美术检查', stage: 'art_visual', ability: 'drawing', workTotal: 20, deliverAt: 900, isGate: false, deps: ['background', 'common:color_design'] },
+  { key: 'composite', name: '摄影合成', stage: 'photography_editing', ability: 'postproduction', workTotal: 52, deliverAt: 900, isGate: false, deps: ['animation_check', 'art_check'] },
+  { key: 'editing', name: '剪辑', stage: 'photography_editing', ability: 'direction', workTotal: 24, deliverAt: 950, isGate: false, deps: ['composite'] },
+  { key: 'dubbing', name: '配音收录', stage: 'sound_delivery', ability: 'postproduction', workTotal: 26, deliverAt: 900, isGate: false, deps: ['editing'] },
+  { key: 'sound_mix', name: '音响调整', stage: 'sound_delivery', ability: 'postproduction', workTotal: 30, deliverAt: 950, isGate: false, deps: ['dubbing', 'common:music'] },
+  { key: 'delivery_master', name: '完成母版', stage: 'sound_delivery', ability: 'postproduction', workTotal: 12, deliverAt: 1000, isGate: true, deps: ['sound_mix', 'common:op_ed'] },
+]
+
+const FULL = EPISODE_ITEM_SPECS.map(() => 1000)
+const EMPTY = EPISODE_ITEM_SPECS.map(() => 0)
+
+/* rates 为每个工作项完成占 workTotal 的千分比，只用于生成样本。 */
+const ep = (prefix: string, rates: number[]): WorkItem[] => EPISODE_ITEM_SPECS.map((spec, index) => ({
+  key: `${prefix}:${spec.key}`,
+  name: spec.name,
+  stage: spec.stage,
+  ability: spec.ability,
+  workTotal: spec.workTotal,
+  workDone: Math.round(spec.workTotal * rates[index] / 1000),
+  deliverAt: spec.deliverAt,
+  isGate: spec.isGate,
+  deps: spec.deps.map((dep) => (dep.startsWith('common:') ? dep : `${prefix}:${dep}`)),
+}))
+
+const COMMON_ITEM_SPECS: Array<{ key: string; name: string; ability: Ability; deliverAt: number; deps: string[] }> = [
+  { key: 'series_composition', name: '系列构成', ability: 'planning', deliverAt: 850, deps: [] },
+  { key: 'character_design', name: '角色设定', ability: 'drawing', deliverAt: 900, deps: [] },
+  { key: 'art_setting', name: '美术设定', ability: 'drawing', deliverAt: 850, deps: [] },
+  { key: 'color_design', name: '色彩设计', ability: 'drawing', deliverAt: 850, deps: ['common:character_design'] },
+  { key: 'music', name: '音乐', ability: 'postproduction', deliverAt: 800, deps: [] },
+  { key: 'op_ed', name: 'OP/ED', ability: 'postproduction', deliverAt: 800, deps: [] },
+]
+
+const common = (totals: number[], rates: number[]): WorkItem[] => COMMON_ITEM_SPECS.map((spec, index) => ({
+  key: `common:${spec.key}`,
+  name: spec.name,
+  stage: null,
+  ability: spec.ability,
+  workTotal: totals[index],
+  workDone: Math.round(totals[index] * rates[index] / 1000),
+  deliverAt: spec.deliverAt,
+  isGate: false,
+  deps: spec.deps,
+}))
+
+const doneCommon = [1000, 1000, 1000, 1000, 1000, 1000]
 
 /* 全部为静态样本数值，用于验证信息层级是否读得懂，不是平衡后的正式参数。 */
 export const prototypeData: PrototypeData = {
@@ -10,34 +80,32 @@ export const prototypeData: PrototypeData = {
     name: '青梧动画制作室',
     week: 18,
     totalWeeks: 520,
-    cash: 1_842_000,
+    cash: 980_000,
     committedNextWeek: 428_000,
     weeklyFixed: { salary: 186_000, operations: 92_000 },
     reputation: 58,
-    managementCapacity: 62,
-    managementLoad: 78,
-    runwayWeeks: 4,
-    headline: '三部作品同时在制，作画产能与现金余量同时吃紧。',
+    runwayWeeks: 2,
+    headline: '三部作品同时在制，作画产能吃紧；第 16 周的资金危机已解除，但现金余量只剩两周。',
   },
 
   staff: [
-    { id: 's1', name: '林岸', role: 'director', employment: 'core', abilities: ab(62, 78, 40, 32, 55, 30), specialty: 'direction', fatigue: 61, morale: 72, weeklySalary: 42_000, projectFee: 0, departureWarning: false, statusNote: '同时挂在两部作品，演出检查被拆成两半' },
-    { id: 's2', name: '陈砚', role: 'animation_director', employment: 'core', abilities: ab(48, 66, 82, 58, 40, 34), specialty: 'drawing', fatigue: 74, morale: 58, weeklySalary: 36_000, projectFee: 0, departureWarning: false, statusNote: '连续两周跨项目支援，作画修正积压' },
-    { id: 's3', name: '苏未', role: 'key_animator', employment: 'core', abilities: ab(30, 44, 74, 62, 22, 26), specialty: 'drawing', fatigue: 69, morale: 55, weeklySalary: 28_000, projectFee: 0, departureWarning: false, statusNote: '本周加班一天，产出仍低于计划' },
-    { id: 's4', name: '郑桥', role: 'animator', employment: 'core', abilities: ab(24, 30, 52, 68, 20, 30), specialty: 'animation', fatigue: 58, morale: 64, weeklySalary: 24_000, projectFee: 0, departureWarning: false, statusNote: '主《夜行电车》，被《雾港II》借走两天' },
-    { id: 's5', name: '何茵', role: 'postproduction', employment: 'core', abilities: ab(20, 34, 26, 30, 24, 76), specialty: 'postproduction', fatigue: 44, morale: 70, weeklySalary: 26_000, projectFee: 0, departureWarning: false, statusNote: '《小满》收尾后下周可释放' },
-    { id: 's6', name: '周慕', role: 'production_manager', employment: 'core', abilities: ab(56, 38, 26, 28, 72, 30), specialty: 'management', fatigue: 66, morale: 61, weeklySalary: 30_000, projectFee: 0, departureWarning: true, statusNote: '三部作品同时协调，管理负荷已超过公司容量' },
-    { id: 's7', name: '白鹭', role: 'scriptwriter', employment: 'temporary', abilities: ab(64, 46, 22, 18, 20, 16), specialty: 'planning', fatigue: 35, morale: 78, weeklySalary: 0, projectFee: 90_000, departureWarning: false, statusNote: '按项目计酬，只绑定《夜行电车》' },
+    { id: 's1', name: '林岸', role: 'director', employment: 'core', abilities: ab(62, 78, 40, 32, 55, 30), specialty: 'direction', fatigue: 61, morale: 72, weeklySalary: 42_000, projectFee: 0, departureWarning: false, statusNote: '上周在《小满》，本周切到《雾港II》；监督人员切换产生一次性团队磨合损失' },
+    { id: 's2', name: '陈砚', role: 'animation_director', employment: 'core', abilities: ab(48, 66, 82, 58, 40, 34), specialty: 'drawing', fatigue: 74, morale: 58, weeklySalary: 36_000, projectFee: 0, departureWarning: false, statusNote: '本周归属《雾港II》，第 7 集原画返工都压在他的作画检查上；《夜行电车》要他只能等下周重新分配' },
+    { id: 's3', name: '苏未', role: 'key_animator', employment: 'core', abilities: ab(30, 44, 74, 62, 22, 26), specialty: 'drawing', fatigue: 69, morale: 55, weeklySalary: 28_000, projectFee: 0, departureWarning: false, statusNote: '本周加班一天，第 7 集原画仍有两张未修正' },
+    { id: 's4', name: '郑桥', role: 'animator', employment: 'core', abilities: ab(24, 30, 52, 68, 20, 30), specialty: 'animation', fatigue: 58, morale: 64, weeklySalary: 24_000, projectFee: 0, departureWarning: false, statusNote: '本周归属《夜行电车》第 1 集中割；《雾港II》第 7 集的动画只能等下周' },
+    { id: 's5', name: '何茵', role: 'postproduction', employment: 'core', abilities: ab(20, 34, 26, 30, 24, 76), specialty: 'postproduction', fatigue: 44, morale: 70, weeklySalary: 26_000, projectFee: 0, departureWarning: false, statusNote: '本周归属《小满》完成母版，交付后下周可重新分配' },
+    { id: 's6', name: '周慕', role: 'production_manager', employment: 'core', abilities: ab(56, 38, 26, 28, 72, 30), specialty: 'management', fatigue: 66, morale: 61, weeklySalary: 30_000, projectFee: 0, departureWarning: true, statusNote: '本周只能归一个项目，另两部的排产冲突要靠玩家下周重新分配解决' },
+    { id: 's7', name: '白鹭', role: 'scriptwriter', employment: 'temporary', abilities: ab(64, 46, 22, 18, 20, 16), specialty: 'planning', fatigue: 35, morale: 78, weeklySalary: 0, projectFee: 90_000, departureWarning: false, statusNote: '按项目计酬，本周归《夜行电车》；临时员工的跨项目调度属于另一套资源规则' },
   ],
 
   allocations: [
-    { staffId: 's1', primaryProjectId: 'p1', supportProjectIds: ['p3'], focus: 'direction' },
-    { staffId: 's2', primaryProjectId: 'p1', supportProjectIds: ['p2'], focus: 'drawing' },
-    { staffId: 's3', primaryProjectId: 'p1', supportProjectIds: [], focus: 'drawing' },
-    { staffId: 's4', primaryProjectId: 'p2', supportProjectIds: ['p1'], focus: 'animation' },
-    { staffId: 's5', primaryProjectId: 'p3', supportProjectIds: ['p2'], focus: 'postproduction' },
-    { staffId: 's6', primaryProjectId: null, supportProjectIds: ['p1', 'p2', 'p3'], focus: 'management' },
-    { staffId: 's7', primaryProjectId: 'p2', supportProjectIds: [], focus: 'planning' },
+    { staffId: 's1', projectId: 'p1', previousProjectId: 'p3', focus: 'direction' },
+    { staffId: 's2', projectId: 'p1', previousProjectId: 'p1', focus: 'drawing' },
+    { staffId: 's3', projectId: 'p1', previousProjectId: 'p1', focus: 'drawing' },
+    { staffId: 's4', projectId: 'p2', previousProjectId: 'p1', focus: 'animation' },
+    { staffId: 's5', projectId: 'p3', previousProjectId: 'p3', focus: 'postproduction' },
+    { staffId: 's6', projectId: 'p1', previousProjectId: 'p2', focus: 'management' },
+    { staffId: 's7', projectId: 'p2', previousProjectId: null, focus: 'planning' },
   ],
 
   suppliers: [
@@ -47,36 +115,56 @@ export const prototypeData: PrototypeData = {
   ],
 
   outsourcing: [
-    { id: 'o1', supplierId: 'sp1', projectId: 'p1', stage: 'key_animation', ability: 'drawing', workTotal: 60, workDone: 42, rush: false, feePaid: 84_000, dueWeek: 21, status: 'active' },
-    { id: 'o2', supplierId: 'sp1', projectId: 'p2', stage: 'storyboard', ability: 'drawing', workTotal: 40, workDone: 12, rush: false, feePaid: 56_000, dueWeek: 24, status: 'at_risk' },
-    { id: 'o3', supplierId: 'sp3', projectId: 'p1', stage: 'animation_check', ability: 'animation', workTotal: 50, workDone: 18, rush: false, feePaid: 45_000, dueWeek: 26, status: 'active' },
-    { id: 'o4', supplierId: 'sp2', projectId: 'p3', stage: 'postproduction', ability: 'postproduction', workTotal: 30, workDone: 30, rush: false, feePaid: 44_000, dueWeek: 18, status: 'delivered' },
+    { id: 'o1', supplierId: 'sp1', projectId: 'p1', episodeIndex: 7, stage: 'storyboard_key_animation', itemKey: 'ep7:key_animation', ability: 'drawing', workTotal: 60, workDone: 42, rush: false, feePaid: 84_000, dueWeek: 21, status: 'active' },
+    { id: 'o2', supplierId: 'sp1', projectId: 'p2', episodeIndex: 1, stage: 'storyboard_key_animation', itemKey: 'ep1:storyboard', ability: 'drawing', workTotal: 40, workDone: 12, rush: false, feePaid: 56_000, dueWeek: 24, status: 'at_risk' },
+    { id: 'o3', supplierId: 'sp3', projectId: 'p1', episodeIndex: 6, stage: 'animation', itemKey: 'ep6:inbetween', ability: 'animation', workTotal: 50, workDone: 50, rush: false, feePaid: 45_000, dueWeek: 17, status: 'delivered' },
+    { id: 'o4', supplierId: 'sp2', projectId: 'p3', episodeIndex: 1, stage: 'photography_editing', itemKey: 'ep1:composite', ability: 'postproduction', workTotal: 30, workDone: 30, rush: false, feePaid: 44_000, dueWeek: 18, status: 'delivered' },
   ],
 
   projects: [
     {
       id: 'p1', title: '雾港信使 II', source: 'manga', scale: 'tv', mode: 'committee', status: 'producing',
-      startWeek: 8, deadlineWeek: 34, currentStage: 'key_animation', completion: 50, plannedCompletion: 61,
+      startWeek: 8, deadlineWeek: 34, episodeCount: 12, focusLabel: '第 7 集 · 分镜与原画', plannedCompletion: 66,
+      commonItems: common([60, 85, 70, 30, 45, 35], doneCommon),
+      episodes: [
+        { index: 1, title: '归港的信', status: 'delivered', targetWeek: 14, isFocus: false, workItems: ep('ep1', FULL), note: '第 14 周主动交付，质量 76' },
+        { index: 2, title: '潮汐表', status: 'delivered', targetWeek: 15, isFocus: false, workItems: ep('ep2', FULL), note: '第 15 周交付，中割外包一次返工' },
+        { index: 3, title: '无人应答的灯塔', status: 'delivered', targetWeek: 16, isFocus: false, workItems: ep('ep3', FULL), note: '第 16 周交付，背景提前完成' },
+        { index: 4, title: '盐与火药', status: 'delivered', targetWeek: 17, isFocus: false, workItems: ep('ep4', FULL), note: '第 17 周交付，演出构想改过一次' },
+        { index: 5, title: '第二班渡轮', status: 'delivered', targetWeek: 18, isFocus: false, workItems: ep('ep5', FULL), note: '本周交付，作画检查一次通过' },
+        { index: 6, title: '雾中的证人', status: 'min_delivered', targetWeek: 19, isFocus: false, workItems: ep('ep6', [1000, 1000, 1000, 1000, 940, 920, 1000, 880, 950, 930, 950, 940, 960, 1000]), note: '门槛项「完成母版」已达 1000‰，其余多数工作项过了最低交付但没做到 100%：等待玩家主动交付，交付后该集立即停止生产' },
+        {
+          index: 7, title: '夜戏', status: 'producing', targetWeek: 21, isFocus: true,
+          workItems: ep('ep7', [1000, 1000, 1000, 1000, 520, 180, 0, 640, 0, 0, 0, 0, 0, 0]),
+          note: '原画只做到 49 / 95，低于 900‰ 门槛；中割因此只解锁了一半，背景已并行到 40 / 62',
+        },
+        {
+          index: 8, title: '空船位', status: 'producing', targetWeek: 23, isFocus: false,
+          workItems: ep('ep8', [1000, 1000, 1000, 900, 420, 0, 0, 200, 0, 0, 0, 0, 0, 0]),
+          note: 'Layout 刚过门槛，原画起步；本周没有分配作画人手的余量',
+        },
+        {
+          index: 9, title: '旧护照', status: 'producing', targetWeek: 25, isFocus: false,
+          workItems: ep('ep9', [900, 400, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+          note: '脚本尚未达到 900‰ 门槛，分镜被依赖卡住',
+        },
+        { index: 10, title: '断频', status: 'not_started', targetWeek: 27, isFocus: false, workItems: ep('ep10', EMPTY), note: '按持续方针排在第 7 集之后' },
+        { index: 11, title: '岸上的灯', status: 'not_started', targetWeek: 29, isFocus: false, workItems: ep('ep11', EMPTY), note: '未开始' },
+        { index: 12, title: '信使的代价', status: 'not_started', targetWeek: 31, isFocus: false, workItems: ep('ep12', EMPTY), note: '未开始，距作品截止仅 3 周缓冲' },
+      ],
       quality: 74, audienceExpectation: 71, commercialPotential: 66,
-      stages: {
-        script: { status: 'completed', workDone: 40, workTotal: 40, quality: 78, qualityFocus: ['planning', 'direction'], weeksPlanned: 3, weeksActual: 3, note: null },
-        storyboard: { status: 'completed', workDone: 55, workTotal: 55, quality: 76, qualityFocus: ['direction'], weeksPlanned: 4, weeksActual: 4, note: null },
-        key_animation: { status: 'active', workDone: 38, workTotal: 85, quality: 71, qualityFocus: ['drawing'], weeksPlanned: 8, weeksActual: 10, note: '比计划落后 2 周，返工与跨项目支援同时发生' },
-        animation_check: { status: 'pending', workDone: 0, workTotal: 60, quality: 0, qualityFocus: ['animation'], weeksPlanned: 6, weeksActual: 0, note: null },
-        postproduction: { status: 'pending', workDone: 0, workTotal: 25, quality: 0, qualityFocus: ['postproduction'], weeksPlanned: 5, weeksActual: 0, note: null },
-      },
       plan: { effort: 'focused', priority: 'progress', outsource: 'gap', rush: 'conditional', sinceWeek: 15 },
       planGaps: [
-        { label: '作画产出', planned: '每周 12', actual: '每周 8', reason: '陈砚被《夜行电车》借走两天，原画修正排队' },
+        { label: '第 7 集原画', planned: '每周 12 工作点', actual: '每周 8 工作点', reason: '集中投入没有兑现，返工占掉两天' },
         { label: '外包补位', planned: '按缺口补充', actual: '已承诺但排不上', reason: '星野线上本周产能已全部承诺给两个项目' },
-        { label: '演出检查', planned: '每周 1 次', actual: '两周 1 次', reason: '林岸的主项目与支援项目冲突' },
+        { label: '演出检查', planned: '每周 1 次', actual: '两周 1 次', reason: '林岸上周在《小满》，本周才切回《雾港II》' },
       ],
-      teamIds: ['s1', 's2', 's3', 's4'],
-      conflicts: ['陈砚（作画）本周同时被《雾港信使 II》与《夜行电车》需要', '星野线上无法在本周再接新任务'],
+      teamIds: ['s1', 's2', 's3', 's6'],
+      conflicts: ['陈砚本周只能归《雾港II》，《夜行电车》第 1 集作画检查因此排不上', '第 7 集与第 8 集同时需要作画人手，定向只能保一个', '星野线上无法在本周再接新任务'],
       risks: [
-        { level: 'high', label: '作画阶段落后累积', signal: '连续两周产出低于计划（-4、-6）', sinceWeek: 16 },
+        { level: 'high', label: '第 7 集原画未达门槛累积', signal: '连续两周产出低于计划（-4、-6），中割被依赖卡住', sinceWeek: 16 },
         { level: 'medium', label: '核心作画人员疲劳', signal: '陈砚疲劳 74 / 士气 58', sinceWeek: 15 },
-        { level: 'low', label: '委员会催稿', signal: '玩具渠道要求第 20 周前看到角色设计', sinceWeek: 17 },
+        { level: 'low', label: '委员会催稿', signal: '玩具渠道要求第 20 周前看到角色设计定稿', sinceWeek: 17 },
       ],
       committee: [
         { id: 'c1', name: '冬青社', channel: 'publisher', investPercent: 25, since: 6 },
@@ -89,26 +177,33 @@ export const prototypeData: PrototypeData = {
         productionCost: 1_180_000, outsourcingCost: 129_000, projectedCommercial: '按当前质量与热度区间 3.1–4.6M', balance: -9000,
       },
       series: { parentTitle: '雾港信使', relation: '续作', carried: '受众认知与合作关系继承，制作质量不继承' },
-      marks: ['confirmed', 'pending'],
+      marks: ['confirmed', 'sample'],
     },
     {
       id: 'p2', title: '夜行电车', source: 'light_novel', scale: 'ova', mode: 'contract', status: 'producing',
-      startWeek: 13, deadlineWeek: 29, currentStage: 'storyboard', completion: 25, plannedCompletion: 33,
+      startWeek: 13, deadlineWeek: 29, episodeCount: 3, focusLabel: null, plannedCompletion: 38,
+      commonItems: common([40, 60, 50, 25, 35, 25], [1000, 1000, 800, 700, 0, 0]),
+      episodes: [
+        {
+          index: 1, title: '末班车的乘客', status: 'producing', targetWeek: 24, isFocus: false,
+          workItems: ep('ep1', [1000, 1000, 1000, 1000, 900, 600, 300, 700, 0, 0, 0, 0, 0, 0]),
+          note: '原画 86 / 95 未达 900‰ 门槛；中割已并行开工，背景等美术检查',
+        },
+        {
+          index: 2, title: '无票区间', status: 'producing', targetWeek: 26, isFocus: false,
+          workItems: ep('ep2', [1000, 1000, 600, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+          note: '演出构想已达标，分镜做到 33 / 55',
+        },
+        { index: 3, title: '终点站不在地图上', status: 'not_started', targetWeek: 28, isFocus: false, workItems: ep('ep3', EMPTY), note: '未开始，距作品截止只有 1 周缓冲' },
+      ],
       quality: 68, audienceExpectation: 59, commercialPotential: 52,
-      stages: {
-        script: { status: 'completed', workDone: 24, workTotal: 24, quality: 72, qualityFocus: ['planning'], weeksPlanned: 3, weeksActual: 4, note: '编剧更换导致多花一周' },
-        storyboard: { status: 'active', workDone: 14, workTotal: 36, quality: 66, qualityFocus: ['direction'], weeksPlanned: 5, weeksActual: 3, note: '比计划落后 1 周' },
-        key_animation: { status: 'pending', workDone: 0, workTotal: 48, quality: 0, qualityFocus: ['drawing'], weeksPlanned: 7, weeksActual: 0, note: null },
-        animation_check: { status: 'pending', workDone: 0, workTotal: 30, quality: 0, qualityFocus: ['animation'], weeksPlanned: 4, weeksActual: 0, note: null },
-        postproduction: { status: 'pending', workDone: 0, workTotal: 12, quality: 0, qualityFocus: ['postproduction'], weeksPlanned: 3, weeksActual: 0, note: null },
-      },
       plan: { effort: 'standard', priority: 'progress', outsource: 'gap', rush: 'off', sinceWeek: 13 },
       planGaps: [
-        { label: '分镜推进', planned: '每周 6', actual: '每周 4.5', reason: '白鹭到岗晚一周，演出人手不足' },
+        { label: '分镜推进', planned: '每周 6 工作点', actual: '每周 4.5 工作点', reason: '白鹭到岗晚一周，演出人手不足' },
         { label: '赶工', planned: '关闭', actual: '关闭', reason: '承制合同违约扣罚高，暂不开启' },
       ],
-      teamIds: ['s4', 's7', 's2', 's5'],
-      conflicts: ['陈砚的作画支援要到《雾港II》原画收口后才能稳定'],
+      teamIds: ['s4', 's7'],
+      conflicts: ['第 1 集作画检查需要陈砚，但他本周归属《雾港II》，只能等下周重新分配'],
       risks: [
         { level: 'medium', label: '分镜截止临近', signal: '第 22 周为分镜内部节点，当前落后 1 周', sinceWeek: 17 },
         { level: 'low', label: '承制结余薄', signal: '已用制作费占合同款 46%', sinceWeek: 13 },
@@ -123,20 +218,21 @@ export const prototypeData: PrototypeData = {
     },
     {
       id: 'p3', title: '小满', source: 'original', scale: 'short', mode: 'committee', status: 'producing',
-      startWeek: 10, deadlineWeek: 22, currentStage: 'postproduction', completion: 97, plannedCompletion: 94,
+      startWeek: 10, deadlineWeek: 22, episodeCount: 1, focusLabel: '第 1 集 · 声音与最终交付', plannedCompletion: 90,
+      commonItems: common([25, 40, 30, 15, 30, 20], doneCommon),
+      episodes: [
+        {
+          index: 1, title: '小满', status: 'producing', targetWeek: 19, isFocus: true,
+          workItems: ep('ep1', [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 900, 700, 600, 300, 0]),
+          note: '门槛项「完成母版」0 / 12，需 1000‰；它未达标，本周交付按钮不可用',
+        },
+      ],
       quality: 79, audienceExpectation: 52, commercialPotential: 45,
-      stages: {
-        script: { status: 'completed', workDone: 12, workTotal: 12, quality: 80, qualityFocus: ['planning'], weeksPlanned: 2, weeksActual: 2, note: null },
-        storyboard: { status: 'completed', workDone: 16, workTotal: 16, quality: 79, qualityFocus: ['direction'], weeksPlanned: 2, weeksActual: 3, note: '原创反复磨分镜，多花一周' },
-        key_animation: { status: 'completed', workDone: 20, workTotal: 20, quality: 76, qualityFocus: ['drawing'], weeksPlanned: 3, weeksActual: 3, note: null },
-        animation_check: { status: 'completed', workDone: 18, workTotal: 18, quality: 75, qualityFocus: ['animation'], weeksPlanned: 2, weeksActual: 2, note: null },
-        postproduction: { status: 'active', workDone: 10, workTotal: 12, quality: 79, qualityFocus: ['postproduction'], weeksPlanned: 2, weeksActual: 2, note: '本周收口' },
-      },
       plan: { effort: 'standard', priority: 'quality', outsource: 'off', rush: 'off', sinceWeek: 10 },
-      planGaps: [ { label: '后期收口', planned: '第 18 周完成', actual: '预计第 19 周完成', reason: '藤森色彩排期顺延一天' } ],
-      teamIds: ['s5', 's1'],
-      conflicts: ['何茵若提前释放，可缓解《夜行电车》的后期排队'],
-      risks: [ { level: 'low', label: '原创短篇商业回收有限', signal: '受众认知低，靠口碑与奖项', sinceWeek: 10 } ],
+      planGaps: [{ label: '声音与最终交付', planned: '第 18 周完成', actual: '预计第 19 周完成', reason: '藤森色彩排期顺延一天，音响调整只做到 9 / 30' }],
+      teamIds: ['s5'],
+      conflicts: ['何茵若在第 19 周交付后释放，可缓解《夜行电车》的后期排队'],
+      risks: [{ level: 'low', label: '原创短篇商业回收有限', signal: '受众认知低，靠口碑与奖项', sinceWeek: 10 }],
       committee: [
         { id: 'c5', name: '潮汐唱片', channel: 'music', investPercent: 20, since: 9 },
         { id: 'c6', name: '第四电视台', channel: 'tv_broadcast', investPercent: 10, since: 2 },
@@ -155,17 +251,21 @@ export const prototypeData: PrototypeData = {
     { id: 'l1', week: 18, scope: 'company', projectId: null, category: 'salary', label: '正式员工工资（7 人）', amount: -186_000 },
     { id: 'l2', week: 18, scope: 'company', projectId: null, category: 'operations', label: '工作室运营与水电设备', amount: -92_000 },
     { id: 'l3', week: 18, scope: 'project', projectId: 'p2', category: 'contract', label: '《夜行电车》第二期合同款', amount: 350_000 },
-    { id: 'l4', week: 18, scope: 'project', projectId: 'p1', category: 'production', label: '《雾港II》原画制作费', amount: -60_000 },
+    { id: 'l4', week: 18, scope: 'project', projectId: 'p1', category: 'production', label: '《雾港II》第 7 集原画制作费', amount: -60_000 },
     { id: 'l5', week: 18, scope: 'project', projectId: 'p1', category: 'outsourcing', label: '星野线上作画外包（第 4 批）', amount: -28_000 },
     { id: 'l6', week: 17, scope: 'project', projectId: 'p3', category: 'outsourcing', label: '藤森色彩后期收尾', amount: -22_000 },
     { id: 'l7', week: 17, scope: 'company', projectId: null, category: 'salary', label: '正式员工工资（7 人）', amount: -186_000 },
-    { id: 'l8', week: 16, scope: 'project', projectId: 'p1', category: 'investment', label: '《雾港II》委员会首期投资到账', amount: 1_300_000 },
+    { id: 'l8', week: 17, scope: 'project', projectId: 'p1', category: 'investment', label: '《雾港II》委员会首期投资到账', amount: 1_300_000 },
+    { id: 'l9', week: 16, scope: 'company', projectId: null, category: 'operations', label: '工作室运营与水电设备', amount: -92_000 },
   ],
 
   receipts: [
     {
       week: 18,
-      headline: '《小满》进入收口，作画缺口成为本周唯一硬约束。',
+      state: 'event_pending',
+      stateNote: '本周结算已提交。有一张事件卡等待处理，另有 3 项属于玩家专属决定；持续方针没有打断。',
+      crisis: null,
+      headline: '《小满》只差完成母版，第 7 集原画缺口成为本周唯一硬约束。',
       cashDelta: -16_000,
       costLines: [
         { category: 'contract', label: '《夜行电车》合同款', amount: 350_000 },
@@ -175,24 +275,26 @@ export const prototypeData: PrototypeData = {
         { category: 'outsourcing', label: '外包', amount: -28_000 },
       ],
       projectLines: [
-        { projectId: 'p1', title: '雾港信使 II', stage: 'key_animation', workDelta: 8, qualityDelta: 2, detail: '原画 38 / 85，落后计划 2 周', reason: '陈砚本周被两个项目分摊，集中投入没有兑现' },
-        { projectId: 'p2', title: '夜行电车', stage: 'storyboard', workDelta: 6, qualityDelta: 1, detail: '分镜 14 / 36，落后计划 1 周', reason: '白鹭到岗，脚本返修完成，演出重新排期' },
-        { projectId: 'p3', title: '小满', stage: 'postproduction', workDelta: 10, qualityDelta: 3, detail: '后期 10 / 12，下周可交付', reason: '藤森色彩交付，摄影合成一次通过' },
+        { projectId: 'p1', title: '雾港信使 II', episodeIndex: 7, stage: 'storyboard_key_animation', itemKey: 'ep7:key_animation', workDelta: 8, qualityDelta: 2, detail: '第 7 集原画 41 → 49 / 95，仍低于 900‰ 门槛', reason: '返工占掉两天；背景按依赖并行推进到 40 / 62，没有等原画' },
+        { projectId: 'p1', title: '雾港信使 II', episodeIndex: 6, stage: 'sound_delivery', itemKey: 'ep6:delivery_master', workDelta: 3, qualityDelta: 1, detail: '第 6 集完成母版达标，进入「可主动交付」', reason: '系统没有自动交付，等玩家执行动作' },
+        { projectId: 'p2', title: '夜行电车', episodeIndex: 1, stage: 'animation', itemKey: 'ep1:inbetween', workDelta: 6, qualityDelta: 1, detail: '第 1 集中割 41 → 47 / 78', reason: '郑桥本周归属本作；作画检查还缺陈砚' },
+        { projectId: 'p3', title: '小满', episodeIndex: 1, stage: 'photography_editing', itemKey: 'ep1:composite', workDelta: 10, qualityDelta: 3, detail: '摄影合成 37 → 47 / 52', reason: '藤森色彩交付，摄影合成一次通过' },
       ],
       staffLines: [
-        { staffId: 's2', name: '陈砚', fatigueDelta: 9, moraleDelta: -7, note: '连续两周跨项目支援' },
-        { staffId: 's3', name: '苏未', fatigueDelta: 6, moraleDelta: -3, note: '加班一天，仍有两张未修正' },
-        { staffId: 's6', name: '周慕', fatigueDelta: 4, moraleDelta: -4, note: '同时协调三部作品，管理负荷 78 / 62' },
-        { staffId: 's5', name: '何茵', fatigueDelta: -5, moraleDelta: 6, note: '《小满》收口，下周可释放' },
+        { staffId: 's2', name: '陈砚', fatigueDelta: 9, moraleDelta: -7, note: '本周归属《雾港II》，第 7 集返工集中在他的作画检查上' },
+        { staffId: 's3', name: '苏未', fatigueDelta: 6, moraleDelta: -3, note: '加班一天，第 7 集原画仍有两张未修正' },
+        { staffId: 's1', name: '林岸', fatigueDelta: 3, moraleDelta: -2, note: '上周在《小满》，本周切换产生一次性团队磨合损失' },
+        { staffId: 's5', name: '何茵', fatigueDelta: -5, moraleDelta: 6, note: '《小满》收口，交付后下周可重新分配' },
       ],
       mustDecide: [
-        { id: 'd1', projectId: 'p1', label: '补上《雾港信使 II》的作画缺口', detail: '原画产出连续两周低于计划，落后 2 周。', options: ['追加星野线上外包（¥56,000，下周起）', '本周让陈砚只投入《雾港II》，《夜行电车》分镜顺延一周', '维持现状，把缺口推到作画检查阶段'] },
-        { id: 'd2', projectId: 'p3', label: '《小满》是否本周交付', detail: '后期完成 10 / 12，质量 79。', options: ['本周交付', '延后一周打磨（追加 ¥38,000）'] },
-        { id: 'd3', projectId: null, label: '现金还能撑 4 周，是否继续接企划', detail: '下周强制支出 ¥428,000，除《小满》外没有确定回款。', options: ['先接下周的短篇企划回款', '暂缓接单，等《雾港II》第三期拨款'] },
+        { id: 'd1', projectId: 'p1', kind: 'reassign', label: '第 19 周把陈砚重新分配到哪一部', detail: '《雾港II》第 7 集原画缺人，《夜行电车》第 1 集作画检查也排不上。核心员工每周只能归一个项目，切换不受阶段边界限制，但要承担一次性磨合损失。', options: ['继续全部给《雾港II》第 7 集', '切到《夜行电车》，接受一次性磨合损失', '保持《雾港II》，把《夜行电车》检查交给外包'] },
+        { id: 'd2', projectId: 'p1', kind: 'new_outsource', label: '是否为第 7 集原画追加外包', detail: '既有合同排期已排满，追加是一份新的花钱承诺，系统不会自动签。', options: ['追加星野线上 ¥56,000（下周起）', '改用明石動画 ¥46,000，可靠性 62', '不追加，接受进度落后'] },
+        { id: 'd3', projectId: 'p3', kind: 'delivery', label: '《小满》第 1 集本周能否交付', detail: '门槛项「完成母版」0 / 12、要求 1000‰，尚未达标，交付按钮本周不可用。', options: ['等第 19 周达标后主动交付', '继续打磨；第 22 周期限届满将强制交付并按完成度扣罚'] },
       ],
       autoExecuted: [
-        '《夜行电车》持续方针「标准投入 / 进度优先 / 按缺口外包」沿用上周，未要求确认。',
-        '《小满》后期检查按既定计划自动推进，收口后进入待交付。',
+        '三部作品的持续方针均沿用上周，未要求确认（D2）。',
+        '《夜行电车》第 2 集分镜按既定方针继续推进，没有弹窗。',
+        '星野线上按既有合同继续第 7 集原画外包，本周未新增承诺。',
         '市场企划本周刷新 2 条，进入机会列表而不是弹窗。',
       ],
       reportOnly: [
@@ -201,64 +303,90 @@ export const prototypeData: PrototypeData = {
         '公司声望 58，本周未变化。',
       ],
       nextFocus: [
-        '第 19 周：《小满》交付与公司账结算。',
+        '第 19 周：《小满》完成母版达标后执行主动交付，同时重新分配何茵。',
+        '第 19 周：第 6 集已可主动交付，交付后该集立即停止生产。',
         '第 21 周：星野线上产能被两部作品同时占用，需要提前排产。',
         '第 22 周：《夜行电车》分镜内部节点，当前落后 1 周。',
       ],
       event: {
         id: 'e1', scope: 'project', projectId: 'p1', tier: 'normal',
-        title: '原画返工：第 7 场夜戏构图偏离演出要求',
-        description: '第 7 场两张关键原画与分镜演出要求不一致，作画监督要求返工；本周作画产能本来就低于计划。',
-        signals: ['连续两周作画产出低于计划（-4、-6）', '陈砚疲劳 74 / 士气 58', '第 7 场在分镜阶段已被标注为重点场次'],
+        title: '第 7 集原画返工：夜戏构图偏离演出构想',
+        description: '第 7 集两张关键原画与「分镜与原画」阶段的演出构想不一致，作画监督要求返工；该集原画 49 / 95 尚未达到 900‰ 最低交付，中割已经被依赖卡住。',
+        signals: ['第 7 集原画连续两周产出低于计划（-4、-6）', '陈砚疲劳 74 / 士气 58', '第 7 集是当前项目内定向目标，产能被它占用'],
         deadlineWeek: 19,
         options: [
-          { id: 'o1', label: '本周返工', cost: 0, gain: '质量 +2，避免返工累积到交付阶段', risk: 'medium', riskNote: '原画进度再落后约一周', fits: '工期压力可以承受时' },
-          { id: 'o2', label: '推迟到第 21 周集中返工', cost: 12_000, gain: '保住本周产出', risk: 'high', riskNote: '返工压力累积到作画检查，若届时疲劳未缓解损失更大', fits: '只在本周绝不能延期时' },
+          { id: 'o1', label: '本周返工', cost: 0, gain: '质量 +2，避免返工累积到完成母版阶段', risk: 'medium', riskNote: '第 7 集原画进度再落后约一周，第 8 集拿不到作画人手', fits: '工期压力可以承受时' },
+          { id: 'o2', label: '推迟到第 21 周集中返工', cost: 12_000, gain: '保住本周产出', risk: 'high', riskNote: '返工压力累积到动画与作画检查，若届时疲劳未缓解损失更大', fits: '只在本周绝不能延期时' },
           { id: 'o3', label: '交给明石動画修正', cost: 46_000, gain: '进度与质量同时保住', risk: 'low', riskNote: '该供应商可靠性 62，可能仍需二次修正；委员会会看到外包比例上升', fits: '现金有余量时' },
         ],
       },
     },
     {
       week: 17,
-      headline: '《雾港II》原画启动，外包产能第一次被两个项目抢。',
-      cashDelta: -312_000,
+      state: 'normal',
+      stateNote: '正常经营周：只有 1 项需要玩家决定，其余由持续方针自动推进。',
+      crisis: null,
+      headline: '委员会首期投资到账，资金危机解除；第 6 集达到最低交付。',
+      cashDelta: 900_000,
       costLines: [
+        { category: 'investment', label: '《雾港II》委员会首期投资', amount: 1_300_000 },
         { category: 'salary', label: '工资', amount: -186_000 },
         { category: 'operations', label: '运营', amount: -92_000 },
         { category: 'temporary', label: '临时人员', amount: -34_000 },
+        { category: 'production', label: '制作费', amount: -60_000 },
+        { category: 'outsourcing', label: '外包', amount: -28_000 },
       ],
       projectLines: [
-        { projectId: 'p1', title: '雾港信使 II', stage: 'key_animation', workDelta: 9, qualityDelta: 1, detail: '原画 30 / 85', reason: '阶段切换第一周，主要在试做镜头' },
-        { projectId: 'p2', title: '夜行电车', stage: 'storyboard', workDelta: 4, qualityDelta: 0, detail: '分镜 8 / 36', reason: '脚本返修占用演出，本周分镜几乎停住' },
-        { projectId: 'p3', title: '小满', stage: 'postproduction', workDelta: 8, qualityDelta: 2, detail: '后期 8 / 12', reason: '摄影稳定推进' },
+        { projectId: 'p1', title: '雾港信使 II', episodeIndex: 6, stage: 'sound_delivery', itemKey: 'ep6:sound_mix', workDelta: 9, qualityDelta: 1, detail: '第 6 集音响调整收口，门槛项全部达标', reason: '明石動画交付中割后解锁下游' },
+        { projectId: 'p1', title: '雾港信使 II', episodeIndex: 7, stage: 'storyboard_key_animation', itemKey: 'ep7:key_animation', workDelta: 6, qualityDelta: 0, detail: '第 7 集原画 35 → 41 / 95', reason: '阶段起步第一周，主要在试做镜头' },
+        { projectId: 'p2', title: '夜行电车', episodeIndex: 1, stage: 'storyboard_key_animation', itemKey: 'ep1:storyboard', workDelta: 4, qualityDelta: 0, detail: '第 1 集分镜达标，Layout 解锁', reason: '脚本返修占用演出，本周分镜几乎停住' },
+        { projectId: 'p3', title: '小满', episodeIndex: 1, stage: 'animation', itemKey: 'ep1:inbetween', workDelta: 8, qualityDelta: 2, detail: '中割收口', reason: '摄影稳定推进' },
       ],
       staffLines: [
-        { staffId: 's2', name: '陈砚', fatigueDelta: 7, moraleDelta: -2, note: '开始跨项目支援' },
+        { staffId: 's2', name: '陈砚', fatigueDelta: 7, moraleDelta: -2, note: '第 7 集原画集中投入' },
         { staffId: 's1', name: '林岸', fatigueDelta: 3, moraleDelta: 2, note: '《小满》试映反馈好于预期' },
       ],
-      mustDecide: [{ id: 'd17', projectId: 'p2', label: '《夜行电车》分镜是否延后一周', detail: '演出被《雾港II》占满。', options: ['延后一周', '追加外包分镜'] }],
-      autoExecuted: ['三部作品持续方针均沿用上周，未打断。'],
-      reportOnly: ['《小满》音乐 demo 到位，质量 +1。'],
-      nextFocus: ['原画产能缺口开始成形。'],
+      mustDecide: [
+        { id: 'd17', projectId: 'p1', kind: 'delivery', label: '《雾港II》第 6 集是否本周交付', detail: '门槛项「完成母版」已达 1000‰；主动交付后该集立即停止生产，不再投入工作量或提升质量。', options: ['本周交付第 6 集', '继续打磨到 100% 再交付'] },
+      ],
+      autoExecuted: ['三部作品持续方针均沿用上周，未打断。', '《夜行电车》第 2 集脚本按方针继续，未要求确认。'],
+      reportOnly: ['《小满》音乐 demo 到位，质量 +1。', '资金危机解除：偿付能力恢复，回到正常经营。'],
+      nextFocus: ['第 7 集原画产能缺口开始成形。'],
       event: null,
     },
     {
       week: 16,
-      headline: '《雾港II》进入原画阶段，委员会催角色设计。',
+      state: 'cash_crisis',
+      stateNote: '强制费用预检失败，周结算没有提交任何项目推进。公司进入限时资金危机：不自动借款、不自动追加投资，也没有立即破产。',
+      crisis: {
+        deadlineWeek: 19,
+        cashAfterSettle: 96_000,
+        forcedNextWeek: 412_000,
+        waysOut: [
+          '融资：向冬青社预支《雾港II》第二期合同款（需付息）',
+          '解雇或终止临时人员续约（省 ¥34,000 / 周）',
+          '终止或延期一个项目',
+          '调整计划与人员归属，把投入强度降为「保守」',
+          '交付已达标作品：《小满》第 1 集门槛项未达标，本周不可用',
+          '推进周数：危机期间周数照常前进',
+        ],
+      },
+      headline: '工资与运营照付，但下周强制支出比现金多 ¥316,000。',
       cashDelta: -278_000,
       costLines: [
-        { category: 'salary', label: '工资', amount: -186_000 },
-        { category: 'operations', label: '运营', amount: -92_000 },
+        { category: 'salary', label: '工资（危机期间继续计提）', amount: -186_000 },
+        { category: 'operations', label: '运营（危机期间继续计提）', amount: -92_000 },
       ],
-      projectLines: [
-        { projectId: 'p1', title: '雾港信使 II', stage: 'storyboard', workDelta: 11, qualityDelta: 2, detail: '分镜收口', reason: '分镜集中评审一次通过' },
-        { projectId: 'p3', title: '小满', stage: 'animation_check', workDelta: 9, qualityDelta: 1, detail: '作画检查 14 / 18', reason: '外包回收两张，质量稳定' },
+      projectLines: [],
+      staffLines: [
+        { staffId: 's3', name: '苏未', fatigueDelta: -4, moraleDelta: -9, note: '危机周不生产，士气下降' },
       ],
-      staffLines: [{ staffId: 's3', name: '苏未', fatigueDelta: 5, moraleDelta: -1, note: '进入原画高负荷期' }],
-      mustDecide: [{ id: 'd16', projectId: 'p1', label: '角色设计定稿送审', detail: '玩具渠道要求第 20 周前看到设计。', options: ['本周定稿', '延后一周并告知委员会'] }],
-      autoExecuted: ['《夜行电车》脚本返修按方针继续。'],
-      reportOnly: ['声望 +1（《小满》试映口碑）。'],
-      nextFocus: ['原画阶段的工作量是脚本的 2.1 倍。'],
+      mustDecide: [
+        { id: 'd16', projectId: null, kind: 'new_commitment', label: '危机期限内怎么恢复偿付能力', detail: '缺口 ¥316,000（下周强制支出 412,000 − 现金 96,000）。危机期间禁止立项、签外包、招聘和新增项目支出；允许的自救动作见下。', options: ['融资：向冬青社预支第二期合同款', '终止《夜行电车》延期一周并调整人员归属', '推进周数，等第 17 周委员会首期投资 ¥1,300,000 到账'] },
+      ],
+      autoExecuted: ['危机期间制作费不计提，所有项目本周工作量为 0，系统没有自动生产。'],
+      reportOnly: ['周数照常推进：第 16 周 → 第 17 周。', '现金允许暂时为负，负数表示欠付，不自动借款。'],
+      nextFocus: ['第 17 周：委员会首期投资到账即可解除危机。', '第 19 周：危机期限届满仍未覆盖强制费用将进入破产结算。'],
       event: null,
     },
   ],
@@ -271,8 +399,8 @@ export const prototypeData: PrototypeData = {
   ],
 
   relationships: [
-    { id: 'r1', name: '冬青社', kind: 'publisher', since: 6, strength: 72, lastProject: 'p1', note: '《雾港》原作版权方，续作由其引荐' },
-    { id: 'r2', name: '星野周边', kind: 'toy', since: 11, strength: 55, lastProject: 'p1', note: '要求第 20 周前看到角色设计' },
+    { id: 'r1', name: '冬青社', kind: 'publisher', since: 6, strength: 72, lastProject: 'p1', note: '《雾港》原作版权方，续作由其引荐；资金危机期间的融资对象' },
+    { id: 'r2', name: '星野周边', kind: 'toy', since: 11, strength: 55, lastProject: 'p1', note: '要求第 20 周前看到角色设计定稿' },
     { id: 'r3', name: '潮汐唱片', kind: 'music', since: 9, strength: 61, lastProject: 'p3', note: '已连续合作两部，愿意小额跟投' },
     { id: 'r4', name: '第四电视台', kind: 'tv_broadcast', since: 2, strength: 38, lastProject: 'p3', note: '首次合作，档期尚未确认' },
   ],

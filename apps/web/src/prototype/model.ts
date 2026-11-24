@@ -1,7 +1,7 @@
 /* WP10 静态原型：只描述界面要承载的信息，不代表已确认的规则与数值。
-   依据 docs/CORE_GAMEPLAY_REBUILD_FRAMEWORK.md 与 docs/CORE_GAMEPLAY_WORKSTREAM_BREAKDOWN_2026-11-24.md。 */
+   依据 docs/CORE_GAMEPLAY_REBUILD_FRAMEWORK.md 第 5/11/12 节、docs/DECISION_LOG.md 与 docs/blueprints/tv_standard.blueprint.json。 */
 
-export type Stage = 'script' | 'storyboard' | 'key_animation' | 'animation_check' | 'postproduction'
+export type EpisodeStage = 'content_design' | 'storyboard_key_animation' | 'animation' | 'art_visual' | 'photography_editing' | 'sound_delivery'
 export type Role = 'director' | 'scriptwriter' | 'animation_director' | 'key_animator' | 'animator' | 'production_manager' | 'postproduction'
 export type Ability = 'planning' | 'direction' | 'drawing' | 'animation' | 'management' | 'postproduction'
 export type Source = 'manga' | 'light_novel' | 'game' | 'original'
@@ -14,14 +14,17 @@ export type OutsourcePolicy = 'off' | 'gap' | 'active'
 export type RiskLevel = 'low' | 'medium' | 'high'
 export type Mark = 'confirmed' | 'proposal' | 'pending' | 'sample'
 
-export const STAGES: Stage[] = ['script', 'storyboard', 'key_animation', 'animation_check', 'postproduction']
+export const EPISODE_STAGES: EpisodeStage[] = ['content_design', 'storyboard_key_animation', 'animation', 'art_visual', 'photography_editing', 'sound_delivery']
 export const ABILITIES: Ability[] = ['planning', 'direction', 'drawing', 'animation', 'management', 'postproduction']
 
-export const stageNames: Record<Stage, string> = {
-  script: '企划与脚本', storyboard: '分镜与演出', key_animation: '原画制作', animation_check: '动画与作画检查', postproduction: '摄影与后期',
+/* DEC-PROD-002：六阶段属于单集制作，名称与顺序已由负责人冻结；它不是整部作品共用的一条阶段进度。 */
+export const episodeStageNames: Record<EpisodeStage, string> = {
+  content_design: '单集内容设计', storyboard_key_animation: '分镜与原画', animation: '动画制作',
+  art_visual: '美术与视觉制作', photography_editing: '摄影与剪辑', sound_delivery: '声音与最终交付',
 }
-export const stageShortNames: Record<Stage, string> = {
-  script: '脚本', storyboard: '分镜', key_animation: '原画', animation_check: '作画检查', postproduction: '后期',
+export const episodeStageShortNames: Record<EpisodeStage, string> = {
+  content_design: '内容设计', storyboard_key_animation: '分镜与原画', animation: '动画',
+  art_visual: '美术视觉', photography_editing: '摄影剪辑', sound_delivery: '声音交付',
 }
 export const roleNames: Record<Role, string> = {
   director: '导演', scriptwriter: '编剧', animation_director: '作画监督', key_animator: '原画', animator: '动画', production_manager: '制作进行', postproduction: '摄影',
@@ -37,7 +40,7 @@ export const effortNames: Record<Effort, string> = { conservative: '保守', sta
 export const priorityNames: Record<Priority, string> = { quality: '质量', progress: '进度', cost: '成本' }
 export const outsourceNames: Record<OutsourcePolicy, string> = { off: '不主动外包', gap: '按缺口补充', active: '积极外包' }
 export const riskNames: Record<RiskLevel, string> = { low: '低', medium: '中', high: '高' }
-export const markNames: Record<Mark, string> = { confirmed: '已确认', proposal: '设计建议', pending: '待负责人决定', sample: '原型样本' }
+export const markNames: Record<Mark, string> = { confirmed: '已确认', proposal: '设计建议', pending: '待细化参数', sample: '原型样本' }
 
 export interface Company {
   name: string
@@ -47,8 +50,6 @@ export interface Company {
   committedNextWeek: number
   weeklyFixed: { salary: number; operations: number }
   reputation: number
-  managementCapacity: number
-  managementLoad: number
   runwayWeeks: number
   headline: string
 }
@@ -68,10 +69,11 @@ export interface Staff {
   statusNote: string
 }
 
+/* DEC-STAFF-001 / D1：核心员工每周严格归属一个项目，不存在同周支援、借调或拆分工时。 */
 export interface Allocation {
   staffId: string
-  primaryProjectId: string | null
-  supportProjectIds: string[]
+  projectId: string | null
+  previousProjectId: string | null
   focus: Ability
 }
 
@@ -90,7 +92,9 @@ export interface OutsourceTask {
   id: string
   supplierId: string
   projectId: string
-  stage: Stage
+  episodeIndex: number | null
+  stage: EpisodeStage | null
+  itemKey: string
   ability: Ability
   workTotal: number
   workDone: number
@@ -100,16 +104,40 @@ export interface OutsourceTask {
   status: 'active' | 'delivered' | 'at_risk'
 }
 
-export interface StageProgress {
-  status: 'pending' | 'active' | 'completed'
-  workDone: number
+/* 工作项是唯一的生产原子（DEC-PROD-003）。口径与 docs/BLUEPRINT_SPEC.md 一致：
+   1 工作点 = 1/100 人周；deliverAt 是占 workTotal 的千分比门槛；
+   delivered ⇔ workDone × 1000 ≥ deliverAt × workTotal。 */
+export interface WorkItem {
+  key: string
+  name: string
+  stage: EpisodeStage | null
+  ability: Ability
   workTotal: number
-  quality: number
-  qualityFocus: Ability[]
-  weeksPlanned: number
-  weeksActual: number
-  note: string | null
+  workDone: number
+  deliverAt: number
+  isGate: boolean
+  deps: string[]
 }
+
+/* 每集固定六阶段；status 只描述该集整体：
+   min_delivered = 门槛工作项均达最低交付、可由玩家主动交付（DEC-PROD-004）；delivered = 已执行交付。 */
+export interface Episode {
+  index: number
+  title: string
+  status: 'not_started' | 'producing' | 'min_delivered' | 'delivered'
+  targetWeek: number
+  isFocus: boolean
+  workItems: WorkItem[]
+  note: string
+}
+
+export const episodeStatusNames: Record<Episode['status'], string> = {
+  not_started: '未开始', producing: '制作中', min_delivered: '可主动交付', delivered: '已交付',
+}
+
+export const isDelivered = (item: WorkItem) => item.workDone * 1000 >= item.deliverAt * item.workTotal
+export const sumWork = (items: WorkItem[]) => items.reduce((acc, item) => ({ done: acc.done + item.workDone, total: acc.total + item.workTotal }), { done: 0, total: 0 })
+export const itemsByStage = (items: WorkItem[], stage: EpisodeStage) => items.filter((item) => item.stage === stage)
 
 export interface PlanSetting {
   effort: Effort
@@ -161,9 +189,10 @@ export interface Project {
   status: 'producing' | 'ready_to_deliver' | 'wrapping'
   startWeek: number
   deadlineWeek: number
-  currentStage: Stage
-  stages: Record<Stage, StageProgress>
-  completion: number
+  episodeCount: number
+  commonItems: WorkItem[]
+  episodes: Episode[]
+  focusLabel: string | null
   plannedCompletion: number
   quality: number
   audienceExpectation: number
@@ -178,6 +207,14 @@ export interface Project {
   series: { parentTitle: string; relation: string; carried: string } | null
   marks: Mark[]
 }
+
+/* 完成度一律由工作点推导，避免界面数字与实际工作项脱节。 */
+export const projectWork = (project: Project) => sumWork([...project.commonItems, ...project.episodes.flatMap((episode) => episode.workItems)])
+export const projectCompletion = (project: Project) => {
+  const work = projectWork(project)
+  return work.total === 0 ? 0 : Math.round(work.done / work.total * 100)
+}
+export const deliveredEpisodes = (project: Project) => project.episodes.filter((episode) => episode.status === 'delivered').length
 
 export type LedgerCategory = 'contract' | 'investment' | 'commercial' | 'salary' | 'operations' | 'production' | 'temporary' | 'outsourcing' | 'event' | 'extension' | 'penalty' | 'development' | 'distribution'
 
@@ -199,7 +236,9 @@ export const ledgerNames: Record<LedgerCategory, string> = {
 export interface ProjectWeekLine {
   projectId: string
   title: string
-  stage: Stage
+  episodeIndex: number | null
+  stage: EpisodeStage | null
+  itemKey: string | null
   workDelta: number
   qualityDelta: number
   detail: string
@@ -214,9 +253,16 @@ export interface StaffWeekLine {
   note: string
 }
 
+/* DEC-PLAY-002 / D2：只有这几类才允许打断玩家；持续方针与既有资源计划自动执行。 */
+export type DecisionKind = 'reassign' | 'new_outsource' | 'new_commitment' | 'delivery' | 'other'
+export const decisionKindNames: Record<DecisionKind, string> = {
+  reassign: '核心人员重新分配', new_outsource: '新增外包承诺', new_commitment: '新增花钱承诺', delivery: '交付动作', other: '其他',
+}
+
 export interface DecisionItem {
   id: string
   projectId: string | null
+  kind: DecisionKind
   label: string
   detail: string
   options: string[]
@@ -244,8 +290,22 @@ export interface EventCard {
   deadlineWeek: number
 }
 
+/* 三种周状态要有可辨认的操作差异：正常周不打断、事件周处理一次、危机周有倒计时与硬约束。 */
+export type WeekState = 'normal' | 'event_pending' | 'cash_crisis'
+export const weekStateNames: Record<WeekState, string> = { normal: '正常经营', event_pending: '事件待处理', cash_crisis: '限时资金危机' }
+
+export interface CashCrisis {
+  deadlineWeek: number
+  cashAfterSettle: number
+  forcedNextWeek: number
+  waysOut: string[]
+}
+
 export interface WeeklyReceipt {
   week: number
+  state: WeekState
+  stateNote: string
+  crisis: CashCrisis | null
   headline: string
   cashDelta: number
   costLines: { category: LedgerCategory; label: string; amount: number }[]

@@ -3,7 +3,7 @@ import { CompanyOverview } from './CompanyOverview'
 import { WeeklyOperations } from './WeeklyOperations'
 import { WorkDetail } from './WorkDetail'
 import { prototypeData } from './mockData'
-import { scaleNames } from './model'
+import { projectWork, scaleNames } from './model'
 import './prototype.css'
 
 type Screen = 'company' | 'work' | 'week'
@@ -16,15 +16,15 @@ export default function PrototypeApp() {
   const [projectId, setProjectId] = useState(data.projects[0].id)
   const project = data.projects.find((item) => item.id === projectId) ?? data.projects[0]
   const openProject = (id: string) => { setProjectId(id); setScreen('work') }
-  const totalWork = data.projects.reduce((sum, item) => sum + Object.values(item.stages).reduce((acc, stage) => acc + stage.workTotal, 0), 0)
-  const doneWork = data.projects.reduce((sum, item) => sum + Object.values(item.stages).reduce((acc, stage) => acc + stage.workDone, 0), 0)
+  const totalWork = data.projects.reduce((sum, item) => sum + projectWork(item).total, 0)
+  const doneWork = data.projects.reduce((sum, item) => sum + projectWork(item).done, 0)
 
   return <div className="proto-root">
     <header className="proto-top">
       <div className="proto-brand">
         <p className="eyebrow">动画制作委员会 / 静态原型 WP10</p>
         <h1>{data.company.name}<span className="title-period">。</span></h1>
-        <p className="proto-sub">第 {data.company.week} / {data.company.totalWeeks} 周 · {data.projects.length} 部在制 · 总工作量 {doneWork} / {totalWork}</p>
+        <p className="proto-sub">第 {data.company.week} / {data.company.totalWeeks} 周 · {data.projects.length} 部在制 · {data.projects.reduce((sum, item) => sum + item.episodeCount, 0)} 集 · 总工作量 {doneWork} / {totalWork} 工作点</p>
       </div>
       <nav className="proto-nav" aria-label="原型界面切换">
         {(Object.keys(tabNames) as Screen[]).map((item) => <button key={item} className={`nav-tab${screen === item ? ' is-active' : ''}`} onClick={() => setScreen(item)}>{tabNames[item]}</button>)}
@@ -36,7 +36,7 @@ export default function PrototypeApp() {
 
     <footer className="proto-foot">
       <p>本页面是 WP10「UI 信息架构与静态原型」：结构、线框、信息字段与交互层级用于可玩性评审，全部为模拟数据，不读取后端接口、不实现周推进与存档，也不代表玩法参数已冻结。</p>
-      <p className="proto-foot-meta">依据 docs/CORE_GAMEPLAY_REBUILD_FRAMEWORK.md（2026-11-24 重构基线）· 标记含义：已确认 / 设计建议 / 待负责人决定 / 原型样本 · 访问方式 <code>?view=prototype</code></p>
+      <p className="proto-foot-meta">依据 docs/CORE_GAMEPLAY_REBUILD_FRAMEWORK.md、docs/DECISION_LOG.md 与 docs/BLUEPRINT_SPEC.md（2026-11-24 基线）· 标记含义：已确认 / 设计建议 / 待细化参数 / 原型样本 · 访问方式 <code>?view=prototype</code></p>
     </footer>
   </div>
 }
