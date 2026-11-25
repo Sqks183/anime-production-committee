@@ -763,8 +763,11 @@ std::vector<std::string> validate(const GameState& state) {
     if (!state.finance.loans.is_array() || !state.finance.loans.empty()) {
         error("INV-18 当前 finance.loans 必须为空数组");
     }
-    if (state.finance.solvency.state != "normal") {
-        error("INV-18 当前 finance.solvency.state 必须为 normal");
+    if (state.finance.solvency.state != "normal" ||
+        state.finance.solvency.since_week.has_value() ||
+        state.finance.solvency.deadline_week.has_value() ||
+        state.finance.solvency.gap != 0) {
+        error("INV-18 当前 finance.solvency 必须保持 normal/null/null/0");
     }
     if (state.finance.balance < 0) error("INV-25 余额不能为负");
     return errors;
@@ -1606,7 +1609,8 @@ std::string advance_week(const std::string& input) {
         std::sort(ordered_staff.begin(), ordered_staff.end(),
                   [](const Staff* a, const Staff* b) { return a->id < b->id; });
 
-        // ---- 阶段 2：刚性支出原子预检 ----
+        // ---- 阶段 2：刚性支出原子预检（工资 + 运营 + 制作费）----
+        // 预检失败一律整周不提交：不推进、不记账、不生产，按 §14.7 直接破产。
         std::map<std::string, int> assigned_count;
         for (const Staff* member : ordered_staff) {
             if (member->assignment_work_id) ++assigned_count[*member->assignment_work_id];
@@ -1647,7 +1651,7 @@ std::string advance_week(const std::string& input) {
                                                {"events", Json{{"drawn", 0}, {"reason", "bankrupt"}}}}}});
         }
 
-        // ---- 阶段 3：刚性支出扣款与流水 ----
+        // ---- 阶段 3：刚性支出扣款与流水（唯一账本，逐条可归因）----
         auto spend = [&state, week](const std::string& entry_id, std::optional<std::string> work_id,
                                     const char* category, int64_t amount, const std::string& memo) {
             if (amount <= 0) return;

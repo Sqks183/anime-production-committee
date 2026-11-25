@@ -17,6 +17,7 @@
 | 状态形状 | `GameState v4` 的聚合、字段、可空规则 | 高：影响校验器、存档、全部读模型 |
 | 不变式 | INV-01 – INV-29 | 高：每条都要有对应断言 |
 | 命令面 | 23 个命令的输入、守卫、错误码 | 中：影响 UI 与测试 |
+| 回执形状 | 命令返回键与 `advance_week.report` 键树 | 中：UI 按回执渲染（字段级见数据字典 §5） |
 | 错误码 | 16 个稳定码 | 中：UI 按码分支 |
 | 旧版危机白名单 | 仅作为历史记录，不授权当前命令 | 历史契约；当前无危机状态或危机期命令集合 |
 | 存档策略 | v4 信封、版本拒绝、单槽 | 高：影响老存档 |
@@ -70,7 +71,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 
 ## 3. 聚合契约
 
-只列**必填/可空/关键约束**，完整字段语义见架构 §7。
+只列**必填/可空/关键约束**，完整字段语义见架构 §7；字段级展开、实现状态与分歧登记见 [DATA_DICTIONARY_V4.md](DATA_DICTIONARY_V4.md)（#53），字段唯一写入方与跨模块读写矩阵见其 §10。
 
 | 对象 | 必填 | 可空 | 关键约束 |
 | --- | --- | --- | --- |
@@ -78,7 +79,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | `Staff` | id, name, role, employment, abilities, experience, potential, revealed_potential, talent_type, signing_fee, weekly_salary, fatigue, morale, departure_warning, assignment_work_id | last_participation, temporary_contract | core/temp 均使用一次性 signing_fee + weekly_salary>0；不再使用 project_fee；core 的 temporary_contract=null；temp 的 assignment_work_id = 合同项目；公司至少保留 1 名 core |
 | `Project` | id, offer, mode, investment, channels, opened_week, deadline_week, extension, status, supervisor_staff_id, common, episodes, plan | ip_id, committee_id, tv_service, delivery | committee 模式才可有 committee_id；episodes 长度 = offer.episode_count |
 | `CommonProduction` | id, items | — | items 非空 |
-| `EpisodeProduction` | id, index, stages | — | stages 恰 6 个，键固定有序 |
+| `EpisodeProduction` | id, index, stages | — | stages 恰 6 个，顺序固定；实现为 6 元素数组，每元素带 `key`（非 JSON 对象键），见数据字典 §3.4 |
 | `WorkItem` | id, key, ability, work_total, work_done, deliver_at, deps, is_gate, quality, contributors | — | 0 ≤ work_done ≤ work_total；deliver_at ∈ [1,1000] |
 | `WorkPlan` | intensity, focus, outsourcing, overtime, target | — | target 至多一个，引用本项目单集/阶段 |
 | `Supplier` | id, name, specialties, capacity_per_week, quality, speed, price_per_unit, reliability, unlocked_week | — | 目录只增不改 |
@@ -88,7 +89,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | `MarketState` | heat, slots, refresh_week, competitors | custom_offer, proposal, last_competition_round | slots ≤ 10，初始 4；自定/提案为独立槽；Offer 生命周期字段见 §14.13 |
 | `Recruitment` | pool, pity, last_scout_week | — | Staff 唯一持有；pool 候选包装 `{staff, expires_week, origin}`；详见 §14.13 |
 | `Finance` | opening_funds, balance, entries, loans, solvency | — | balance = opening + Σentries ≥ 0；当前 `loans=[]`、`solvency.state="normal"`；两字段仅作后续更新预留，不授权危机或融资 |
-| `EventState` | pending[], last_event_week, per_work | pending 数组可为空 | 每条待处理事件带 work_id/event_id/triggered_week；pending 中每项目至多一条；不同项目可同周各有事件；last_event_week 不得充当全局单槽 |
+| `EventState` | pending[], last_event_week, per_work | pending 数组可为空 | 每条待处理事件带 work_id/event_id/triggered_week/viewed；viewed 缺失即非法输入，不静默当未查看（§14.12）；pending 中每项目至多一条；不同项目可同周各有事件；last_event_week 不得充当全局单槽 |
 | `Archive` | works, series | company_result | 只追加 |
 
 ---
@@ -133,7 +134,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 
 命令是**用例级**的：每个命令独立 schema、独立守卫、独立错误码，不存在"万能 decision 联合类型"。
 
-23 个现行命令，下表每行一个命令。旧版 `arrange_financing` 不属于当前 v4 命令面；命令 22 `view_event` 由 #50 追加，语义见 §14.12；命令 23 `lock_offer` 的 Q4 语义见 §14.13。
+23 个现行命令，每行一条命令。旧版 `arrange_financing` 不属于当前 v4 命令面；命令 22 `view_event` 由 #50 追加，语义见 §14.12；命令 23 `lock_offer` 的 Q4 语义见 §14.13。命令的入口实现状态、输入必填与回执键见 [DATA_DICTIONARY_V4.md](DATA_DICTIONARY_V4.md) §4/§5（#53）。
 
 | # | 命令 | 关键守卫 | 主要失败码 | 原子范围 |
 | --- | --- | --- | --- | --- |
@@ -189,15 +190,17 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | `INTERNAL_ERROR` | 内部异常 | 未预期 | 是（一次） | 记录上下文 |
 | `STAGE_LOCKED` | **已废弃**，v4 不再产生 | — | — | 保留字符串占位，禁止复用 |
 
+**产生层**：`SAVE_VERSION_UNSUPPORTED` 与 `SAVE_CORRUPT` 由**存储层**（前端存档读写，§8.2）产生；v4 核心在收到结构非法的状态时返回 `INVALID_INPUT`（缺字段/类型不符）或 `INVALID_STATE`（不变式被破坏），不代管存档版本判定。当前核心实际产出的码、各命令的错误码分布见 [DATA_DICTIONARY_V4.md](DATA_DICTIONARY_V4.md) §4/§6。
+
 ---
 
 ## 7. 危机期白名单
 
-历史规则，已由 §14.7 覆盖；不得实现危机周推进、负现金欠付或危机救济窗口。
+历史规则，已由 §14.7 覆盖；不得实现危机周推进、负现金欠付或危机救济窗口。本节历史白名单不再授权危机周推进、负现金欠付或额外救济窗口；当前资金预检失败语义以 §14.2、§14.7 为准。
 
 | 动作 | 危机中 | 理由 |
 | --- | --- | --- |
-| `arrange_financing` | ✅ 允许 | 唯一被允许的新增资金动作 |
+| `arrange_financing` | ✅ 允许 | 旧版命令，已不属于当前 v4 命令面（§14.6）；本行仅作历史记录 |
 | `dismiss_staff` | ✅ 允许 | 减少承诺 |
 | `abort_work` | ✅ 允许 | 减少承诺 |
 | `set_work_plan` | ✅ 允许 | 不产生支出，只调优先级 |
@@ -337,8 +340,6 @@ npm run validate:handover
 
 ---
 
-**本节历史白名单不再授权危机周推进、负现金欠付或额外救济窗口。当前资金预检失败语义以 §14.2、§14.7 为准。**
-
 ## 12. M0 完成判定
 
 | 交付 | 状态 | 证据 |
@@ -403,6 +404,14 @@ B–D 级变更，以及任何可能影响已确认玩法的 A 级修复，PR/Is
 ### 13.5 不需要重新冻结 M0 的事项
 
 纯文案、内容新增、数值标定、内部函数拆分，以及不改变既有契约的实现修复，不需要重新召开 M0 冻结；仍须遵守普通 PR、测试和文档要求。读模型字段扩展通常属于 B 级，不得因其“不在 GameState”而忽略对 UI/调用方的兼容影响。
+
+---
+
+## 附记：与 v3 的关系（历史参照）
+
+v3 的单项目、五阶段、全局 phase、单事件槽、双份财务汇总全部废止（见架构 §19.2 C1–C13）。v3 代码与文档保留为历史与迁移参照，**不得**作为 v4 的实现起点。
+
+本文件不宣称 v3 行为正确，也不为其提供兼容层。
 
 ---
 
