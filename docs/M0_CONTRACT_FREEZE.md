@@ -70,7 +70,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 
 ## 3. 聚合契约
 
-只列**必填/可空/关键约束**，完整字段语义见架构 §7；字段级展开、实现状态与分歧登记见 [DATA_DICTIONARY_V4.md](DATA_DICTIONARY_V4.md)（#53）。
+只列**必填/可空/关键约束**，完整字段语义见架构 §7；字段级展开、实现状态与分歧登记见 [DATA_DICTIONARY_V4.md](DATA_DICTIONARY_V4.md)（#53），字段唯一写入方与跨模块读写矩阵见其 §10。
 
 | 对象 | 必填 | 可空 | 关键约束 |
 | --- | --- | --- | --- |
