@@ -97,7 +97,7 @@
 
 ## 7. 测试
 
-`scripts/v4.test.mjs` 共 49 条；本轮与商业/关闭路径相关的关键用例：
+`scripts/v4.test.mjs` 共 50 条；本轮与商业/关闭路径相关的关键用例：
 
 1. 到期强制交付：未达门槛在结算周自动交付，`deadline`、按完成度扣罚、归档并移除项目；
 2. 到期交付：门槛达成按 `completed` 正常计价，不扣罚；
@@ -110,7 +110,7 @@
 9. M1 输入边界：Staff 报酬字段与 `solvency.state` 缺失返回 `INVALID_INPUT`；
 10. §14.7 预检失败：整周回滚、不扣款、直接 closing/bankrupt。
 
-本机无 Emscripten，`npm run test:v4` 未跑；同一份测试正文用 MSVC 19.51 原生 CLI 执行 **49/49**。
+本机无 Emscripten，`npm run test:v4` 未跑；同一份测试正文用 MSVC 19.51 原生 CLI 执行 **50/50**。
 
 ## 8. 里程碑判定（如实）
 
