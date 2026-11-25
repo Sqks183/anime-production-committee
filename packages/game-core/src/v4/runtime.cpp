@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "apc/v4/blueprint.hpp"
 #include "apc/v4/event.hpp"
 #include "apc/v4/kernel.hpp"
 
@@ -28,6 +29,16 @@ Json error_body(const char* code, const std::string& message) { return Json{{"er
 std::string encode(const Json& value) { return value.dump(); }
 
 int clamp_int(int value, int low, int high) { return std::max(low, std::min(high, value)); }
+
+bool one_of_text(const std::string& value, std::initializer_list<const char*> allowed) {
+    for (const char* candidate : allowed) {
+        if (value == candidate) return true;
+    }
+    return false;
+}
+
+// 前向声明：validate() 在辅助函数定义之前使用。
+const Json* find_partner(const GameState& state, const std::string& partner_id);
 
 std::uint64_t fnv1a64(const std::string& text) {
     std::uint64_t hash = 1469598103934665603ULL;
@@ -372,6 +383,24 @@ std::vector<std::string> validate(const GameState& state) {
             if (!valid) error("INV-01 plan.target 未指向本项目单集或合法阶段: " + work.id);
         }
 
+        // 合作模式与投资一致性（M0 §7.4）
+        if (work.mode != "contract" && work.mode != "committee") error("INV-01 project.mode 非法: " + work.id);
+        if (work.deadline_week <= work.opened_week) error("INV-01 deadline_week 必须晚于 opened_week: " + work.id);
+        // 内部 instantiate_work 夹具没有 offer/channels；真实立项（start_work）必须有渠道。
+        if (!work.offer.is_null() && work.channels.empty()) error("INV-01 project.channels 不能为空: " + work.id);
+        const int percent = work.investment.value("percent", 0);
+        if (work.mode == "contract") {
+            if (work.committee_id) error("INV-01 承制项目不能有 committee_id: " + work.id);
+            if (percent != 0 || work.investment.value("paid", static_cast<std::int64_t>(0)) != 0) {
+                error("INV-01 承制项目投资必须为 0: " + work.id);
+            }
+        } else {
+            if (!work.committee_id) error("INV-01 委员会项目必须有 committee_id: " + work.id);
+            if (percent < 10 || percent > 100 || percent % 10 != 0) {
+                error("INV-01 委员会投资比例必须是 10..100 的十位整数: " + work.id);
+            }
+        }
+
         // 依赖引用与环
         walk_items(work, [&item_ids, &error](const WorkItem& item) {
             for (const auto& dep : item.deps) {
@@ -390,6 +419,113 @@ std::vector<std::string> validate(const GameState& state) {
             error("INV-09 assignment_work_id 指向不存在的项目: " + member.id);
         } else if (assigned->status != "producing") {
             error("INV-09 assignment_work_id 必须指向 producing 项目: " + member.id);
+        }
+    }
+
+    // 伙伴：渠道唯一、关系值范围、状态合法
+    for (const auto& partner : state.partners) {
+        if (!partner.is_object()) { error("INV-01 partner 必须是对象"); continue; }
+        const std::string id = partner.value("id", std::string{});
+        claim_id(id, "partner");
+        if (partner.value("name", std::string{}).empty()) error("INV-01 partner.name 缺失: " + id);
+        if (!one_of_text(partner.value("type", std::string{}), {"tv", "publisher", "toy", "music", "streaming", "studio"})) {
+            error("INV-01 partner.type 非法: " + id);
+        }
+        if (!partner.contains("channels") || !partner.at("channels").is_array() || partner.at("channels").empty()) {
+            error("INV-01 partner.channels 必须非空: " + id);
+        } else {
+            std::set<std::string> channels;
+            for (const auto& channel : partner.at("channels")) {
+                if (!channel.is_string() || !channels.insert(channel.get<std::string>()).second) {
+                    error("INV-01 partner.channels 重复或非法: " + id);
+                }
+            }
+        }
+        const int relationship = partner.value("relationship", 50);
+        if (relationship < 0 || relationship > 100) error("INV-01 partner.relationship 越界: " + id);
+        if (!one_of_text(partner.value("status", std::string{"known"}), {"known", "unavailable"})) {
+            error("INV-01 partner.status 非法: " + id);
+        }
+    }
+
+    // 委员会：成员/渠道不重复、活跃委员会必须指向在制项目
+    for (const auto& committee : state.committees) {
+        if (!committee.is_object()) { error("INV-01 committee 必须是对象"); continue; }
+        const std::string id = committee.value("id", std::string{});
+        claim_id(id, "committee");
+        const std::string work_id = committee.value("work_id", std::string{});
+        if (work_id.empty()) error("INV-01 committee.work_id 缺失: " + id);
+        if (!committee.contains("members") || !committee.at("members").is_array() || committee.at("members").empty()) {
+            error("INV-01 committee.members 必须非空: " + id);
+        } else {
+            std::set<std::string> partners;
+            std::set<std::string> channels;
+            for (const auto& member : committee.at("members")) {
+                const std::string partner_id = member.value("partner_id", std::string{});
+                const std::string channel = member.value("channel", std::string{});
+                if (!partners.insert(partner_id).second) error("INV-01 委员会成员重复: " + id);
+                if (!channels.insert(channel).second) error("INV-01 委员会渠道重复: " + id);
+                if (find_partner(state, partner_id) == nullptr) error("INV-01 委员会成员不存在: " + partner_id);
+            }
+        }
+        const std::string status = committee.value("status", std::string{"active"});
+        if (status != "active" && status != "closed") error("INV-01 committee.status 非法: " + id);
+        if (status == "active" && find_work(state, work_id) == nullptr) {
+            error("INV-01 活跃委员会的项目不存在: " + work_id);
+        }
+        const int formed = committee.value("formed_week", 0);
+        if (formed < 0 || formed > state.company.week) error("INV-01 committee.formed_week 越界: " + id);
+        if (committee.contains("closed_week") && committee.at("closed_week").is_number_integer()) {
+            const int closed = committee.at("closed_week").get<int>();
+            if (closed < formed) error("INV-01 committee.closed_week 早于成立周: " + id);
+        }
+    }
+
+    // 市场：槽位上限、企划必填字段
+    if (!state.market.is_object()) {
+        error("INV-01 market 必须是对象");
+    } else {
+        if (state.market.contains("slots")) {
+            if (!state.market.at("slots").is_array()) error("INV-01 market.slots 必须是数组");
+            else if (state.market.at("slots").size() > 4) error("INV-01 market.slots 最多 4 个");
+            else {
+                for (const auto& offer : state.market.at("slots")) {
+                    const std::string offer_id = offer.value("id", std::string{});
+                    claim_id(offer_id, "offer");
+                    if (offer.value("contract_budget", static_cast<std::int64_t>(0)) <= 0) {
+                        error("INV-01 offer.contract_budget 必须为正: " + offer_id);
+                    }
+                    if (offer.value("duration_weeks", 0) <= 0) error("INV-01 offer.duration_weeks 必须为正: " + offer_id);
+                    if (offer.value("blueprint_id", std::string{}).empty()) error("INV-01 offer.blueprint_id 缺失: " + offer_id);
+                    if (!offer.contains("channels_baseline") || offer.at("channels_baseline").empty()) {
+                        error("INV-01 offer.channels_baseline 不能为空: " + offer_id);
+                    }
+                    if (!offer.contains("allowed_modes") || offer.at("allowed_modes").empty()) {
+                        error("INV-01 offer.allowed_modes 不能为空: " + offer_id);
+                    }
+                }
+            }
+        }
+        if (state.market.contains("heat") && state.market.at("heat").is_object()) {
+            for (const auto& [genre, value] : state.market.at("heat").items()) {
+                const std::string level = value.value("level", std::string{});
+                if (!one_of_text(level, {"boom", "high", "mid", "low"})) error("INV-01 market.heat 档位非法: " + genre);
+            }
+        }
+    }
+
+    // Archive：只追加，记录 id/评级/结束周必须完整
+    if (!state.archive.is_object() || !state.archive.contains("works") || !state.archive.at("works").is_array()) {
+        error("INV-01 archive.works 必须是数组");
+    } else {
+        for (const auto& record : state.archive.at("works")) {
+            const std::string record_id = record.value("id", std::string{});
+            claim_id(record_id, "archive");
+            if (!one_of_text(record.value("rating", std::string{}), {"S", "A", "B", "C", "D"})) {
+                error("INV-01 archive.rating 非法: " + record_id);
+            }
+            const int end_week = record.value("end_week", -1);
+            if (end_week < 0 || end_week > state.company.week) error("INV-01 archive.end_week 越界: " + record_id);
         }
     }
 
@@ -481,6 +617,151 @@ std::string state_hash(const GameState& state) {
 }
 
 // ---------------- 命令 ----------------
+
+namespace {
+
+// M2 固定 fixture：企划槽与合作伙伴。M3 的市场刷新/竞争会替换这里的来源，
+// 但字段形状与 start_work 的消费方式保持不变。
+Json make_partner(const char* id, const char* name, const char* type, const char* channel, int prestige) {
+    return Json{{"id", id},
+                {"name", name},
+                {"type", type},
+                {"channels", Json::array({channel})},
+                {"prestige", prestige},
+                {"relationship", 50},
+                {"history", Json::array()},
+                {"status", "known"}};
+}
+
+Json make_offer(const char* id, const char* name, const char* source, const char* genre, int budget, int weeks,
+                int target_quality, int audience, int commercial, Json potentials, Json channels, Json modes,
+                Json candidates) {
+    return Json{{"id", id},
+                {"name", name},
+                {"source", source},
+                {"genre", genre},
+                {"scale", "tv"},
+                {"contract_budget", budget},
+                {"duration_weeks", weeks},
+                {"target_quality", target_quality},
+                {"audience_base", audience},
+                {"commercial_potential", commercial},
+                {"channel_potentials", std::move(potentials)},
+                {"channels_baseline", std::move(channels)},
+                {"allowed_modes", std::move(modes)},
+                {"committee_candidates", std::move(candidates)},
+                {"min_reputation", 0},
+                {"required_works", Json::array()},
+                {"blueprint_id", "tv_standard"},
+                {"episode_count", 12},
+                {"workload_scale_permille", 1000},
+                {"origin", "publisher"},
+                {"style", "standard"}};
+}
+
+Json initial_market() {
+    Json slots = Json::array();
+    slots.push_back(make_offer("offer_01", "星海邮差", "publisher", "sf", 1200000, 26, 70, 600, 700,
+                               Json{{"tv", 3600000}, {"streaming", 1800000}}, Json::array({"tv"}),
+                               Json::array({"contract", "committee"}), Json::array({"partner_tv", "partner_stream"})));
+    slots.push_back(make_offer("offer_02", "雨夜食堂", "publisher", "drama", 900000, 24, 65, 520, 620,
+                               Json{{"tv", 2400000}, {"streaming", 2000000}}, Json::array({"streaming"}),
+                               Json::array({"contract", "committee"}), Json::array({"partner_stream", "partner_pub"})));
+    slots.push_back(make_offer("offer_03", "机甲夏令营", "studio", "family", 1500000, 30, 75, 700, 760,
+                               Json{{"tv", 4200000}, {"publishing", 1200000}}, Json::array({"tv", "publishing"}),
+                               Json::array({"committee"}), Json::array({"partner_tv", "partner_pub"})));
+    slots.push_back(make_offer("offer_04", "无声的告白", "publisher", "romance", 700000, 20, 60, 420, 520,
+                               Json{{"streaming", 1600000}, {"publishing", 600000}}, Json::array({"streaming"}),
+                               Json::array({"contract", "committee"}), Json::array({"partner_stream"})));
+    return Json{{"heat", Json{{"sf", Json{{"level", "high"}, {"changed_week", 0}}},
+                              {"drama", Json{{"level", "mid"}, {"changed_week", 0}}},
+                              {"family", Json{{"level", "mid"}, {"changed_week", 0}}},
+                              {"romance", Json{{"level", "low"}, {"changed_week", 0}}}}},
+                {"slots", slots},
+                {"custom_offer", nullptr},
+                {"proposal", nullptr},
+                {"refresh_week", 0},
+                {"last_competition_round", 0},
+                {"competitors", Json::array()}};
+}
+
+const Json* find_offer(const GameState& state, const std::string& offer_id) {
+    if (!state.market.is_object()) return nullptr;
+    const auto scan = [&offer_id](const Json& value) -> const Json* {
+        if (value.is_object() && value.value("id", std::string{}) == offer_id) return &value;
+        return nullptr;
+    };
+    if (state.market.contains("slots") && state.market.at("slots").is_array()) {
+        for (const auto& slot : state.market.at("slots")) {
+            if (const Json* hit = scan(slot)) return hit;
+        }
+    }
+    for (const char* key : {"custom_offer", "proposal"}) {
+        if (!state.market.contains(key) || !state.market.at(key).is_object()) continue;
+        if (const Json* hit = scan(state.market.at(key))) return hit;
+    }
+    return nullptr;
+}
+
+const Json* find_partner(const GameState& state, const std::string& partner_id) {
+    for (const auto& partner : state.partners) {
+        if (partner.is_object() && partner.value("id", std::string{}) == partner_id) return &partner;
+    }
+    return nullptr;
+}
+
+std::string next_id(const GameState& state, const char* prefix, int existing) {
+    int index = existing + 1;
+    while (true) {
+        char buffer[48];
+        std::snprintf(buffer, sizeof(buffer), "%s%02d", prefix, index);
+        const std::string candidate = buffer;
+        bool used = false;
+        for (const auto& work : state.works) used = used || work.id == candidate;
+        if (state.archive.is_object() && state.archive.contains("works") && state.archive.at("works").is_array()) {
+            for (const auto& record : state.archive.at("works")) {
+                used = used || record.value("id", std::string{}) == candidate;
+            }
+        }
+        if (!used) return candidate;
+        ++index;
+    }
+}
+
+int heat_factor(const Json& market, const std::string& genre) {
+    if (!market.is_object() || !market.contains("heat") || !market.at("heat").is_object()) return 1000;
+    const auto& heat = market.at("heat");
+    if (!heat.contains(genre) || !heat.at(genre).is_object()) return 1000;
+    const std::string level = heat.at(genre).value("level", std::string("mid"));
+    if (level == "boom") return 1200;
+    if (level == "high") return 1100;
+    if (level == "low") return 900;
+    return 1000;
+}
+
+int reputation_factor(std::int64_t reputation) {
+    return std::clamp(800 + static_cast<int>(reputation) * 2, 800, 1400);
+}
+
+int quality_factor(int mean) { return std::clamp(200 + mean * 8, 200, 1000); }
+
+std::string rating_of(int mean) {
+    if (mean >= 85) return "S";
+    if (mean >= 75) return "A";
+    if (mean >= 60) return "B";
+    if (mean >= 45) return "C";
+    return "D";
+}
+
+void change_reputation(GameState& state, int delta, const std::string& reason) {
+    if (delta == 0) return;
+    state.company.reputation = std::max<std::int64_t>(0, state.company.reputation + delta);
+    state.company.reputation_log.push_back(
+        ReputationLog{state.company.week, reason, delta, state.company.reputation});
+}
+
+}  // namespace
+
 std::string initialize(const std::string& input) {
     try {
         const Json request = Json::parse(input);
@@ -525,9 +806,12 @@ std::string initialize(const std::string& input) {
         state.staff.push_back(make_staff("staff_ka", "陈原画", "key_animator", {45, 55, 85, 60, 40, 45}));
         state.staff.push_back(make_staff("staff_anim", "许动画", "animator", {40, 45, 60, 75, 40, 50}));
 
+        state.partners = Json::array({make_partner("partner_tv", "东都电视台", "tv", "tv", 65),
+                                      make_partner("partner_stream", "海流配信", "streaming", "streaming", 55),
+                                      make_partner("partner_pub", "白鹭出版", "publisher", "publishing", 45)});
         state.finance.opening_funds = 2000000;
         state.finance.balance = 2000000;
-        state.market = Json::object();
+        state.market = initial_market();
         state.events = EventState{};
         state.archive = Json{{"works", Json::array()}, {"series", Json::array()}, {"company_result", nullptr}};
 
@@ -894,6 +1178,460 @@ std::string advance_week(const std::string& input) {
 }
 
 // M0 契约名适配：薄封装，避免测试入口被误当成正式命令。
+
+std::string start_work(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
+        if (state.finance.solvency.state == "crisis") {
+            return encode(error_body("CRISIS_COMMITMENT_BLOCKED", "资金危机期间不能立项"));
+        }
+        if (!request.contains("offer_id") || !request.at("offer_id").is_string()) {
+            return encode(error_body("INVALID_INPUT", "offer_id 必须是字符串"));
+        }
+        if (!request.contains("mode") || !request.at("mode").is_string()) {
+            return encode(error_body("INVALID_INPUT", "mode 必须是 contract/committee"));
+        }
+        const std::string offer_id = request.at("offer_id").get<std::string>();
+        const std::string mode = request.at("mode").get<std::string>();
+        if (mode != "contract" && mode != "committee") {
+            return encode(error_body("INVALID_INPUT", "mode 只能是 contract/committee"));
+        }
+
+        const Json* offer = find_offer(state, offer_id);
+        if (offer == nullptr) return encode(error_body("NOT_FOUND", "企划不存在或已被消费"));
+        const Json& snapshot = *offer;
+        const int min_reputation = snapshot.value("min_reputation", 0);
+        if (state.company.reputation < min_reputation) {
+            return encode(error_body("MODE_NOT_ALLOWED", "声望不足，无法接取该企划"));
+        }
+        const auto& allowed = snapshot.at("allowed_modes");
+        bool mode_allowed = false;
+        for (const auto& item : allowed) {
+            if (item.is_string() && item.get<std::string>() == mode) mode_allowed = true;
+        }
+        if (!mode_allowed) return encode(error_body("MODE_NOT_ALLOWED", "该企划不支持此合作模式"));
+
+        int percent = 0;
+        if (mode == "committee") {
+            if (!request.contains("percent") || !request.at("percent").is_number_integer()) {
+                return encode(error_body("INVALID_INPUT", "委员会模式必须给出 percent"));
+            }
+            percent = request.at("percent").get<int>();
+            if (percent < 10 || percent > 100 || percent % 10 != 0) {
+                return encode(error_body("INVALID_INPUT", "percent 必须是 10..100 的十位整数"));
+            }
+        } else if (request.contains("percent") && !request.at("percent").is_null() &&
+                   request.at("percent").get<int>() != 0) {
+            return encode(error_body("INVALID_INPUT", "承制模式不能设置投资比例"));
+        }
+
+        std::vector<std::string> committee_ids;
+        if (request.contains("committee_partner_ids") && !request.at("committee_partner_ids").is_null()) {
+            if (!request.at("committee_partner_ids").is_array()) {
+                return encode(error_body("INVALID_INPUT", "committee_partner_ids 必须是数组"));
+            }
+            for (const auto& id : request.at("committee_partner_ids")) {
+                if (!id.is_string()) return encode(error_body("INVALID_INPUT", "committee_partner_ids 只能包含字符串"));
+                committee_ids.push_back(id.get<std::string>());
+            }
+        }
+        if (mode == "contract" && !committee_ids.empty()) {
+            return encode(error_body("INVALID_INPUT", "承制模式不需要委员会成员"));
+        }
+        if (mode == "committee" && committee_ids.empty()) {
+            return encode(error_body("INVALID_INPUT", "委员会模式至少需要一名成员"));
+        }
+
+        // 委员会成员：不重复、渠道不重复、必须是已知伙伴
+        std::vector<std::pair<std::string, std::string>> members;
+        std::set<std::string> member_ids;
+        std::set<std::string> member_channels;
+        for (const auto& id : committee_ids) {
+            if (!member_ids.insert(id).second) return encode(error_body("INVALID_INPUT", "委员会成员重复"));
+            const Json* partner = find_partner(state, id);
+            if (partner == nullptr) return encode(error_body("NOT_FOUND", "委员会成员不存在: " + id));
+            if (partner->value("status", std::string("known")) != "known") {
+                return encode(error_body("MODE_NOT_ALLOWED", "该伙伴当前不可合作: " + id));
+            }
+            if (!partner->contains("channels") || !partner->at("channels").is_array() ||
+                partner->at("channels").empty()) {
+                return encode(error_body("INVALID_STATE", "伙伴缺少渠道: " + id));
+            }
+            const std::string channel = partner->at("channels").at(0).get<std::string>();
+            if (!member_channels.insert(channel).second) {
+                return encode(error_body("INVALID_INPUT", "同一渠道不能重复进入委员会"));
+            }
+            members.emplace_back(id, channel);
+        }
+
+        const std::int64_t budget = snapshot.value("contract_budget", static_cast<std::int64_t>(0));
+        const int duration = snapshot.value("duration_weeks", 0);
+        const std::string blueprint_id = snapshot.value("blueprint_id", std::string{});
+        const Json* blueprint = blueprint::find(blueprint_id);
+        if (blueprint == nullptr) return encode(error_body("NOT_FOUND", "蓝图不存在: " + blueprint_id));
+        const int episode_count = snapshot.value("episode_count", 0);
+        if (episode_count != blueprint->value("episode_count", 0)) {
+            return encode(error_body("INVALID_INPUT", "企划单集数与蓝图不一致"));
+        }
+
+        const std::int64_t total_investment = mode == "committee" ? budget * 2 : 0;
+        const std::int64_t paid = total_investment * percent / 100;
+        if (state.finance.balance < paid) {
+            return encode(Json{{"error", {{"code", "INSUFFICIENT_FUNDS"},
+                                          {"message", "现金不足以支付投资额"},
+                                          {"gap", paid - state.finance.balance}}}});
+        }
+
+        const int week = state.company.week;
+        const std::string work_id = next_id(state, "work_", static_cast<int>(state.works.size()));
+        Project work;
+        std::string error;
+        if (!instantiate(*blueprint, work_id, week, duration, work, error)) {
+            return encode(error_body("INVALID_INPUT", error));
+        }
+        const int scale = snapshot.value("workload_scale_permille", 1000);
+        if (scale != 1000) {
+            for_each_item(work, [scale](WorkItem& item, const std::string&, const std::string&) {
+                item.work_total = std::max(1, (item.work_total * scale + 999) / 1000);
+            });
+        }
+        work.offer = snapshot;
+        work.mode = mode;
+        work.channels.clear();
+        for (const auto& channel : snapshot.at("channels_baseline")) {
+            if (channel.is_string()) work.channels.push_back(channel.get<std::string>());
+        }
+        work.investment = Json{{"percent", percent}, {"total", total_investment}, {"paid", paid}};
+        work.opened_week = week;
+        work.deadline_week = week + std::max(duration, 1);
+        work.status = "producing";
+
+        std::string committee_id;
+        if (mode == "committee") {
+            committee_id = next_id(state, "committee_", static_cast<int>(state.committees.size()));
+            Json member_json = Json::array();
+            for (const auto& [partner_id, channel] : members) {
+                member_json.push_back(Json{{"partner_id", partner_id}, {"channel", channel}});
+            }
+            state.committees.push_back(Json{{"id", committee_id},
+                                            {"work_id", work_id},
+                                            {"members", member_json},
+                                            {"formed_week", week},
+                                            {"status", "active"},
+                                            {"closed_week", nullptr}});
+            work.committee_id = committee_id;
+        }
+        state.works.push_back(std::move(work));
+
+        // 立项两笔账：合同预算入账；委员会模式下同时支付投资份额。
+        if (budget > 0) {
+            state.finance.entries.push_back(LedgerEntry{
+                "w" + std::to_string(week) + ".contract." + work_id, week, work_id, "contract_received",
+                budget, std::nullopt, offer_id});
+            state.finance.balance += budget;
+        }
+        if (paid > 0) {
+            state.finance.entries.push_back(LedgerEntry{
+                "w" + std::to_string(week) + ".investment." + work_id, week, work_id, "investment_paid",
+                -paid, committee_id.empty() ? std::nullopt : std::optional<std::string>(committee_id), offer_id});
+            state.finance.balance -= paid;
+        }
+
+        // 消费企划
+        if (state.market.contains("slots") && state.market.at("slots").is_array()) {
+            Json remaining = Json::array();
+            for (const auto& slot : state.market.at("slots")) {
+                if (slot.is_object() && slot.value("id", std::string{}) == offer_id) continue;
+                remaining.push_back(slot);
+            }
+            state.market["slots"] = std::move(remaining);
+        }
+        for (const char* key : {"custom_offer", "proposal"}) {
+            if (state.market.contains(key) && state.market.at(key).is_object() &&
+                state.market.at(key).value("id", std::string{}) == offer_id) {
+                state.market[key] = nullptr;
+            }
+        }
+
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "立项后状态非法: " + errors.front()));
+        return encode(Json{{"state", state}, {"work_id", work_id},
+                           {"committee_id", committee_id.empty() ? Json(nullptr) : Json(committee_id)}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
+std::string deliver_work(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        if (state.company.status == "ended") return encode(error_body("COMPANY_ENDED", "公司已结束"));
+        if (!request.contains("work_id") || !request.at("work_id").is_string()) {
+            return encode(error_body("INVALID_INPUT", "work_id 必须是字符串"));
+        }
+        const std::string work_id = request.at("work_id").get<std::string>();
+        Project* work = find_work(state, work_id);
+        if (work == nullptr) return encode(error_body("NOT_FOUND", "项目不存在"));
+        if (work->status != "producing") return encode(error_body("INVALID_PHASE", "只有 producing 项目可以交付"));
+        if (state.company.week > work->deadline_week) {
+            return encode(error_body("INVALID_PHASE", "已过截止，需走强制交付（M2.5 未实现）"));
+        }
+
+        std::vector<std::string> unmet;
+        for_each_item(*work, [&unmet](const WorkItem& item, const std::string&, const std::string&) {
+            if (item.is_gate && !item.delivered()) unmet.push_back(item.id);
+        });
+        if (!unmet.empty()) {
+            std::string detail;
+            for (std::size_t i = 0; i < unmet.size() && i < 3; ++i) {
+                if (!detail.empty()) detail += ", ";
+                detail += unmet[i];
+            }
+            return encode(Json{{"error", {{"code", "GATE_UNMET"},
+                                          {"message", "门槛项未交付: " + detail},
+                                          {"items", unmet}}}});
+        }
+
+        const int week = state.company.week;
+        const auto quality = kernel::aggregate_work(*work);
+        const int score = quality.mean;
+        const std::string rating = rating_of(score);
+        const int64_t budget = work->offer.value("contract_budget", static_cast<std::int64_t>(0));
+        const std::string genre = work->offer.value("genre", std::string{});
+        const int qf = quality_factor(score);
+        const int hf = heat_factor(state.market, genre);
+        const int rf = reputation_factor(state.company.reputation);
+
+        std::vector<std::string> channels = work->channels;
+        const auto add_channel = [&channels](const std::string& channel) {
+            if (std::find(channels.begin(), channels.end(), channel) == channels.end()) channels.push_back(channel);
+        };
+        if (work->committee_id) {
+            for (const auto& committee : state.committees) {
+                if (!committee.is_object() || committee.value("id", std::string{}) != *work->committee_id) continue;
+                for (const auto& member : committee.at("members")) {
+                    if (member.is_object() && member.contains("channel")) add_channel(member.at("channel").get<std::string>());
+                }
+            }
+        }
+        if (work->tv_service.is_object() && work->tv_service.contains("channel")) {
+            add_channel(work->tv_service.at("channel").get<std::string>());
+        }
+
+        Json channel_report = Json::array();
+        std::int64_t gross_total = 0;
+        for (const auto& channel : channels) {
+            int64_t potential = 0;
+            if (work->offer.contains("channel_potentials") && work->offer.at("channel_potentials").is_object() &&
+                work->offer.at("channel_potentials").contains(channel) &&
+                work->offer.at("channel_potentials").at(channel).is_number_integer()) {
+                potential = work->offer.at("channel_potentials").at(channel).get<std::int64_t>();
+            }
+            int64_t gross = potential;
+            gross = gross * qf / 1000;
+            gross = gross * hf / 1000;
+            gross = gross * rf / 1000;
+            gross_total += gross;
+            channel_report.push_back(Json{{"channel", channel},
+                                          {"potential", potential},
+                                          {"quality_factor", qf},
+                                          {"heat_factor", hf},
+                                          {"reputation_factor", rf},
+                                          {"gross", gross}});
+        }
+
+        const int percent = work->investment.value("percent", 0);
+        std::int64_t company_share = 0;
+        std::int64_t reward = 0;
+        if (work->mode == "committee") {
+            company_share = gross_total * percent / 100;
+        } else if (gross_total >= budget) {
+            reward = budget * 200 / 1000;   // [PLACEHOLDER] 承制成功奖励 20%
+        }
+
+        if (company_share > 0) {
+            state.finance.entries.push_back(LedgerEntry{
+                "w" + std::to_string(week) + ".commercial." + work_id, week, work_id, "commercial_share_received",
+                company_share, work->committee_id, "channel settlement"});
+            state.finance.balance += company_share;
+        }
+        if (reward > 0) {
+            state.finance.entries.push_back(LedgerEntry{
+                "w" + std::to_string(week) + ".reward." + work_id, week, work_id, "success_reward_received",
+                reward, std::nullopt, "contract success reward"});
+            state.finance.balance += reward;
+        }
+
+        static const std::map<std::string, int> kReputationDelta{{"S", 8}, {"A", 5}, {"B", 2}, {"C", 0}, {"D", -5}};
+        change_reputation(state, kReputationDelta.at(rating), "作品交付 " + rating);
+
+        // 委员会关闭 + 伙伴关系沉淀
+        if (work->committee_id) {
+            for (auto& committee : state.committees) {
+                if (!committee.is_object() || committee.value("id", std::string{}) != *work->committee_id) continue;
+                committee["status"] = "closed";
+                committee["closed_week"] = week;
+                static const std::map<std::string, int> kRelationshipDelta{{"S", 3}, {"A", 2}, {"B", 1}, {"C", 0}, {"D", -2}};
+                for (auto& partner : state.partners) {
+                    if (!partner.is_object()) continue;
+                    bool member = false;
+                    for (const auto& m : committee.at("members")) {
+                        if (m.value("partner_id", std::string{}) == partner.value("id", std::string{})) member = true;
+                    }
+                    if (!member) continue;
+                    const int delta = kRelationshipDelta.at(rating);
+                    partner["relationship"] = std::clamp(partner.value("relationship", 50) + delta, 0, 100);
+                    if (!partner.contains("history") || !partner.at("history").is_array()) partner["history"] = Json::array();
+                    partner["history"].push_back(Json{{"week", week}, {"work_id", work_id}, {"delta", delta},
+                                                      {"reason", std::string("作品交付 ") + rating}});
+                }
+            }
+        }
+
+        // Archive：只追加，记录交付所需事实与对账
+        Json episode_records = Json::array();
+        for (const auto& episode : work->episodes) {
+            const auto ep = kernel::aggregate_episode(episode);
+            Json dims = Json::object();
+            for (int i = 0; i < kDimensionCount; ++i) dims[kDimensions[static_cast<std::size_t>(i)]] = ep.dims[static_cast<std::size_t>(i)];
+            episode_records.push_back(Json{{"id", episode.id}, {"quality", Json{{"dims", dims}, {"mean", ep.mean}}}});
+        }
+        Json team = Json::array();
+        std::set<std::string> contributors;
+        for_each_item(*work, [&contributors](const WorkItem& item, const std::string&, const std::string&) {
+            for (const auto& id : item.contributors) contributors.insert(id);
+        });
+        for (const auto& id : contributors) {
+            const Staff* member = find_staff(state, id);
+            if (member != nullptr) team.push_back(Json{{"id", member->id}, {"name", member->name}, {"role", member->role}});
+        }
+        Json dims = Json::object();
+        for (int i = 0; i < kDimensionCount; ++i) dims[kDimensions[static_cast<std::size_t>(i)]] = quality.dims[static_cast<std::size_t>(i)];
+        Json record = Json{{"id", work_id},
+                           {"name", work->offer.value("name", std::string{})},
+                           {"source", work->offer.value("source", std::string{})},
+                           {"genre", genre},
+                           {"scale", work->offer.value("scale", std::string{})},
+                           {"mode", work->mode},
+                           {"investment_percent", percent},
+                           {"start_week", work->opened_week},
+                           {"end_week", week},
+                           {"end_reason", "delivered"},
+                           {"quality", Json{{"dims", dims}, {"mean", score}}},
+                           {"quality_score", score},
+                           {"rating", rating},
+                           {"commercial_revenue", gross_total},
+                           {"company_received", company_share + reward},
+                           {"finance_summary", Json{{"contract_received", budget},
+                                                    {"investment_paid", work->investment.value("paid", static_cast<std::int64_t>(0))},
+                                                    {"commercial_share", company_share},
+                                                    {"success_reward", reward}}},
+                           {"channels", channel_report},
+                           {"episodes", episode_records},
+                           {"team", team}};
+        if (!state.archive.contains("works") || !state.archive.at("works").is_array()) state.archive["works"] = Json::array();
+        state.archive["works"].push_back(record);
+
+        // 清理：归属、事件、项目本体
+        for (auto& member : state.staff) {
+            if (member.assignment_work_id && *member.assignment_work_id == work_id) member.assignment_work_id.reset();
+        }
+        state.events.pending.erase(
+            std::remove_if(state.events.pending.begin(), state.events.pending.end(),
+                           [&work_id](const PendingEvent& event) { return event.work_id == work_id; }),
+            state.events.pending.end());
+        state.works.erase(std::remove_if(state.works.begin(), state.works.end(),
+                                         [&work_id](const Project& item) { return item.id == work_id; }),
+                          state.works.end());
+
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "交付后状态非法: " + errors.front()));
+        return encode(Json{{"state", state},
+                           {"report", Json{{"work_id", work_id}, {"rating", rating}, {"quality_score", score},
+                                           {"commercial_revenue", gross_total}, {"company_received", company_share + reward},
+                                           {"commercial_share", company_share}, {"success_reward", reward},
+                                           {"channels", channel_report}}}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
+std::string buy_tv_service(const std::string& input) {
+    try {
+        constexpr std::int64_t kTvServiceFee = 300000;
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
+        if (!request.contains("work_id") || !request.at("work_id").is_string()) {
+            return encode(error_body("INVALID_INPUT", "work_id 必须是字符串"));
+        }
+        Project* work = find_work(state, request.at("work_id").get<std::string>());
+        if (work == nullptr) return encode(error_body("NOT_FOUND", "项目不存在"));
+        if (work->mode != "committee") return encode(error_body("MODE_NOT_ALLOWED", "承制项目不能购买电视服务"));
+        if (work->status != "producing") return encode(error_body("INVALID_PHASE", "只有 producing 项目可以购买"));
+        if (!work->tv_service.is_null()) return encode(error_body("INVALID_PHASE", "电视服务已购买"));
+        if (state.finance.solvency.state == "crisis") return encode(error_body("CRISIS_COMMITMENT_BLOCKED", "危机期间不能新增支出"));
+        if (state.finance.balance < kTvServiceFee) return encode(error_body("INSUFFICIENT_FUNDS", "现金不足"));
+        work->tv_service = Json{{"channel", "tv"}, {"paid_week", state.company.week}, {"fee", kTvServiceFee}};
+        if (std::find(work->channels.begin(), work->channels.end(), "tv") == work->channels.end()) work->channels.push_back("tv");
+        state.finance.entries.push_back(LedgerEntry{
+            "w" + std::to_string(state.company.week) + ".tv_service." + work->id, state.company.week, work->id,
+            "production", -kTvServiceFee, std::nullopt, "tv_service"});
+        state.finance.balance -= kTvServiceFee;
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "购买后状态非法: " + errors.front()));
+        return encode(Json{{"state", state}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
+std::string request_extension(const std::string& input) {
+    try {
+        constexpr std::int64_t kExtensionFee = 250000;
+        constexpr int kExtensionWeeks = 4;
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
+        if (!request.contains("work_id") || !request.at("work_id").is_string()) {
+            return encode(error_body("INVALID_INPUT", "work_id 必须是字符串"));
+        }
+        Project* work = find_work(state, request.at("work_id").get<std::string>());
+        if (work == nullptr) return encode(error_body("NOT_FOUND", "项目不存在"));
+        if (work->mode != "committee") return encode(error_body("MODE_NOT_ALLOWED", "承制项目不能申请延期"));
+        if (work->status != "producing") return encode(error_body("INVALID_PHASE", "只有 producing 项目可以延期"));
+        if (!work->extension.is_null() && work->extension.value("used", false)) {
+            return encode(error_body("INVALID_PHASE", "延期已使用"));
+        }
+        if (state.company.week > work->deadline_week) return encode(error_body("INVALID_PHASE", "已过截止"));
+        if (state.finance.solvency.state == "crisis") return encode(error_body("CRISIS_COMMITMENT_BLOCKED", "危机期间不能新增支出"));
+        if (state.finance.balance < kExtensionFee) return encode(error_body("INSUFFICIENT_FUNDS", "现金不足"));
+        work->deadline_week += kExtensionWeeks;
+        work->extension = Json{{"used", true}, {"weeks", kExtensionWeeks},
+                               {"fee", kExtensionFee}, {"week", state.company.week}};
+        state.finance.entries.push_back(LedgerEntry{
+            "w" + std::to_string(state.company.week) + ".extension." + work->id, state.company.week, work->id,
+            "production", -kExtensionFee, std::nullopt, "extension"});
+        state.finance.balance -= kExtensionFee;
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "延期后状态非法: " + errors.front()));
+        return encode(Json{{"state", state}, {"deadline_week", work->deadline_week}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
 std::string initialize_game(const std::string& input) {
     try {
         const Json request = Json::parse(input);

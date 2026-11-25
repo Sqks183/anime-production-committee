@@ -143,13 +143,16 @@ struct WorkPlan {
 struct Project {
     std::string id;
     Json offer;                            // 企划快照（M2 强类型化）
-    std::string mode = "contract";
-    Json investment = Json::object();
+    std::string mode = "contract";         // contract / committee
+    Json investment = Json::object();      // {percent,total,paid}；承制全 0
     std::vector<std::string> channels;
     int opened_week = 0;
     int deadline_week = 0;
     Json extension = Json::object();
     std::string status = "producing";      // planning / producing / delivering / settled
+    std::optional<std::string> ip_id;
+    std::optional<std::string> committee_id;
+    Json tv_service = nullptr;             // M4：{channel, paid_week, fee}
     CommonProduction common;
     std::vector<Episode> episodes;
     WorkPlan plan;
