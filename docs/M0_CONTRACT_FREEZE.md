@@ -134,7 +134,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | 2 | `start_work(offer_id, mode, percent, committee_partner_ids)` | running ∧ 非危机 ∧ 企划存在 ∧ 声望与成绩达标 ∧ 模式合法 ∧ 现金 ≥ 投资额 | NOT_FOUND / MODE_NOT_ALLOWED / INSUFFICIENT_FUNDS / CRISIS_COMMITMENT_BLOCKED | 项目+委员会+两笔账+消费企划，一次提交 |
 | 3 | `set_work_plan(work_id, plan)` | 项目 producing ∧ target 引用本项目单集/阶段且至多一个 | NOT_FOUND / INVALID_INPUT | 仅更新计划 |
 | 4 | `assign_staff(staff_id, work_id \| null)` | 项目 producing ∧ 员工存在 ∧ 不违反单项目 | NOT_FOUND / INVALID_PHASE | 仅更新归属 |
-| 5 | `hire_core(staff_id)` | running ∧ 现金充足 | NOT_FOUND / INSUFFICIENT_FUNDS | 名册+签约费 |
+| 5 | `hire_core(staff_id)` | running ∧ 现金充足 | NOT_FOUND / INSUFFICIENT_FUNDS | 签约即入职并加入核心名册，当周可分配；签约费立即入账，首周周薪计入本周下一次周结算 |
 | 6 | `scout(role?, focus_ability?)` | running ∧ 现金充足 ∧ 招聘池非空 | INSUFFICIENT_FUNDS | 池+保底计数+费用 |
 | 7 | `dismiss_staff(staff_id)` | running ∧ 员工存在 | NOT_FOUND | 名册+遣散费+清空归属 |
 | 8 | `hire_temporary(work_id, candidate_id)` | 项目 producing ∧ 现金充足 | NOT_FOUND / INSUFFICIENT_FUNDS | 临时合同+项目费 |
@@ -386,6 +386,13 @@ v3 的单项目、五阶段、全局 phase、单事件槽、双份财务汇总�
 - `INV-25` 的“负余额只出现在 `solvency=crisis` 或 `company.status=closing(bankrupt)`”与上述规则一致，不得收紧为余额始终非负。
 - 危机期间按 DEC-FIN-003 推进周数并继续计提固定成本，不生产、不计制作费；危机白名单仍然有效。
 - 资金危机的期限、融资额度、利率及判定阈值属于标定参数，不在本次契约修订中冻结。
+
+### 14.4 核心员工招聘即时入职时序（DEC-PLAY-003 补充）
+
+- `hire_core(staff_id)` 成功后，候选人立即从招聘池转入核心员工名册，招聘签约与入职在同一次命令提交中完成。
+- 新员工从签约确认时起即可参与当周人员分配；不设置“待入职”状态，也不等待下一周才开放分配。
+- 签约费在签约确认时立即入账；首周周薪从签约后当前经营周的下一次周结算起计提。若本周结算已经完成，则自然从下一周结算起计薪；不追溯已经完成的结算。
+- 本补充只明确既有命令的生效时点，不新增状态字段、不改变存档根结构与版本，也不改变 `hire_core` 的资金、公司状态和危机期守卫。
 
 ### 14.3 版本与实现状态
 
