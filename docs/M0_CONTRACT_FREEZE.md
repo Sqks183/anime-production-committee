@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | 状态形状 | `GameState v4` 的聚合、字段、可空规则 | 高：影响校验器、存档、全部读模型 |
 | 不变式 | INV-01 – INV-29 | 高：每条都要有对应断言 |
-| 命令面 | 21 个现行命令的输入、守卫、错误码 | 中：影响 UI 与测试 |
+| 命令面 | 23 个命令的输入、守卫、错误码 | 中：影响 UI 与测试 |
 | 错误码 | 16 个稳定码 | 中：UI 按码分支 |
 | 旧版危机白名单 | 仅作为历史记录，不授权当前命令 | 历史契约；当前无危机状态或危机期命令集合 |
 | 存档策略 | v4 信封、版本拒绝、单槽 | 高：影响老存档 |
@@ -47,6 +47,7 @@ GameState {
   seed: uint32                      // 唯一随机输入；不存计数器
   company: Company
   staff: Staff[]
+  recruitment: Recruitment            // Staff 域：招聘池/保底计数/每周 scout 事实（§14.13）
   works: Project[]                  // 活动项目；settled 后移出
   suppliers: Supplier[]
   contracts: OutsourceContract[]
@@ -84,8 +85,9 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | `OutsourceContract` | id, supplier_id, work_id, episode_id, item_id, ability, mode, work_total, work_done, weekly_cap, fee_total, fee_paid, signed_week, due_week, status | episode_id（公共制作为 null） | item 属于同一 work；Σactive weekly_cap ≤ supplier 容量 |
 | `Partner` | id, name, type, channels, prestige, relationship, history, status | — | 渠道唯一 |
 | `Committee` | id, work_id, members, formed_week, status | closed_week | 一成员一渠道，bd 不挂成员 |
-| `MarketState` | heat, slots, refresh_week, competitors | custom_offer, proposal, last_competition_round | slots ≤ 4；自定/提案为独立槽 |
-| `Finance` | opening_funds, balance, entries | — | balance = opening + Σentries；balance 始终非负；不含 loans / solvency 状态 |
+| `MarketState` | heat, slots, refresh_week, competitors | custom_offer, proposal, last_competition_round | slots ≤ 10，初始 4；自定/提案为独立槽；Offer 生命周期字段见 §14.13 |
+| `Recruitment` | pool, pity, last_scout_week | — | Staff 唯一持有；pool 候选包装 `{staff, expires_week, origin}`；详见 §14.13 |
+| `Finance` | opening_funds, balance, entries, loans, solvency | — | balance = opening + Σentries ≥ 0；当前 `loans=[]`、`solvency.state="normal"`；两字段仅作后续更新预留，不授权危机或融资 |
 | `EventState` | pending[], last_event_week, per_work | pending 数组可为空 | 每条待处理事件带 work_id/event_id/triggered_week；pending 中每项目至多一条；不同项目可同周各有事件；last_event_week 不得充当全局单槽 |
 | `Archive` | works, series | company_result | 只追加 |
 
@@ -112,14 +114,14 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | INV-15 | `allowed_modes`：普通企划含 contract 与 committee；原创仅 committee | INVALID_STATE |
 | INV-16 | `balance = opening_funds + Σ entries.amount` | INVALID_STATE |
 | INV-17 | 每笔 entry 只属一个 category；收入类只能由交付结算写入 | INVALID_STATE |
-| INV-18 | 当前 Finance 不包含 `Loan` / `Solvency` / `solvency=crisis` 字段；融资与危机周机制不属于当前状态契约 | INVALID_STATE |
+| INV-18 | 当前 Finance 保留 `loans=[]` 与 `solvency.state="normal"` 作为后续更新预留；不得出现 `Loan` 实体、非空 loans 或 `solvency.state="crisis"`；融资与危机周机制不属于当前状态契约 | INVALID_STATE |
 | INV-19 | 同一供应商 `Σ active 合同 weekly_cap ≤ capacity_per_week` | CAPACITY_EXCEEDED |
 | INV-20 | 合同 `item_id` 属于同一 `work_id`；累计交付不超过该项 `work_total` | INVALID_STATE |
 | INV-21 | `running ⇒ week < 520`；`week` 只由 `advance_week` 改变 | INVALID_PHASE |
 | INV-22 | Archive 只追加；`WorkRecord.id` 唯一；`previous_work_id` 指向更早记录 | INVALID_STATE |
 | INV-23 | `events.pending[]` 可同时包含多个项目事件；每条带 `work_id/event_id/triggered_week/viewed`，pending 中每项目至多一条；同一项目每周最多触发一个；未查看事件阻塞推进，已查看未处理事件不阻塞；`last_event_week` 不得全局限流；事件不得覆盖/丢弃 | INVALID_STATE |
-| INV-24 | `market.slots ≤ 4`；自定/提案槽与市场槽、历史 id 互斥 | INVALID_STATE |
-| INV-25 | `Finance.balance ≥ 0`；刚性支出预检不足时回滚并直接破产，不记录负现金欠付 | INVALID_STATE |
+| INV-24 | `market.slots ≤ 10`，初始 4；自定/提案槽与市场槽、历史 id 互斥；同一企划 id 终身唯一，不得删除后再生成绕过锁定历史 | INVALID_STATE |
+| INV-25 | `Finance.balance ≥ 0`；刚性支出预检不足时回滚并直接破产，不记录负现金欠付，不得以 `solvency.state="crisis"` 绕过 | INVALID_STATE |
 | INV-26 | 存档中不含派生值（§2 列表）；加载时重算 | SAVE_CORRUPT |
 | INV-27 | 每个 producing 项目恰有一名已通过任职资格校验并已分配到该项目的监督；资格仅在任职/分配时校验，任职后不因属性波动撤销；不得出现监督空缺或重复 | INVALID_STATE |
 | INV-28 | forced_rest 员工保留原项目归属与岗位占位但不贡献产能；满期次周开局恢复原岗位；监督已被替补时原监督回归不得顶替现任监督 | INVALID_STATE |
@@ -131,18 +133,18 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 
 命令是**用例级**的：每个命令独立 schema、独立守卫、独立错误码，不存在"万能 decision 联合类型"。
 
-22 个现行命令（其中两行各含多个命令）。旧版 `arrange_financing` 不属于当前 v4 命令面；命令 22 `view_event` 由 #50 追加，语义见 §14.12。
+23 个现行命令，下表每行一个命令。旧版 `arrange_financing` 不属于当前 v4 命令面；命令 22 `view_event` 由 #50 追加，语义见 §14.12；命令 23 `lock_offer` 的 Q4 语义见 §14.13。
 
 | # | 命令 | 关键守卫 | 主要失败码 | 原子范围 |
 | --- | --- | --- | --- | --- |
 | 1 | `initialize_game(seed)` | 无（唯一不带 state 的命令） | INVALID_INPUT | 建立公司/名册/供应商/合作方/市场首轮 |
-| 2 | `start_work(offer_id, mode, percent, committee_partner_ids)` | running ∧ 企划存在且有效 ∧ 模式合法 ∧（普通企划满足 `min_reputation/required_works` ∨ 有效原创草稿存在）∧ 现金 ≥ 全部应付款 | NOT_FOUND / MODE_NOT_ALLOWED / INSUFFICIENT_FUNDS | 项目+委员会+两笔账+消费企划，一次提交；原创在此正式开工 |
+| 2 | `start_work(offer_id, mode, percent, committee_partner_ids)` | running ∧ 企划存在且有效 ∧ 模式合法 ∧（普通企划满足 `min_reputation/required_works` ∨ 有效原创草稿存在）∧ 现金 ≥ 全部应付款 − deposit_paid（仅锁定期内有效企划可按 §14.13 抵扣） | NOT_FOUND / MODE_NOT_ALLOWED / INSUFFICIENT_FUNDS | 项目+委员会+Finance 投资/合同预算两笔账（定金已付部分按 §14.13 抵扣，不重复计支出）+消费企划，一次提交；原创在此正式开工 |
 | 3 | `set_work_plan(work_id, plan)` | 项目 producing ∧ target 引用本项目单集/阶段且至多一个 | NOT_FOUND / INVALID_INPUT | 仅更新计划 |
 | 4 | `assign_staff(staff_id, work_id \| null)` | 项目 producing ∧ 员工存在 ∧ 不违反单项目 ∧ 监督更换须原子 Swap/Replace ∧ 调整后所有 producing 项目仍满足 INV-27 | NOT_FOUND / INVALID_PHASE | 更新归属；监督更换不得留下空缺或重复 |
-| 5 | `hire_core(staff_id)` | running ∧ 候选人存在 ∧ 现金 ≥ signing_fee ∧ 当前核心员工数 < 已解锁 core_staff_capacity | NOT_FOUND / INSUFFICIENT_FUNDS / CAPACITY_EXCEEDED | 签约即入职并加入核心名册，当周可分配；临时员工不占核心编制；signing_fee 立即入账，首周周薪计入本周下一次周结算 |
-| 6 | `scout(role?, focus_ability?)` | running ∧ 现金 ≥ 本次费用 ∧ 招聘池非空 | INSUFFICIENT_FUNDS | 池+保底计数+费用 |
+| 5 | `hire_core(staff_id)` | running ∧ 候选人存在 ∧ 现金 ≥ signing_fee ∧ 当前核心员工数 < 已解锁 core_staff_capacity | NOT_FOUND / INSUFFICIENT_FUNDS / CAPACITY_EXCEEDED | 从招聘池解包并加入核心名册，当周可分配；临时员工不占核心编制；signing_fee 通过 Finance 即时入账，首周周薪计入本周下一次周结算 |
+| 6 | `scout(role?, focus_ability?)` | running ∧ `events.pending[]` 为空 ∧ 现金 ≥ 本次费用 ∧ `recruitment.last_scout_week ≠ week`（每周至多一次）∧ role 与 focus_ability 至多传一个 | INVALID_INPUT / INVALID_PHASE / INSUFFICIENT_FUNDS | 池+保底计数+last_scout_week+Finance 费用流水；scout 候选带签约窗口（§14.13） |
 | 7 | `dismiss_staff(staff_id)` | running ∧ core 员工存在 ∧ 解雇后 core 数 ≥1 ∧ 若为监督须先原子替换；无同项目/空闲合格替补则关键岗位锁定 | NOT_FOUND / INVALID_INPUT / INVALID_PHASE | 移出名册+清空归属；不预付遣散费 |
-| 8 | `hire_temporary(work_id, candidate_id)` | running ∧ 项目 producing ∧ 现金 ≥ signing_fee | NOT_FOUND / INSUFFICIENT_FUNDS | 临时合同+signing_fee 即时入账；weekly_salary 从后续周结算计提；归属合同项目 |
+| 8 | `hire_temporary(work_id, candidate_id)` | running ∧ 项目 producing ∧ 候选人存在 ∧ 现金 ≥ signing_fee | NOT_FOUND / INSUFFICIENT_FUNDS | 临时合同+Finance signing_fee 即时入账；weekly_salary 从后续周结算计提；归属合同项目 |
 | 9 | `sign_outsourcing(work_id, item_id, supplier_id, work_total, mode)` | 工作项已解锁 ∧ 专业匹配 ∧ 产能余量 ∧ 现金 | DEPENDENCY_UNMET / CAPACITY_EXCEEDED / INSUFFICIENT_FUNDS | 合同+费用+占用 |
 | 10 | `deliver_work(work_id)` | 全部门槛项 delivered ∧ 未过截止 ∧ 项目 producing | GATE_UNMET / INVALID_PHASE | 当次完成交付结算（周数不变） |
 | 11 | `abort_work(work_id)` | 项目 producing | NOT_FOUND | 终止+扣罚+释放占用 |
@@ -157,6 +159,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | 20 | `finalize_delivery(work_id)` | 项目 delivering（关闭路径） | INVALID_PHASE | 交付结算 |
 | 21 | `finalize_company()` | 公司 ended 且项目已结清 | INVALID_PHASE | 生成结局，只执行一次 |
 | 22 | `view_event(work_id, event_id)` | 该 work 存在对应 pending 事件 ∧ 事件未查看（已查看按幂等成功） | NOT_FOUND / INVALID_INPUT / COMPANY_ENDED | 只把目标事件标记为已查看，解除它对命令 17 的阻塞；不结算、不扣款、不移除（语义见 §14.12） |
+| 23 | `lock_offer(offer_id)` | running ∧ `events.pending[]` 为空 ∧ 企划存在且未过期 ∧ `lock_used=false`（终身一次）∧ 现金 ≥ 定金 | NOT_FOUND / INVALID_INPUT / INSUFFICIENT_FUNDS | Finance 定金流水 + `locked_until=week+2` + `lock_used=true` + `deposit_paid` 对账快照，一次提交；语义见 §14.13 |
 
 
 **通用原子性**：除 `initialize_game` 外，所有命令都是"工作副本 + 一次提交"。任一守卫或内部步骤失败 ⇒ 状态与调用前逐字段一致。
@@ -344,14 +347,14 @@ npm run validate:handover
 | 蓝图样例（12 集 / 174 项） | ✅ | `docs/blueprints/tv_standard.blueprint.json` |
 | 蓝图校验器 + 运行记录 | ✅ | `scripts/validate-blueprint.mjs`、§10 |
 | 工作项级磨合用例 + 运行记录 | ✅ | `docs/fixtures/handover_cases.json`、§9 |
-| 状态契约与不变式（27 条） | ✅ | §3、§4 |
-| 命令表（22 个） | ✅ | §5 |
-| 错误码（16 个，1 个废弃） | ✅ | §6 |
-| 危机期白名单 | ✅ | §7 |
+| 状态契约与不变式（29 条） | ✅ | §3、§4 |
+| 命令表（23 个） | ✅ | §5 |
+| 错误码（16 个，2 个废弃） | ✅ | §6 |
+| 危机期白名单 | 历史保留 | §7；当前不授权任何危机命令 |
 | 存档版本拒绝策略 | ✅ | §8 |
 | 实现代码 | ⛔ 不在 M0 范围 | M1 起 |
 
-**M0 冻结后，M1 可以开始**：M1 的目标是“能跑一周”，实现 v4 状态骨架、校验、核心规则内核、坐标式随机与最小周结算。状态结构从第一天采用多项目形状（`works[]`）；M1 只用单项目纵向切片验证一周，不得实现成单项目架构。单项目从立项到交付的完整链路属于 M2。阶段出口标准见 [DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md)。M1 不得为了实现便利擅自改动 §4 的 29 条不变式与 §5 的 22 个命令语义；如发现缺陷、遗漏或必须调整的契约，仍可按 §13 的变更分级与审批流程修补，不得绕过流程直接改变。
+**M0 冻结后，M1 可以开始**：M1 的目标是“能跑一周”，实现 v4 状态骨架、校验、核心规则内核、坐标式随机与最小周结算。状态结构从第一天采用多项目形状（`works[]`）；M1 只用单项目纵向切片验证一周，不得实现成单项目架构。单项目从立项到交付的完整链路属于 M2。阶段出口标准见 [DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md)。M1 不得为了实现便利擅自改动 §4 的 29 条不变式与 §5 的 23 个命令语义；如发现缺陷、遗漏或必须调整的契约，仍可按 §13 的变更分级与审批流程修补，不得绕过流程直接改变。
 
 ---
 
@@ -403,15 +406,6 @@ B–D 级变更，以及任何可能影响已确认玩法的 A 级修复，PR/Is
 
 ---
 
-## 14. 与 v3 的关系
-
-v3 的单项目、五阶段、全局 phase、单事件槽、双份财务汇总全部废止（见架构 §19.2 C1–C13）。v3 代码与文档保留为历史与迁移参照，**不得**作为 v4 的实现起点。
-
-本文件不宣称 v3 行为正确，也不为其提供兼容层。
-
-
----
-
 ## 14. 2026-11-25 规则补充修订（不改变 v4 根版本）
 
 本节是对冻结基线的正式增补。玩法权威来源为 [DECISION_LOG.md](DECISION_LOG.md)；本节将其已确认语义落实到 v4 工程契约。若本节与旧表格冲突，以本节修订后的语义为准。
@@ -436,7 +430,7 @@ v3 的单项目、五阶段、全局 phase、单事件槽、双份财务汇总�
 - 周结算刚性支出预检失败时，整周结算回滚至计划冻结快照，不发生部分扣款或制作推进，并直接触发破产终局。
 - 不允许以负现金欠付、危机周推进或额外救济窗口延续经营；旧版限时危机结算流程不再是目标行为。
 - advance_week 的八阶段顺序、预检支出范围、回滚边界与延迟状态时序以 DEC-TIME-003 及 DECISION_LOG 第 18 节为准。
-- 既有 INV-25 和危机期命令白名单中涉及 solvency=crisis 的字段/守卫必须按本次 C 级契约修订同步调整，不得继续据此实现旧危机周推进。
+- 既有 INV-25 和危机期命令白名单中涉及 solvency.state="crisis" 的字段/守卫必须按本次 C 级契约修订同步调整，不得继续据此实现旧危机周推进。
 
 ### 14.3 版本与实现状态
 
@@ -459,7 +453,7 @@ v3 的单项目、五阶段、全局 phase、单事件槽、双份财务汇总�
 - **Q10 整集协力打包**：需要应用层批量预检与全有或全无的事务边界；不得把多次独立签约伪装成原子批量操作。
 - **Q11 计划预览**：预览是非持久化派生读模型；周内修改只更新计划态。既有 HO-03 等磨合契约用例应覆盖“离开后重新接手曾参与工作项不重复扣损”，并补齐监督减免上限 50% 的边界用例。
 
-本节是待补工程契约清单，不代表上述命令、字段或 UI 已实现，也不擅自冻结其具体 API 名称。实现前须由 #53 收敛契约并回填本文件。
+本节是待补工程契约清单，不代表上述命令、字段或 UI 已实现，也不擅自冻结其具体 API 名称。实现前须由 #53 收敛契约并回填本文件。Q3/Q4 的字段契约已依 #53 裁决回填至 §14.13；Q2/Q10/Q11 仍待补。
 
 ### 14.6 2026-11-25 契约收敛（字段、命令与危机白名单）
 
@@ -528,3 +522,70 @@ v3 的单项目、五阶段、全局 phase、单事件槽、双份财务汇总�
 - 同一事件选项的 `cost` 与 `funds` 效果在同周产生多条流水时，账本条目 id 必须互不相同（INV-02）；事件强制支出以当前余额封顶，不得让现金转负。
 - 本条只登记已实现语义。§14.11 的到期倒计时、默认分支与一次性升级需要先在内容契约中冻结默认分支与升级载荷字段，首版 `expires_weeks` 仍按非 0 拒绝，作为未实现边界跟踪（#53 数据字典 / #13 内容标定）。
 
+### 14.13 Q3 招聘池与 Q4 定金锁定的字段契约（2026-11-25，依 #53 裁决）
+
+本节把 DECISION_LOG §17 Q3/Q4 已确认语义落成 v4 目标字段与命令契约。市场初始 4 槽/上限 10 槽、Scout 每周至多一次、锁定两周、同一企划终身仅锁定一次、到期定金不退、正式签约 100% 抵扣均为已确认规则；池容量、轮换比例、候选窗口周数、定金比例与计算基数、保底阈值等仍为 `[PLACEHOLDER]`，由 #59/#58 标定。**本节不宣称任何运行时行为已经实现**；对应命令实现与参数标定验收前不得宣称已开放。本节不依赖危机状态，也不授权 `solvency.state="crisis"`、危机周推进或融资命令。
+
+#### 14.13.1 Recruitment 聚合（Staff 域唯一持有）
+
+```text
+Recruitment {
+  pool: PoolCandidate[]
+  pity: { since_sr: uint, since_ssr: uint }   // 保底计数语义与阈值 [PLACEHOLDER]
+  last_scout_week: uint | null                // null = 从未 scout
+}
+
+PoolCandidate {
+  staff: Staff                  // 完整候选人实体，字段与名册 Staff 相同
+  expires_week: uint | null     // 首个不可签约周；regular 候选为 null，scout 候选必填
+  origin: "regular" | "scout"
+}
+```
+
+- `recruitment` 挂在 GameState 根（§2），与 `staff` 名册分离：池中候选人**不是**公司员工，不参与周结算、不计薪、不计入 INV-09/10/11 的名册约束。
+- `hire_core(staff_id)` / `hire_temporary` 命中池中候选时，把 `PoolCandidate.staff` 解包转入名册；`expires_week/origin` 是池包装字段，**不得**残留在名册 Staff 上。员工报酬统一使用 `signing_fee + weekly_salary`，不再使用 `project_fee`；签约费只通过 Finance 流水入账。
+- 签约窗口：`expires_week` 是首个不可签约周；进入该周开局时候选失效并移除，到期不产生费用、不退款、不惩罚。窗口周数 `[PLACEHOLDER]`（讨论范围 1–2 周）。
+- 常规池**部分轮换**：周结算固定步骤只替换部分候选，不整池清空重生成；轮换比例 `[PLACEHOLDER]`。scout 候选不参与常规轮换，只按各自窗口到期。
+- Scout 每周至多一次：以 `last_scout_week ≠ company.week` 判定，不引入额外计数器字段；`last_scout_week` 只由 `scout` 命令写入。
+- 随机坐标（沿用坐标式随机，无计数器入档）：候选生成 `draw(seed, week, "staff/recruit", purpose, index)`；常规轮换 `"staff/recruit_regular"`；保底抽取结果由 pity 计数参与 purpose/index 派生，具体映射由实现提出并经测试固定。
+
+#### 14.13.2 Offer 生命周期字段（Market 域）
+
+`Offer`（市场槽/自定槽/提案槽中的企划）在既有字段外新增：
+
+| 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `expires_week` | uint | 自然失效周；到达该周开局后槽位释放，企划 id 进入历史 |
+| `locked_until` | uint \| null | 锁定失效周；`lock_offer` 成功时 = week+2。第 W 周锁定覆盖 W 与 W+1，W+2 周开局失效 |
+| `lock_used` | bool | 该企划 id 是否已用过定金锁定；**终身一次**，置 true 后永不复位 |
+| `deposit_paid` | uint | 已付定金快照，用于正式接单时 100% 抵扣展示与对账 |
+
+- **现金权威唯一**：定金的实际扣款、签约抵扣只发生在 `Finance.entries` 流水；`deposit_paid` 是企划侧快照/对账字段，不得作为第二本账。INV-16/17 照常约束。
+- 签约抵扣：锁定期内 `start_work` 该企划时，定金 100% 抵扣对应立项保证金或前期费用（经济语义等同返还预付款，但不是额外成本）；现金守卫按“全部应付款 − deposit_paid”计算。Finance 保留 `investment_paid`（若委员会）与 `contract_received`（合同预算）两笔账，定金已付部分从对应本次现金金额中抵扣，不得把定金再次计为支出，也不新增重复退款/收入流水。
+- 锁定保护：锁定期间（`week < locked_until`）该企划不受市场补充与自然过期影响（STATUS-49/51）；`expires_week` 的自然过期在锁定期内不生效。
+- 到期语义：第 W 周锁定后的最后有效周为 W+1；该周周末阶段 7 结束时进入 `locked_until`（W+2），未接单企划锁定自动失效、释放市场槽位、定金不退；`lock_used` 保持 true，不允许续锁，W+2 开局不再可见。
+- 临期提示：`locked_until − week == 1` 表示进入最后一周；周回执与市场槽位提示剩余时间及到期损失，不新增持久化字段。
+- **终身一次不可绕过**：同一企划 id 的 `lock_used` 历史必须可校验；不得通过“删除企划再重新生成同 id”或槽位刷新洗掉锁定历史（并入 INV-24）。
+- 互斥约束：同一企划同一时刻至多处于一个槽（市场/自定/提案）；已签约、已过期和已锁定状态互斥，锁定状态不改变槽位归属。
+- 随机坐标：企划生成 `draw(seed, week, "market/offer_gen", purpose, index)`；市场热度 `"market/heat"`。
+
+#### 14.13.3 校验器必须覆盖
+
+1. scout 同周第二次 ⇒ 拒绝；跨周可再次 scout。
+2. scout 候选到达 `expires_week` 后被移除；regular 候选不受窗口影响。
+3. 部分轮换后池内未轮换候选逐字段不变。
+4. 池中候选人不出现在名册约束里；hire 后包装字段不残留，签约费只出现于 Finance。
+5. `lock_offer` 对 `lock_used=true` 的企划 ⇒ 拒绝，即使企划曾离开市场后回归。
+6. 第 W 周锁定后 W/W+1 有效、W+2 开局失效；最后一周提示可由 `locked_until − week == 1` 派生。
+7. 定金锁定与签约抵扣后 `balance = opening + Σentries` 仍成立；定金不被计两次支出。
+8. 锁定到期未接单：定金不退、无自动退款流水，`lock_used` 仍为 true。
+9. 当前状态 `loans=[]`、`solvency.state="normal"`；非空 loans、`solvency.state="crisis"` 或负余额均被拒绝，任何命令不得借此绕过现金预检或破产规则。
+10. 市场槽初始 4、上限 10；同一企划 id 终身唯一，市场/自定/提案槽不得重复。
+
+---
+
+## 15. 与 v3 的关系（历史参照）
+
+v3 的单项目、五阶段、全局 phase、单事件槽、双份财务汇总全部废止（见架构 §19.2 C1–C13）。v3 代码与文档保留为历史与迁移参照，**不得**作为 v4 的实现起点。
+
+本文件不宣称 v3 行为正确，也不为其提供兼容层。

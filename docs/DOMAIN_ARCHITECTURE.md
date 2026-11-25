@@ -9,7 +9,7 @@
 >
 > **持续演进约束**：本架构是可修补的目标基线，不是一次性冻结后禁止调整。缺陷和遗漏优先在现有边界内增量修复；涉及状态所有权、领域边界、跨模块契约或已确认玩法的变更，按[工程变更治理](ENGINEERING_CHANGE_GOVERNANCE.md)评估、审批并提供迁移与回归证据。
 >
-> **财务规则更新（2026-11-25）**：现行规则以 DEC-FIN-002/003 及 §22 为准。刚性支出预检不足时整周回滚并直接破产；不实现危机周、负现金欠付、融资自救或危机命令白名单。本文早期的 `solvency=crisis`、贷款与危机 UI 描述均已废止。限时危机周仅为未来更新候选，未经单独评审不得恢复。
+> **财务规则更新（2026-11-25）**：现行规则以 DEC-FIN-002/003 及 §22 为准。刚性支出预检不足时整周回滚并直接破产；不实现危机周、负现金欠付、融资自救或危机命令白名单。本文早期的 `solvency.state="crisis"`、贷款与危机 UI 描述均已废止。限时危机周仅为未来更新候选，未经单独评审不得恢复。
 >
 > **标记体系**（沿用仓库习惯，避免把设计判断伪装成产品决策）：
 >
@@ -375,7 +375,7 @@ v1.0 只给了骨架，并把"公共制作 + 单集 + 工作项"和"资金预检
 | 刚性支出预检结果、唯一现金余额与流水 | 贷款/偿付危机机制（未来更新候选，当前不实现） |
 | 余额不变式（余额 = 期初 + Σ流水） | 项目利润口径（归因视图，不是新账本） |
 
-**破产归属**：Finance 负责现金余额、流水与刚性支出预检；预检失败后由 Application/Company 触发不可逆破产终局。当前不建立独立 `solvency=crisis` 状态，也没有负现金下继续经营的路径。
+**破产归属**：Finance 负责现金余额、流水与刚性支出预检；预检失败后由 Application/Company 触发不可逆破产终局。当前不建立独立 `solvency.state="crisis"` 状态，也没有负现金下继续经营的路径。
 
 **项目账的定位（A9）**：不存在第二个账本。项目账 = 按 `work_id` 过滤流水后的聚合视图，每次读取时计算。这直接消灭了"项目累计成本与公司现金不一致"这类历史缺陷，也让"同一笔只扣一次"成为结构性事实而非纪律要求。
 
@@ -667,7 +667,7 @@ start_work ⇒ 实例化：
 ```
 
 - 蓝图是**内容配置**，实例化后的工作项是**项目状态**：此后蓝图改版不影响在制项目。
-- 单集数：TV 12–13、短篇 1–3、OVA/剧场版 1（`[PLACEHOLDER]`，由平衡定值）。剧场版单集即"一部作品只有一个交付单元"，不需要特例代码。
+- 单集数：TV 12–13、短篇 1–4、OVA/剧场版 1（`[PLACEHOLDER]`，由平衡定值）。剧场版单集即"一部作品只有一个交付单元"，不需要特例代码。
 - 实例化时一次性写入全部工作项，不做懒加载：状态可校验、可复现。
 
 **蓝图必须先有可检查的样例，M0 才算完成**。规范见 [制作蓝图规范](BLUEPRINT_SPEC.md)，样例见 [`blueprints/tv_standard.blueprint.json`](blueprints/tv_standard.blueprint.json)，校验命令 `npm run validate:blueprint`。
@@ -861,6 +861,11 @@ Offer { id, name, source, genre, scale, contract_budget, duration_weeks, target_
 Finance {
   opening_funds, balance
   entries: Entry[]                  // 只追加
+  loans: []                         // 后续更新预留；当前必须为空，不产生 Loan 实体
+  solvency: {
+    state: "normal"                 // 后续更新预留；当前禁止 crisis
+    since_week: null, deadline_week: null, gap: 0
+  }
 }
 Entry { id, week, work_id: null|work_id, category, amount: signed, counterparty: null|partner|supplier, memo }
 
@@ -868,7 +873,7 @@ Entry { id, week, work_id: null|work_id, category, amount: signed, counterparty:
 流出（amount<0）：investment_paid | salary | operations | production | temporary
                   | outsourcing | events | extension | penalty | development | distribution
 
-> `financing_in`、`loan_repayment`、`loan_interest` 与 `Loan` / `Solvency` 属于旧危机自救方案的数据概念，不纳入当前 v4 Finance 状态。若未来恢复融资机制，必须通过独立决策变更重新定义。
+> `loans` 与 `solvency` 作为后续更新预留字段保留在当前 v4 Finance 状态中，当前值固定为 `loans=[]`、`solvency.state="normal"`。`financing_in`、`loan_repayment`、`loan_interest`、`Loan` 实体、`solvency.state="crisis"` 与危机周机制当前均不启用；字段预留不构成命令或状态授权。未来恢复融资机制必须通过独立决策变更重新定义。
 ```
 
 **符号约定**：`amount` 带符号，`category` 只表示业务性质。由此"项目利润 = 该项目全部 entry 之和"，与 GAME_RULES V3.3 的四条恒等式一致，不需要另写一套利润公式。字段名沿用现有契约（`*_received` / `*_paid`），不因合并进统一流水而改名。
@@ -883,7 +888,7 @@ Entry { id, week, work_id: null|work_id, category, amount: signed, counterparty:
 
 #### 7.5.1 贷款与限时危机（未来更新候选，当前不实现）
 
-旧版曾设计贷款、限时偿付危机、负现金欠付与自救动作。上述机制全部退出当前 v4 状态模型、命令契约与首版实现范围；本节不定义现行行为，也不构成实现授权。未来如需恢复，须按 DECISION_LOG.md 的未来更新候选条款重新评审贷款结构、现金边界、固定成本、原子结算、期限、终局和存档兼容。
+旧版曾设计贷款、限时偿付危机、负现金欠付与自救动作。上述机制全部退出当前 v4 命令契约与首版实现范围；Finance 仅保留 `loans=[]` 与 `solvency.state="normal"` 等未来扩展字段，不产生 `Loan` 实体，也不授权 `solvency.state="crisis"`。本节不定义现行危机行为，也不构成实现授权。未来如需恢复，须按 DECISION_LOG.md 的未来更新候选条款重新评审贷款结构、现金边界、固定成本、原子结算、期限、终局和存档兼容。
 
 **当前唯一有效规则**：刚性支出预检不足时，按 §22.2 整周回滚并直接进入破产终局。
 
@@ -958,11 +963,11 @@ WorkRecord { id, name, ip_id, source, genre, scale, mode, investment_percent,
 | 命令 | 归属 | 守卫 | 主要效果 |
 | --- | --- | --- | --- |
 | `initialize_game(seed)` | Application | — | 建立公司、初始名册、供应商、合作方、市场首轮、空项目集 |
-| `start_work(offer_id, mode, percent, committee_partner_ids)` | Application | 公司 running；企划存在且有效；模式合法；普通企划满足 `min_reputation/required_works` 或原创草稿存在且有效；现金覆盖全部应付款 | Project 建立、委员会成立、Market 消费企划、Finance 记投资与合同预算、员工可归属。原创声望资格在创建草稿时检查，不因有效期内轻微波动重复卡开工 |
+| `start_work(offer_id, mode, percent, committee_partner_ids)` | Application | 公司 running；企划存在且有效；模式合法；普通企划满足 `min_reputation/required_works` 或原创草稿存在且有效；现金覆盖全部应付款，锁定期内可按 M0 §14.13 抵扣 `deposit_paid` | Project 建立、委员会成立、Market 消费企划、Finance 保留投资与合同预算两笔账且定金不重复计支出、员工可归属。原创声望资格在创建草稿时检查，不因有效期内轻微波动重复卡开工 |
 | `set_work_plan(work_id, plan)` | Project | 公司 running；项目 producing；`plan.target` 须引用本项目单集/阶段，至多一个 | 更新周内计划态并刷新只读预览；实际制作效果在周结算发生 |
 | `assign_staff(staff_id, work_id \| null)` | Staff | 项目存在且 producing；核心员工每周仅能归属一个项目；同时校验职业与目标工作项资格；项目/本周外派/主动待命三选一互斥 | 更新周内计划态并刷新只读预览；实际归属与产能效果在周结算快照中生效 |
 | `hire_core(staff_id)` | Staff + Finance | 公司 running；候选人存在；现金 ≥ signing_fee；名册上限（若有）。不要求全公司空闲（DEC-PLAY-003） | 签约即入职、立即进入核心名册并可当周分配；signing_fee 入账，首周周薪计入本周下一次结算 |
-| `scout(...)` | Staff + Finance | 公司 running；现金 ≥ 本次费用；招聘池非空。不要求全公司空闲 | 更新招聘池、保底计数并记费用 |
+| `scout(role?, focus_ability?)` | Staff + Finance | 公司 running；`events.pending[]` 为空；`recruitment.last_scout_week ≠ week`（每周至多一次）；`role` 与 `focus_ability` 至多提供一个；现金 ≥ 本次费用 | 按 M0 §14.13 更新招聘池与保底计数、记录 `last_scout_week` 并记费用；scout 候选带签约窗口，参数未标定前不宣称已开放 |
 | `dismiss_staff(staff_id)` | Staff | 公司 running；core 员工存在；解雇后 core 数 ≥1。不要求全公司空闲 | 移出名册、清空归属；不预付遣散费 |
 | `hire_temporary(work_id, candidate_id)` | Staff + Finance | 公司 running；项目 producing；现金 ≥ signing_fee | 临时合同建立、signing_fee 即时入账；weekly_salary 从后续周结算计提并归属合同项目 |
 | `sign_outsourcing(work_id, item_id, supplier_id, work_total, mode)` | Vendor + Finance | 工作项已解锁；专业匹配；供应商产能余量；现金 | 合同建立、费用入账、占用产能 |
@@ -979,6 +984,8 @@ WorkRecord { id, name, ip_id, source, genre, scale, mode, investment_percent,
 | `end_company()` | Company + Application | 公司 running | 锁 closing，未交付项目转 delivering |
 | `finalize_delivery(work_id)` | Application | 项目 delivering | 交付结算、写 Archive、关闭委员会 |
 | `finalize_company()` | Application | 公司 ended 且全部项目已结算 | 生成公司结局评价 |
+| `view_event(work_id, event_id)` | Event → Application | 该 work 存在对应 pending 事件；公司 running；未查看时标记，已查看按幂等成功 | 只把目标事件 `viewed` 置 true，解除未查看事件对 `advance_week` 的阻塞；不结算、不扣款、不移除 |
+| `lock_offer(offer_id)` | Market + Finance | 公司 running；`events.pending[]` 为空；企划存在且未过期；`lock_used=false`（终身一次）；现金 ≥ 定金 | Finance 定金流水 + `locked_until=week+2` + `lock_used=true` + `deposit_paid` 对账快照，一次提交；W/W+1 有效、W+2 失效，到期定金不退（M0 §14.13） |
 
 **为什么不是 `apply_decision(type, ...)`**：当前实现的单一 decision 联合类型把所有守卫挤进一个长 if 链，错误码与前置条件互相纠缠，新增玩法必须改同一个函数。用例级命令把守卫放在各自入口，也让 UI 与测试的意图更清楚。
 
@@ -1653,10 +1660,10 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version, state: GameState }
 
 ### 21.3 企划定金锁定（Q4）
 
-- Market 必须持有活动锁定、锁定期限、已支付定金及同一企划历史上是否锁定过的可追溯状态；锁定期两周，进入最后一周时可被周回执提示。
-- 同一企划终身最多锁定一次；到期自动释放槽位且定金不退；正式接单时定金作为预付款 100% 抵扣对应立项保证金/前期费用，不得重复记成本或重复扣现金。
+- Market 必须持有活动锁定、锁定期限、已支付定金及同一企划历史上是否锁定过的可追溯状态；`lock_offer(offer_id)` 在第 W 周成功后设置 `locked_until=W+2`，覆盖 W 与 W+1，W+2 开局失效；进入最后一周时由周回执提示。
+- 同一企划终身最多锁定一次；到期自动释放槽位且定金不退；正式接单时定金作为预付款 100% 抵扣对应立项保证金/前期费用，不得重复记成本或重复扣现金。定金扣款与签约抵扣只通过 Finance 流水体现，`deposit_paid` 仅作 Market 对账快照。
 - 定金比例与计算基数尚未冻结；一旦玩家实际支付，已支付金额和对应企划必须形成可追溯记录。
-- 新增锁定命令的具体命名、失败码、现金预检与 Finance 流水分类由 #53 统一定义；本节不预设签名。
+- 命令签名、失败码与原子范围以 M0 §5/§14.13 为准；运行时实现与参数标定验收前不得宣称已开放。
 
 ### 21.4 整集协力打包（Q10）
 
