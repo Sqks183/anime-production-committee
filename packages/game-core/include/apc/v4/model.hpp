@@ -14,6 +14,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -183,6 +184,48 @@ struct Finance {
     Solvency solvency;
 };
 
+// ---- 事件（M2，M0 §14.1：pending 是数组，不是全局单槽）----
+// 待处理事件按项目保留；同一项目同时最多一条。选项与效果快照随事件冻结，
+// 内容卡后续改版不会改变已经在盘上的选择（DEC-EVENT-001 / #50 审查）。
+struct EffectView {
+    std::string scope;    // instant / stage / project
+    std::string target;   // quality / work_done / fatigue / morale / funds
+    std::string stage;    // scope=stage 时的阶段；空表示当前阶段
+    int value = 0;
+};
+
+struct EventOptionView {
+    std::string id;
+    std::string label;
+    std::string kind;         // accept/abandon/overtime/decline（outsource/extension 预留但当前不可用）
+    std::string risk_hint;
+    int cost = 0;
+    std::vector<EffectView> effects;
+};
+
+struct PendingEvent {
+    std::string event_id;
+    std::string name;         // 快照：结算回执不依赖可能变化的内容目录
+    std::string work_id;
+    int triggered_week = 0;
+    std::optional<int> expires_week;
+    int cooldown_weeks = 0;
+    bool once_per_project = false;
+    bool viewed = false;      // INV-23：未查看阻塞周推进，查看不等于处理
+    std::vector<EventOptionView> options;
+};
+
+struct WorkEventState {
+    std::map<std::string, int> cooldowns;   // event_id -> 解锁周
+    std::vector<std::string> major_seen;    // 本项目已触发的重大事件 id
+};
+
+struct EventState {
+    std::vector<PendingEvent> pending;
+    std::optional<int> last_event_week;
+    std::map<std::string, WorkEventState> per_work;
+};
+
 struct GameState {
     int version = kContractVersion;
     std::uint32_t seed = 0;
@@ -194,7 +237,7 @@ struct GameState {
     Json partners = Json::array();
     Json committees = Json::array();
     Json market = Json::object();
-    Json events = Json::object();
+    EventState events;
     Finance finance;
     Json archive = Json::object();
 };
@@ -210,6 +253,8 @@ void to_json(Json& j, const Project& value);
 void from_json(const Json& j, Project& value);
 void to_json(Json& j, const Finance& value);
 void from_json(const Json& j, Finance& value);
+void to_json(Json& j, const EventState& value);
+void from_json(const Json& j, EventState& value);
 void to_json(Json& j, const GameState& value);
 void from_json(const Json& j, GameState& value);
 
