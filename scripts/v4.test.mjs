@@ -62,6 +62,10 @@ test('initialize 生成合法状态，同 seed 哈希一致', () => {
   assert.equal(first.state.version, 4)
   assert.equal(first.state.company.week, 0)
   assert.equal(first.state.staff.length, 3)
+  assert.equal(first.state.staff[0].signing_fee, 0)
+  assert.equal('project_fee' in first.state.staff[0], false)
+  assert.deepEqual(first.state.finance.loans, [])
+  assert.equal(first.state.finance.solvency.state, 'normal')
   assert.equal(hashA, hashB)
 })
 
@@ -289,6 +293,64 @@ test('现金不足时整周不提交，状态与流水都不变', () => {
   assert.equal(state.company.week, 0)
   assert.equal(state.finance.entries.length, 0)
   assert.equal(findItem(state, 'work_01', 'common.series_comp').work_done, 0)
+})
+
+test('v4 员工签约费只使用 signing_fee 口径', () => {
+  const state = setupTiny()
+  state.staff[0].signing_fee = 1234
+  const advanced = ok('advance_week', { state }).state
+  assert.equal(advanced.staff[0].signing_fee, 1234)
+  assert.equal('project_fee' in advanced.staff[0], false)
+
+  const legacy = JSON.parse(JSON.stringify(state))
+  delete legacy.staff[0].signing_fee
+  legacy.staff[0].project_fee = 1234
+  const rejected = call('advance_week', { state: legacy })
+  assert.equal(rejected.error?.code, 'INVALID_INPUT')
+})
+
+test('危机预留字段不得绕过非负现金约束', () => {
+  const base = setupTiny()
+  const reject = (mutate, pattern) => {
+    const state = JSON.parse(JSON.stringify(base))
+    mutate(state)
+    const result = call('advance_week', { state })
+    assert.equal(result.error?.code, 'INVALID_STATE')
+    assert.match(result.error.message, pattern)
+  }
+
+  reject((state) => { state.finance.solvency.state = 'crisis' }, /INV-18/)
+  reject((state) => { state.finance.loans = [{ id: 'future_loan' }] }, /INV-18/)
+  reject((state) => { state.finance.loans = {} }, /INV-18/)
+
+  for (const key of ['loans', 'solvency']) {
+    const state = JSON.parse(JSON.stringify(base))
+    delete state.finance[key]
+    const result = call('advance_week', { state })
+    assert.equal(result.error?.code, 'INVALID_INPUT')
+  }
+  for (const key of ['state', 'since_week', 'deadline_week', 'gap']) {
+    const state = JSON.parse(JSON.stringify(base))
+    delete state.finance.solvency[key]
+    const result = call('advance_week', { state })
+    assert.equal(result.error?.code, 'INVALID_INPUT')
+  }
+
+  const negative = (crisis) => {
+    const state = JSON.parse(JSON.stringify(base))
+    state.finance.opening_funds = 100000
+    state.finance.balance = -110000
+    state.finance.entries = [{
+      id: 'negative.fixture', week: 0, work_id: null, category: 'salary',
+      amount: -210000, counterparty: null, memo: 'negative balance fixture'
+    }]
+    if (crisis) state.finance.solvency.state = 'crisis'
+    const result = call('advance_week', { state })
+    assert.equal(result.error?.code, 'INVALID_STATE')
+    assert.match(result.error.message, crisis ? /INV-18/ : /INV-25/)
+  }
+  negative(false)
+  negative(true)
 })
 
 test('双项目隔离：产出不串项目，作者不串项目', () => {

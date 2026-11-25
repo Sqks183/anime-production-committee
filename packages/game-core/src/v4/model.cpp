@@ -135,7 +135,7 @@ void to_json(Json& j, const Staff& value) {
              {"revealed_potential", bools_to_json(value.revealed_potential)},
              {"talent_type", value.talent_type},
              {"weekly_salary", value.weekly_salary},
-             {"project_fee", value.project_fee},
+             {"signing_fee", value.signing_fee},
              {"fatigue", value.fatigue},
              {"morale", value.morale},
              {"departure_warning", value.departure_warning},
@@ -155,7 +155,7 @@ void from_json(const Json& j, Staff& value) {
     value.revealed_potential = bools_from_json(j.value("revealed_potential", Json::object()));
     value.talent_type = j.value("talent_type", std::string{});
     value.weekly_salary = j.value("weekly_salary", static_cast<std::int64_t>(0));
-    value.project_fee = j.value("project_fee", static_cast<std::int64_t>(0));
+    value.signing_fee = j.value("signing_fee", static_cast<std::int64_t>(0));
     value.fatigue = j.value("fatigue", 0);
     value.morale = j.value("morale", 0);
     value.departure_warning = j.value("departure_warning", false);
