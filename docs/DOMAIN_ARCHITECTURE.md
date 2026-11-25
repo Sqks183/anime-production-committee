@@ -53,7 +53,7 @@ v1.0 只给了骨架，并把"公共制作 + 单集 + 工作项"和"资金危机
 
 | 事项 | 已确认结论 | 决策编号 |
 | --- | --- | --- |
-| 招聘/人员调整窗口 | 不要求全公司空闲；成本立即入账、下周生效 | DEC-PLAY-003 |
+| 招聘/人员调整窗口 | 不要求全公司空闲；核心员工签约即入职、当周可分配；签约费立即入账，首周周薪从当周下一次周结算起算 | DEC-PLAY-003 |
 | 交付时机 | 门槛达标后玩家可主动交付；交付即停止生产 | DEC-PROD-004 |
 | 危机期间的时间与成本 | 推进周数、继续计提固定成本、允许现金暂时为负；只允许融资，禁止其他新增承诺与新增项目支出 | DEC-FIN-003 |
 | 项目内定向 | 每项目至多一个目标（单集/阶段/无），只调排序优先级，不额外花钱 | DEC-PLAY-004 |
@@ -955,7 +955,7 @@ WorkRecord { id, name, ip_id, source, genre, scale, mode, investment_percent,
 | `start_work(offer_id, mode, percent, committee_partner_ids)` | Application | 公司 running；企划存在；声望与成绩条件；模式合法；现金足够支付投资 | Project 建立、委员会成立、Market 消费企划、Finance 记投资与合同预算、员工可归属 |
 | `set_work_plan(work_id, plan)` | Project | 公司 running；项目 producing；`plan.target` 须引用本项目单集/阶段，至多一个 | 更新计划（含定向目标），下个结算生效 |
 | `assign_staff(staff_id, work_id \| null)` | Staff | 项目存在且 producing；核心员工每周仅能归属一个项目；传 null 为撤出 | 更新唯一项目归属，下一次结算生效 |
-| `hire_core(staff_id)` / `scout(...)` / `dismiss_staff(staff_id)` | Staff + Finance | 公司 running；无待处理事件；非资金危机；现金；名册上限（若有）。不要求全公司空闲（DEC-PLAY-003） | 名册变化、签约费/遣散费入账 |
+| `hire_core(staff_id)` / `scout(...)` / `dismiss_staff(staff_id)` | Staff + Finance | 公司 running；无待处理事件；非资金危机；现金；名册上限（若有）。不要求全公司空闲（DEC-PLAY-003） | `hire_core` 签约即入职、立即进入核心名册并可当周分配；签约费入账，首周周薪计入本周下一次结算 |
 | `hire_temporary(work_id, candidate_id)` | Staff + Finance | 项目 producing；现金 | 临时合同建立、项目费入账 |
 | `sign_outsourcing(work_id, item_id, supplier_id, work_total, mode)` | Vendor + Finance | 工作项已解锁；专业匹配；供应商产能余量；现金 | 合同建立、费用入账、占用产能 |
 | `deliver_work(work_id)` | Project + Application | 全部门槛项已交付；未过截止 | 转 delivering 并当次结清（§7.3.6） |
@@ -1036,7 +1036,7 @@ UI 不计算规则。核心在每次命令后输出读模型；读模型**不持
 
 | 操作 | 现金 | 数值效果 |
 | --- | --- | --- |
-| 招聘核心员工 | 签约费立即入账 | 下一周结算起计薪、可被分配 |
+| 招聘核心员工 | 签约费立即入账 | 签约确认即入职、当周可被分配；首周周薪从签约后当前经营周的下一次周结算起计提 |
 | 雇佣临时人员 | 项目费立即入账 | 下一周结算起可参与，绑定该项目 |
 | 外包签约 | 费用立即入账 | 最近一次结算起按周产能交付 |
 | 买电视服务 | 发行费立即入账 | 立即开放渠道，交付时参与分账 |
