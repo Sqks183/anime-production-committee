@@ -265,6 +265,7 @@ export const prototypeData: PrototypeData = {
       state: 'event_pending',
       stateNote: '本周结算已提交。有一张事件卡等待处理，另有 3 项属于玩家专属决定；持续方针没有打断。',
       crisis: null,
+      closing: null,
       headline: '《小满》只差完成母版，第 7 集原画缺口成为本周唯一硬约束。',
       cashDelta: -16_000,
       costLines: [
@@ -319,6 +320,11 @@ export const prototypeData: PrototypeData = {
           { id: 'o2', label: '推迟到第 21 周集中返工', cost: 12_000, gain: '保住本周产出', risk: 'high', riskNote: '返工压力累积到动画与作画检查，若届时疲劳未缓解损失更大', fits: '只在本周绝不能延期时' },
           { id: 'o3', label: '交给明石動画修正', cost: 46_000, gain: '进度与质量同时保住', risk: 'low', riskNote: '该供应商可靠性 62，可能仍需二次修正；委员会会看到外包比例上升', fits: '现金有余量时' },
         ],
+        outcomes: {
+          o1: '样本结果：本周返工，质量 +2；第 7 集原画顺延约一周，事件关闭。',
+          o2: '样本结果：本周产出保住，确定代价 ¥12,000；返工压力延后到第 21 周。',
+          o3: '样本结果：确定代价 ¥46,000，进度与质量按样本兑现；供应商仍保留二次修正风险。',
+        },
       },
     },
     {
@@ -326,6 +332,7 @@ export const prototypeData: PrototypeData = {
       state: 'normal',
       stateNote: '正常经营周：只有 1 项需要玩家决定，其余由持续方针自动推进。',
       crisis: null,
+      closing: null,
       headline: '委员会首期投资到账，资金危机解除；第 6 集达到最低交付。',
       cashDelta: 900_000,
       costLines: [
@@ -371,6 +378,7 @@ export const prototypeData: PrototypeData = {
           '推进周数：危机期间周数照常前进',
         ],
       },
+      closing: null,
       headline: '工资与运营照付，但下周强制支出比现金多 ¥316,000。',
       cashDelta: -278_000,
       costLines: [
@@ -387,6 +395,29 @@ export const prototypeData: PrototypeData = {
       autoExecuted: ['危机期间制作费不计提，所有项目本周工作量为 0，系统没有自动生产。'],
       reportOnly: ['周数照常推进：第 16 周 → 第 17 周。', '现金允许暂时为负，负数表示欠付，不自动借款。'],
       nextFocus: ['第 17 周：委员会首期投资到账即可解除危机。', '第 19 周：危机期限届满仍未覆盖强制费用将进入破产结算。'],
+      event: null,
+    },
+    {
+      week: 19,
+      state: 'closing',
+      stateNote: '假设第 19 周仍未恢复偿付能力：公司进入关闭流程，不再推进经营周；只能结清待交付项目并生成经营总结。',
+      crisis: null,
+      closing: {
+        reason: 'bankrupt', cash: 96_000, pendingProjectIds: ['p1', 'p2', 'p3'],
+        allowedActions: ['结清已经达到最低交付门槛的作品或单集', '生成经营总结'],
+        blockedActions: ['推进经营周', '立项、招聘、签约外包或新增项目支出', '自动借款或自动追加投资'],
+      },
+      headline: '危机期限届满，经营动作停止；待交付作品进入公司关闭交付。',
+      cashDelta: 0,
+      costLines: [],
+      projectLines: [],
+      staffLines: [],
+      mustDecide: [
+        { id: 'd19', projectId: 'p1', kind: 'delivery', label: '结清《雾港信使 II》已达标单集', detail: '第 6 集达到最低交付门槛，可进入关闭交付；其余未达标项目不能伪报完成。', options: ['预览第 6 集关闭交付', '查看未达标项目的阻塞原因'] },
+      ],
+      autoExecuted: ['经营周不再推进，不再生成新的事件、市场报价或制作产出。'],
+      reportOnly: ['现金 ¥96,000 保留在公司单一现金池，项目账不形成独立钱包。', '已交付作品仍进入 Archive，供经营总结引用。'],
+      nextFocus: ['完成待交付结清后生成经营总结。'],
       event: null,
     },
   ],

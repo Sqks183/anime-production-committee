@@ -119,6 +119,57 @@ it('周次快照里的工作项可跳回对应作品，不改动周数据', asyn
   expect(screen.getByRole('region', { name: /《小满》只差完成母版/ })).toBeInTheDocument()
 })
 
+it('事件卡可选择并确认，样本结果在切换周次后保留', async () => {
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '每周经营' }))
+  const confirm = screen.getByRole('button', { name: '确认处理（原型）' })
+  expect(confirm).toBeDisabled()
+  await user.click(screen.getByRole('radio', { name: '选择本周返工' }))
+  await user.click(confirm)
+  const result = screen.getByRole('region', { name: '事件处理结果' })
+  expect(result).toHaveTextContent('样本结果：本周返工，质量 +2')
+  expect(screen.getByRole('status')).toHaveTextContent('事件已处理（原型）')
+  expect(screen.getByRole('radio', { name: '选择本周返工' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: /第 17 周/ }))
+  await user.click(screen.getByRole('button', { name: /第 18 周/ }))
+  expect(screen.getByRole('region', { name: '事件处理结果' })).toHaveTextContent('样本结果：本周返工，质量 +2')
+  expect(prototypeData.receipts[0].event?.options[0].id).toBe('o1')
+})
+
+it('公司总览内可筛选单一现金池流水，Archive 只展示已交付作品', async () => {
+  const user = userEvent.setup()
+  const finance = screen.getByRole('region', { name: '公司现金流水与项目归因' })
+  expect(within(finance).getByText('¥980,000')).toBeInTheDocument()
+  expect(finance).toHaveTextContent('项目归因只解释现金为何变化，不是项目独立账户')
+  await user.selectOptions(within(finance).getByRole('combobox', { name: '周次' }), '18')
+  await user.selectOptions(within(finance).getByRole('combobox', { name: '归因' }), 'p1')
+  const table = within(finance).getByRole('table', { name: '公司现金流水' })
+  expect(within(table).getAllByRole('row')).toHaveLength(3)
+  expect(table).toHaveTextContent('《雾港II》第 7 集原画制作费')
+  expect(table).not.toHaveTextContent('《夜行电车》第二期合同款')
+  const archive = screen.getByRole('region', { name: '作品 Archive 与经营历史' })
+  expect(within(archive).getAllByRole('listitem')).toHaveLength(prototypeData.history.length)
+  expect(within(archive).getByText('雾港信使')).toBeInTheDocument()
+  expect(within(archive).queryByText('雾港信使 II')).not.toBeInTheDocument()
+  expect(within(archive).queryByText('小满')).not.toBeInTheDocument()
+})
+
+it('关闭中停止周推进，只可预览达标结清和经营总结', async () => {
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '每周经营' }))
+  await user.click(screen.getByRole('button', { name: /第 19 周/ }))
+  expect(screen.getByRole('status')).toHaveTextContent('关闭中')
+  expect(screen.getByRole('button', { name: '推进本周' })).toBeDisabled()
+  expect(screen.getByText('不可用：公司已进入结束流程。')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '预览待交付结清' }))
+  const delivery = screen.getByRole('region', { name: '待交付结清预览' })
+  expect(delivery).toHaveTextContent('第 6 集可关闭交付')
+  expect(delivery).toHaveTextContent('没有达到门槛的单集，不能伪报完成')
+  await user.click(screen.getByRole('button', { name: '预览经营总结' }))
+  expect(screen.getByRole('region', { name: '经营总结预览' })).toHaveTextContent('正式总结必须来自核心 calculate_result')
+  expect(screen.queryByRole('region', { name: '待交付结清预览' })).not.toBeInTheDocument()
+})
+
 it('标注体系覆盖四类信息口径', () => {
   expect(screen.getAllByText('待细化参数').length).toBeGreaterThan(0)
   expect(screen.getAllByText('原型样本').length).toBeGreaterThan(0)
@@ -151,7 +202,11 @@ it('样本数据自证已确认规则：单项目归属、六阶段门槛与推�
       if (episode.status === 'not_started') expect(episode.workItems.every((item) => item.workDone === 0)).toBe(true)
     }
   }
-  expect(prototypeData.receipts.map((item) => item.state).sort()).toEqual(['cash_crisis', 'event_pending', 'normal'])
+  expect(prototypeData.receipts.map((item) => item.state).sort()).toEqual(['cash_crisis', 'closing', 'event_pending', 'normal'])
+  for (const receipt of prototypeData.receipts) {
+    expect(receipt.state === 'closing' ? receipt.closing !== null : receipt.closing === null).toBe(true)
+    if (receipt.event) expect(Object.keys(receipt.event.outcomes).sort()).toEqual(receipt.event.options.map((option) => option.id).sort())
+  }
 })
 
 it('生产入口只在 ?view=prototype 时进入原型，默认仍是原界面', () => {

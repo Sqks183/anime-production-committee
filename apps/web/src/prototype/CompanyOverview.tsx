@@ -1,6 +1,7 @@
 import { channelNames, deliveredEpisodes, heatNames, markNames, modeNames, offerOriginNames, projectCompletion, roleNames, scaleNames, sourceNames, sumWork } from './model'
 import type { PrototypeData, RiskLevel } from './model'
 import { Bar, Panel, RiskTag, Stat, yuan } from './bits'
+import { FinanceArchive } from './FinanceArchive'
 
 const riskOrder: Record<RiskLevel, number> = { high: 0, medium: 1, low: 2 }
 
@@ -24,7 +25,7 @@ export function CompanyOverview({ data, onOpen }: { data: PrototypeData; onOpen:
         <Stat label="可支撑周数" value={`${company.runwayWeeks} 周`} hint="按当前承诺支出估算，未计未来回款；预检失败进入限时资金危机，不自动借款、不自动破产" />
         <Stat label="公司声望" value={String(company.reputation)} hint="影响可接触企划、人才与合作方" />
       </dl>
-      <p className="proto-footnote">现金按周统一结算，同一笔钱只扣一次；项目账只用于分析单部作品表现，不代表公司还能花多少钱。</p>
+      <p className="proto-footnote">现金按周统一结算，同一笔钱只扣一次；项目账只用于分析单部作品表现，不代表公司还能花多少钱。 <a href="#finance-archive">查看财务与历史</a></p>
     </Panel>
 
     <Panel eyebrow="PORTFOLIO / 项目组合" title="同时在制的作品" marks={['confirmed', 'sample']}
@@ -112,6 +113,8 @@ export function CompanyOverview({ data, onOpen }: { data: PrototypeData; onOpen:
       </div>
       <p className="proto-footnote">委员会随单部作品成立、结算后停止活动，但成员关系转入公司长期关系；上表为原型样本，不代表正式解锁条件。</p>
     </Panel>
+
+    <FinanceArchive data={data} />
 
     <p className="proto-legend">图示：{(['confirmed', 'proposal', 'pending', 'sample'] as const).map((mark) => <span key={mark} className={`mark mark-${mark}`}>{markNames[mark]}</span>)}
       <span className="legend-note">「待细化参数」指框架第 11 节列出的参数；第 12 节 D1–D6 均已由负责人确认，本页不把它们重列为待决事项。</span></p>

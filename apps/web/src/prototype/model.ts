@@ -287,12 +287,21 @@ export interface EventCard {
   description: string
   signals: string[]
   options: EventOption[]
+  outcomes: Record<string, string>
   deadlineWeek: number
 }
 
-/* 三种周状态要有可辨认的操作差异：正常周不打断、事件周处理一次、危机周有倒计时与硬约束。 */
-export type WeekState = 'normal' | 'event_pending' | 'cash_crisis'
-export const weekStateNames: Record<WeekState, string> = { normal: '正常经营', event_pending: '事件待处理', cash_crisis: '限时资金危机' }
+/* 正常、事件、危机与关闭中的操作差异必须可辨认；关闭中沿用 M0 已冻结的结清边界。 */
+export type WeekState = 'normal' | 'event_pending' | 'cash_crisis' | 'closing'
+export const weekStateNames: Record<WeekState, string> = { normal: '正常经营', event_pending: '事件待处理', cash_crisis: '限时资金危机', closing: '关闭中' }
+
+export interface CompanyClosing {
+  reason: 'bankrupt' | 'voluntary'
+  cash: number
+  pendingProjectIds: string[]
+  allowedActions: string[]
+  blockedActions: string[]
+}
 
 export interface CashCrisis {
   deadlineWeek: number
@@ -306,6 +315,7 @@ export interface WeeklyReceipt {
   state: WeekState
   stateNote: string
   crisis: CashCrisis | null
+  closing: CompanyClosing | null
   headline: string
   cashDelta: number
   costLines: { category: LedgerCategory; label: string; amount: number }[]
