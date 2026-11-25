@@ -20,6 +20,9 @@ EMSCRIPTEN_BINDINGS(apc_v4) {
     emscripten::function("buy_tv_service", &apc::v4::buy_tv_service);
     emscripten::function("request_extension", &apc::v4::request_extension);
     emscripten::function("advance_week", &apc::v4::advance_week);
+    emscripten::function("end_company", &apc::v4::end_company);
+    emscripten::function("finalize_delivery", &apc::v4::finalize_delivery);
+    emscripten::function("finalize_company", &apc::v4::finalize_company);
     emscripten::function("resolve_event", &apc::v4::resolve_event);
     emscripten::function("view_event", &apc::v4::view_event);
     emscripten::function("hash_state", &apc::v4::hash_state);

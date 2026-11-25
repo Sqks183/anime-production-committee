@@ -1009,3 +1009,116 @@ test('M2 归档后新立项不复用已归档作品 id', () => {
   assert.equal(next.work_id, 'work_02')
   assert.equal(next.state.works[0].id, 'work_02')
 })
+
+function gatesOf(state, workId) {
+  const work = state.works.find((entry) => entry.id === workId)
+  const gates = []
+  for (const episode of work.episodes) {
+    for (const stage of episode.stages) {
+      for (const item of stage.items) if (item.is_gate) gates.push(item)
+    }
+  }
+  return gates
+}
+
+test('M2 到期强制交付：未达门槛在结算周自动交付，按完成度扣罚并归档 deadline', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state = ok('start_work', { state, offer_id: 'offer_02', mode: 'contract' }).state
+  state.works[0].deadline_week = 1
+  for (const item of gatesOf(state, 'work_01')) item.work_done = Math.floor(item.work_total * 4 / 10)
+
+  state = ok('advance_week', { state }).state
+  state.events.pending = []
+  const result = ok('advance_week', { state })
+
+  assert.equal(result.report.settlements.length, 1)
+  const settlement = result.report.settlements[0]
+  assert.equal(settlement.end_reason, 'deadline')
+  assert.equal(settlement.forced, true)
+  assert.ok(settlement.gate_completion_permille > 0 && settlement.gate_completion_permille < 1000)
+  // 90 万预算 × 缺口比例 × 30% 扣罚（逐层整数截断，与核心同序）
+  const expectedPenalty = Math.floor(Math.floor(900000 * (1000 - settlement.gate_completion_permille) / 1000) * 300 / 1000)
+  assert.equal(settlement.penalty, expectedPenalty)
+  assert.equal(result.state.works.length, 0)
+  const record = result.state.archive.works[0]
+  assert.equal(record.end_reason, 'deadline')
+  assert.equal(record.forced, true)
+  assert.equal(record.gate_completion_permille, settlement.gate_completion_permille)
+  assert.equal(record.finance_summary.penalty, expectedPenalty)
+  assert.equal(result.state.company.status, 'running')
+})
+
+test('M2 到期交付：门槛已达成按 completed 正常计价，不扣罚', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state = ok('start_work', { state, offer_id: 'offer_04', mode: 'contract' }).state
+  state = completeWork(state, 'work_01', 70)
+  state.works[0].deadline_week = 1
+
+  state = ok('advance_week', { state }).state
+  state.events.pending = []
+  const result = ok('advance_week', { state })
+
+  const settlement = result.report.settlements[0]
+  assert.equal(settlement.end_reason, 'completed')
+  assert.equal(settlement.forced, false)
+  assert.equal(settlement.gate_completion_permille, 1000)
+  assert.equal(settlement.penalty, 0)
+  assert.equal(result.state.archive.works[0].end_reason, 'completed')
+})
+
+test('M2 关闭路径：end_company 锁 closing，finalize_delivery 结清，finalize_company 只生成一次结局', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state = ok('start_work', { state, offer_id: 'offer_01', mode: 'contract' }).state
+  state = assign(state, 'staff_dir')
+  state = completeWork(state, 'work_01', 70)
+
+  const closing = ok('end_company', { state })
+  assert.equal(closing.state.company.status, 'closing')
+  assert.equal(closing.state.company.end_reason, 'voluntary')
+  assert.equal(closing.state.works[0].status, 'delivering')
+  assert.equal(closing.state.staff.find((s) => s.id === 'staff_dir').assignment_work_id, null)
+  assert.equal(call('advance_week', { state: closing.state }).error.code, 'COMPANY_ENDED')
+  assert.equal(call('deliver_work', { state: closing.state, work_id: 'work_01' }).error.code, 'COMPANY_ENDED')
+  assert.equal(call('finalize_delivery', { state, work_id: 'work_01' }).error.code, 'INVALID_PHASE')
+  assert.equal(call('end_company', { state: closing.state }).error.code, 'COMPANY_ENDED')
+
+  const settled = ok('finalize_delivery', { state: closing.state, work_id: 'work_01' })
+  assert.equal(settled.company_status, 'ended')
+  assert.equal(settled.report.end_reason, 'company_closed')
+  assert.equal(settled.report.forced, false)
+  assert.equal(settled.state.works.length, 0)
+
+  const outcome = ok('finalize_company', { state: settled.state })
+  assert.equal(outcome.result.reason, 'voluntary')
+  assert.equal(outcome.result.total_projects, 1)
+  assert.equal(outcome.result.best_work_id, 'work_01')
+  assert.equal(outcome.result.rating, settled.report.rating)
+  assert.equal(outcome.result.final_funds, outcome.state.finance.balance)
+  assert.equal(outcome.state.archive.company_result.reason, 'voluntary')
+  assert.equal(call('finalize_company', { state: outcome.state }).error.code, 'INVALID_PHASE')
+})
+
+test('M2 第 520 周：完成当周结算后锁 closing/time_limit，剩余项目转 company_closed', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state = ok('start_work', { state, offer_id: 'offer_01', mode: 'contract' }).state
+  state.company.week = 519
+  state.works[0].deadline_week = 600
+
+  const result = ok('advance_week', { state })
+  assert.equal(result.state.company.week, 520)
+  assert.equal(result.state.company.status, 'closing')
+  assert.equal(result.state.company.end_reason, 'time_limit')
+  assert.equal(result.state.works[0].status, 'delivering')
+  assert.equal(result.report.events.reason, 'company_closed')
+
+  const settled = ok('finalize_delivery', { state: result.state, work_id: 'work_01' })
+  assert.equal(settled.report.end_reason, 'company_closed')
+  assert.equal(settled.report.forced, true)
+  assert.equal(settled.report.gate_completion_permille, 0)
+  assert.equal(settled.company_status, 'ended')
+
+  const outcome = ok('finalize_company', { state: settled.state })
+  assert.equal(outcome.result.reason, 'time_limit')
+  assert.equal(outcome.result.weeks, 520)
+  assert.equal(outcome.result.negatives.length, 1)
+})

@@ -28,6 +28,9 @@ std::string deliver_work(const std::string& input);      // M0 命令 10：{stat
 std::string buy_tv_service(const std::string& input);    // M0 命令 15：{state, work_id}
 std::string request_extension(const std::string& input); // M0 命令 16：{state, work_id}
 std::string advance_week(const std::string& input);      // M0 命令 18：{state}
+std::string end_company(const std::string& input);       // M0 命令 20：{state}
+std::string finalize_delivery(const std::string& input); // M0 命令 21：{state, work_id}
+std::string finalize_company(const std::string& input);  // M0 命令 22：{state}
 std::string hash_state(const std::string& input);        // {state}
 
 // M0 契约名适配层（薄封装，不改变语义）：

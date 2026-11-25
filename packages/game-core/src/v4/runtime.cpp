@@ -314,6 +314,9 @@ std::vector<std::string> validate(const GameState& state) {
     for (const auto& work : state.works) {
         claim_id(work.id, "work");
         if (!work_ids.insert(work.id).second) error("INV-02 work.id 重复: " + work.id);
+        if (!one_of_text(work.status, {"planning", "producing", "delivering", "settled"})) {
+            error("INV-01 project.status 非法: " + work.id);
+        }
         if (work.episodes.empty()) error("INV-06 项目没有单集: " + work.id);
         if (!work.common.id.empty()) claim_id(work.common.id, "common");
 
@@ -524,6 +527,11 @@ std::vector<std::string> validate(const GameState& state) {
             if (!one_of_text(record.value("rating", std::string{}), {"S", "A", "B", "C", "D"})) {
                 error("INV-01 archive.rating 非法: " + record_id);
             }
+            if (!one_of_text(record.value("end_reason", std::string{}), {"completed", "deadline", "company_closed"})) {
+                error("INV-01 archive.end_reason 非法: " + record_id);
+            }
+            const int gcp = record.value("gate_completion_permille", 1000);
+            if (gcp < 0 || gcp > 1000) error("INV-01 archive.gate_completion_permille 越界: " + record_id);
             const int end_week = record.value("end_week", -1);
             if (end_week < 0 || end_week > state.company.week) error("INV-01 archive.end_week 越界: " + record_id);
         }
@@ -758,6 +766,267 @@ void change_reputation(GameState& state, int delta, const std::string& reason) {
     state.company.reputation = std::max<std::int64_t>(0, state.company.reputation + delta);
     state.company.reputation_log.push_back(
         ReputationLog{state.company.week, reason, delta, state.company.reputation});
+}
+
+// ---------------- 交付结算（正常 / 到期强制 / 关闭结清共用）----------------
+// [PLACEHOLDER] 以下系数集中在此，等待数值标定；规则依据：
+// DOMAIN_ARCHITECTURE §7.3.6（gate_completion_permille 决定扣罚与评价修正）、
+// GAME_RULES 历史参数 deadline_revenue = 600‰（截止强制交付收入系数）。
+constexpr int kForcedCommercialPermille = 600;
+constexpr int kForcedPenaltyPermille = 300;   // 门槛完全未达时扣合同预算的 30%
+constexpr int kForcedScorePenaltyMax = 10;    // 评价修正上限（分）
+constexpr int kCrisisWeeks = 8;               // [PLACEHOLDER] 交付后负余额进入危机的期限
+
+// 门槛项完成度：逐项按 work_done/(deliver_at×work_total) 封顶 1000 后取平均。
+// 正常交付恒为 1000；只有强制/关闭路径会产生低于 1000 的值。
+int gate_completion_permille(const Project& work) {
+    std::int64_t sum = 0;
+    int count = 0;
+    walk_items(work, [&sum, &count](const WorkItem& item) {
+        if (!item.is_gate) return;
+        ++count;
+        const std::int64_t need = static_cast<std::int64_t>(item.deliver_at) * item.work_total;
+        if (need <= 0) {
+            sum += 1000;
+            return;
+        }
+        const std::int64_t have = static_cast<std::int64_t>(item.work_done) * 1000;
+        sum += std::min<std::int64_t>(1000, have * 1000 / need);
+    });
+    return count == 0 ? 0 : static_cast<int>(sum / count);
+}
+
+struct SettlementOutcome {
+    bool ok = false;
+    const char* code = "INVALID_STATE";
+    std::string message;
+    Json report = Json::object();
+};
+
+// 交付后余额为负：正常经营下进入资金危机（M2.5 只落地“进入”这一步，
+// 危机周结算与融资仍未实现）。
+void enter_crisis_if_negative(GameState& state) {
+    if (state.finance.balance >= 0 || state.company.status != "running") return;
+    if (state.finance.solvency.state == "crisis") {
+        state.finance.solvency.gap = -state.finance.balance;
+        return;
+    }
+    state.finance.solvency.state = "crisis";
+    state.finance.solvency.since_week = state.company.week;
+    state.finance.solvency.deadline_week = state.company.week + kCrisisWeeks;
+    state.finance.solvency.gap = -state.finance.balance;
+}
+
+// 关闭公司：不可逆。未交付项目转 delivering，等 finalize_delivery 逐个结清。
+// 归属与待处理事件必须同步释放：INV-09 只允许归属 producing 项目，
+// INV-23 只允许事件挂在 producing 项目上。
+void close_company(GameState& state, const std::string& reason) {
+    state.company.status = "closing";
+    state.company.end_reason = reason;
+    for (auto& work : state.works) {
+        if (work.status != "producing") continue;
+        work.status = "delivering";
+        work.delivery = Json{{"reason", "company_closed"}, {"at_week", state.company.week}};
+    }
+    for (auto& member : state.staff) member.assignment_work_id.reset();
+    state.events.pending.clear();
+    // 没有在制项目时无需逐个 finalize_delivery，直接结束（否则 closing→ended 无驱动）。
+    if (state.works.empty()) state.company.status = "ended";
+}
+
+// 一次交付结算：质量聚合 → 评级 → 渠道收入 → 分账/奖励/扣罚 → 声望 → 委员会 →
+// Archive → 清理。调用方负责守卫（producing / 门槛 / 截止）与最终 validate。
+SettlementOutcome settle_project(GameState& state, Project& work, const std::string& end_reason, bool forced) {
+    SettlementOutcome outcome;
+    const int week = state.company.week;
+    const std::string work_id = work.id;
+    const int gcp = forced ? gate_completion_permille(work) : 1000;
+
+    const auto quality = kernel::aggregate_work(work);
+    const int raw_score = quality.mean;
+    const int correction = forced ? std::min(kForcedScorePenaltyMax, (1000 - gcp) / 100) : 0;
+    const int score = clamp_int(raw_score - correction, 0, 100);
+    const std::string rating = rating_of(score);
+
+    const std::int64_t budget = work.offer.value("contract_budget", static_cast<std::int64_t>(0));
+    const std::string genre = work.offer.value("genre", std::string{});
+    const int qf = quality_factor(raw_score);
+    const int hf = heat_factor(state.market, genre);
+    const int rf = reputation_factor(state.company.reputation);
+
+    std::vector<std::string> channels = work.channels;
+    const auto add_channel = [&channels](const std::string& channel) {
+        if (std::find(channels.begin(), channels.end(), channel) == channels.end()) channels.push_back(channel);
+    };
+    if (work.committee_id) {
+        for (const auto& committee : state.committees) {
+            if (!committee.is_object() || committee.value("id", std::string{}) != *work.committee_id) continue;
+            for (const auto& member : committee.at("members")) {
+                if (member.is_object() && member.contains("channel")) add_channel(member.at("channel").get<std::string>());
+            }
+        }
+    }
+    if (work.tv_service.is_object() && work.tv_service.contains("channel")) {
+        add_channel(work.tv_service.at("channel").get<std::string>());
+    }
+
+    Json channel_report = Json::array();
+    std::int64_t gross_total = 0;
+    for (const auto& channel : channels) {
+        std::int64_t potential = 0;
+        if (work.offer.contains("channel_potentials") && work.offer.at("channel_potentials").is_object() &&
+            work.offer.at("channel_potentials").contains(channel) &&
+            work.offer.at("channel_potentials").at(channel).is_number_integer()) {
+            potential = work.offer.at("channel_potentials").at(channel).get<std::int64_t>();
+        }
+        std::int64_t gross = potential;
+        gross = gross * qf / 1000;
+        gross = gross * hf / 1000;
+        gross = gross * rf / 1000;
+        if (forced) gross = gross * kForcedCommercialPermille / 1000;
+        gross_total += gross;
+        channel_report.push_back(Json{{"channel", channel},
+                                      {"potential", potential},
+                                      {"quality_factor", qf},
+                                      {"heat_factor", hf},
+                                      {"reputation_factor", rf},
+                                      {"gross", gross}});
+    }
+
+    const int percent = work.investment.value("percent", 0);
+    std::int64_t company_share = 0;
+    std::int64_t reward = 0;
+    if (work.mode == "committee") {
+        company_share = gross_total * percent / 100;
+    } else if (gross_total >= budget) {
+        reward = budget * 200 / 1000;   // [PLACEHOLDER] 承制成功奖励 20%
+    }
+    // 强制交付扣罚：按门槛缺口比例扣合同预算的 kForcedPenaltyPermille‰。
+    const std::int64_t penalty =
+        forced ? budget * (1000 - gcp) / 1000 * kForcedPenaltyPermille / 1000 : static_cast<std::int64_t>(0);
+
+    if (company_share > 0) {
+        state.finance.entries.push_back(LedgerEntry{
+            "w" + std::to_string(week) + ".commercial." + work_id, week, work_id, "commercial_share_received",
+            company_share, work.committee_id, "channel settlement"});
+        state.finance.balance += company_share;
+    }
+    if (reward > 0) {
+        state.finance.entries.push_back(LedgerEntry{
+            "w" + std::to_string(week) + ".reward." + work_id, week, work_id, "success_reward_received",
+            reward, std::nullopt, "contract success reward"});
+        state.finance.balance += reward;
+    }
+    if (penalty > 0) {
+        state.finance.entries.push_back(LedgerEntry{
+            "w" + std::to_string(week) + ".penalty." + work_id, week, work_id, "penalty",
+            -penalty, std::nullopt, forced ? "forced delivery penalty" : "penalty"});
+        state.finance.balance -= penalty;
+    }
+
+    static const std::map<std::string, int> kReputationDelta{{"S", 8}, {"A", 5}, {"B", 2}, {"C", 0}, {"D", -5}};
+    const int reputation_delta = forced ? std::min(0, kReputationDelta.at(rating)) : kReputationDelta.at(rating);
+    change_reputation(state, reputation_delta, "作品交付 " + rating + (forced ? "（强制）" : ""));
+
+    // 委员会关闭 + 伙伴关系沉淀
+    if (work.committee_id) {
+        for (auto& committee : state.committees) {
+            if (!committee.is_object() || committee.value("id", std::string{}) != *work.committee_id) continue;
+            committee["status"] = "closed";
+            committee["closed_week"] = week;
+            static const std::map<std::string, int> kRelationshipDelta{{"S", 3}, {"A", 2}, {"B", 1}, {"C", 0}, {"D", -2}};
+            for (auto& partner : state.partners) {
+                if (!partner.is_object()) continue;
+                bool member = false;
+                for (const auto& m : committee.at("members")) {
+                    if (m.value("partner_id", std::string{}) == partner.value("id", std::string{})) member = true;
+                }
+                if (!member) continue;
+                const int delta = forced ? std::min(0, kRelationshipDelta.at(rating)) : kRelationshipDelta.at(rating);
+                partner["relationship"] = std::clamp(partner.value("relationship", 50) + delta, 0, 100);
+                if (!partner.contains("history") || !partner.at("history").is_array()) partner["history"] = Json::array();
+                partner["history"].push_back(Json{{"week", week}, {"work_id", work_id}, {"delta", delta},
+                                                  {"reason", std::string("作品交付 ") + rating}});
+            }
+        }
+    }
+
+    // Archive：只追加，记录交付所需事实与对账
+    Json episode_records = Json::array();
+    for (const auto& episode : work.episodes) {
+        const auto ep = kernel::aggregate_episode(episode);
+        Json dims = Json::object();
+        for (int i = 0; i < kDimensionCount; ++i) dims[kDimensions[static_cast<std::size_t>(i)]] = ep.dims[static_cast<std::size_t>(i)];
+        episode_records.push_back(Json{{"id", episode.id}, {"quality", Json{{"dims", dims}, {"mean", ep.mean}}}});
+    }
+    Json team = Json::array();
+    std::set<std::string> contributors;
+    walk_items(work, [&contributors](const WorkItem& item) {
+        for (const auto& id : item.contributors) contributors.insert(id);
+    });
+    for (const auto& id : contributors) {
+        const Staff* member = find_staff(state, id);
+        if (member != nullptr) team.push_back(Json{{"id", member->id}, {"name", member->name}, {"role", member->role}});
+    }
+    Json dims = Json::object();
+    for (int i = 0; i < kDimensionCount; ++i) dims[kDimensions[static_cast<std::size_t>(i)]] = quality.dims[static_cast<std::size_t>(i)];
+    Json record = Json{{"id", work_id},
+                       {"name", work.offer.value("name", std::string{})},
+                       {"source", work.offer.value("source", std::string{})},
+                       {"genre", genre},
+                       {"scale", work.offer.value("scale", std::string{})},
+                       {"mode", work.mode},
+                       {"investment_percent", percent},
+                       {"start_week", work.opened_week},
+                       {"end_week", week},
+                       {"end_reason", end_reason},
+                       {"forced", forced},
+                       {"gate_completion_permille", gcp},
+                       {"quality", Json{{"dims", dims}, {"mean", raw_score}}},
+                       {"quality_score", score},
+                       {"rating", rating},
+                       {"commercial_revenue", gross_total},
+                       {"company_received", company_share + reward},
+                       {"finance_summary", Json{{"contract_received", budget},
+                                                {"investment_paid", work.investment.value("paid", static_cast<std::int64_t>(0))},
+                                                {"commercial_share", company_share},
+                                                {"success_reward", reward},
+                                                {"penalty", penalty}}},
+                       {"channels", channel_report},
+                       {"episodes", episode_records},
+                       {"team", team}};
+    if (!state.archive.contains("works") || !state.archive.at("works").is_array()) state.archive["works"] = Json::array();
+    state.archive["works"].push_back(record);
+
+    outcome.report = Json{{"work_id", work_id},
+                          {"end_reason", end_reason},
+                          {"forced", forced},
+                          {"gate_completion_permille", gcp},
+                          {"rating", rating},
+                          {"quality_score", score},
+                          {"commercial_revenue", gross_total},
+                          {"company_received", company_share + reward},
+                          {"commercial_share", company_share},
+                          {"success_reward", reward},
+                          {"penalty", penalty},
+                          {"net_received", company_share + reward - penalty},
+                          {"channels", channel_report}};
+
+    // 清理：归属、事件、项目本体
+    for (auto& member : state.staff) {
+        if (member.assignment_work_id && *member.assignment_work_id == work_id) member.assignment_work_id.reset();
+    }
+    state.events.pending.erase(
+        std::remove_if(state.events.pending.begin(), state.events.pending.end(),
+                       [&work_id](const PendingEvent& event) { return event.work_id == work_id; }),
+        state.events.pending.end());
+    state.works.erase(std::remove_if(state.works.begin(), state.works.end(),
+                                     [&work_id](const Project& item) { return item.id == work_id; }),
+                      state.works.end());
+
+    enter_crisis_if_negative(state);
+    outcome.ok = true;
+    return outcome;
 }
 
 }  // namespace
@@ -1151,9 +1420,33 @@ std::string advance_week(const std::string& input) {
                                         {"fatigue", member.fatigue}, {"morale", member.morale}});
         }
 
+        // ---- 阶段 9–10：完成/到期 → 当周交付结算（玩家无需确认）----
+        // 已达门槛记 completed；未达门槛按当前进度强制交付（deadline），
+        // 扣罚与评价修正由 gate_completion_permille 决定。
+        Json settlements = Json::array();
+        std::vector<std::string> due;
+        for (const Project* work : ordered) {
+            if (work->status == "producing" && week >= work->deadline_week) due.push_back(work->id);
+        }
+        for (const auto& id : due) {
+            Project* target = find_work(state, id);
+            if (target == nullptr) continue;
+            const bool complete = target->deliverable();
+            const auto settled = settle_project(state, *target, complete ? "completed" : "deadline", !complete);
+            if (!settled.ok) return encode(error_body(settled.code, settled.message));
+            settlements.push_back(settled.report);
+        }
+
         // ---- 阶段 11：事件抽取（读本周已提交的结果，不碰账）----
         // 每个 producing 项目各自至多一条；已有待处理事件的项目不再追加。
-        const Json events_report = event::draw(state, week);
+        // 第 520 周先合法完成当周结算，再统一收尾：不再抽事件，剩余项目转 closing 结清。
+        Json events_report = Json::object();
+        if (week + 1 >= kMaxWeek) {
+            close_company(state, "time_limit");
+            events_report = Json{{"drawn", 0}, {"reason", "company_closed"}};
+        } else {
+            events_report = event::draw(state, week);
+        }
 
         state.company.week = week + 1;
 
@@ -1163,6 +1456,7 @@ std::string advance_week(const std::string& input) {
         Json report = Json{{"week", week},
                            {"works", works_report},
                            {"staff", staff_report},
+                           {"settlements", settlements},
                            {"events", events_report},
                            {"funds", Json{{"delta", -total_cost},
                                           {"balance", state.finance.balance},
@@ -1370,7 +1664,8 @@ std::string deliver_work(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
-        if (state.company.status == "ended") return encode(error_body("COMPANY_ENDED", "公司已结束"));
+        // 关闭后只允许 finalize_delivery / finalize_company（M0 §7 白名单）。
+        if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已关闭，不能直接交付"));
         if (!request.contains("work_id") || !request.at("work_id").is_string()) {
             return encode(error_body("INVALID_INPUT", "work_id 必须是字符串"));
         }
@@ -1379,7 +1674,7 @@ std::string deliver_work(const std::string& input) {
         if (work == nullptr) return encode(error_body("NOT_FOUND", "项目不存在"));
         if (work->status != "producing") return encode(error_body("INVALID_PHASE", "只有 producing 项目可以交付"));
         if (state.company.week > work->deadline_week) {
-            return encode(error_body("INVALID_PHASE", "已过截止，需走强制交付（M2.5 未实现）"));
+            return encode(error_body("INVALID_PHASE", "已过截止：到期强制交付由周结算自动执行"));
         }
 
         std::vector<std::string> unmet;
@@ -1397,165 +1692,11 @@ std::string deliver_work(const std::string& input) {
                                           {"items", unmet}}}});
         }
 
-        const int week = state.company.week;
-        const auto quality = kernel::aggregate_work(*work);
-        const int score = quality.mean;
-        const std::string rating = rating_of(score);
-        const int64_t budget = work->offer.value("contract_budget", static_cast<std::int64_t>(0));
-        const std::string genre = work->offer.value("genre", std::string{});
-        const int qf = quality_factor(score);
-        const int hf = heat_factor(state.market, genre);
-        const int rf = reputation_factor(state.company.reputation);
-
-        std::vector<std::string> channels = work->channels;
-        const auto add_channel = [&channels](const std::string& channel) {
-            if (std::find(channels.begin(), channels.end(), channel) == channels.end()) channels.push_back(channel);
-        };
-        if (work->committee_id) {
-            for (const auto& committee : state.committees) {
-                if (!committee.is_object() || committee.value("id", std::string{}) != *work->committee_id) continue;
-                for (const auto& member : committee.at("members")) {
-                    if (member.is_object() && member.contains("channel")) add_channel(member.at("channel").get<std::string>());
-                }
-            }
-        }
-        if (work->tv_service.is_object() && work->tv_service.contains("channel")) {
-            add_channel(work->tv_service.at("channel").get<std::string>());
-        }
-
-        Json channel_report = Json::array();
-        std::int64_t gross_total = 0;
-        for (const auto& channel : channels) {
-            int64_t potential = 0;
-            if (work->offer.contains("channel_potentials") && work->offer.at("channel_potentials").is_object() &&
-                work->offer.at("channel_potentials").contains(channel) &&
-                work->offer.at("channel_potentials").at(channel).is_number_integer()) {
-                potential = work->offer.at("channel_potentials").at(channel).get<std::int64_t>();
-            }
-            int64_t gross = potential;
-            gross = gross * qf / 1000;
-            gross = gross * hf / 1000;
-            gross = gross * rf / 1000;
-            gross_total += gross;
-            channel_report.push_back(Json{{"channel", channel},
-                                          {"potential", potential},
-                                          {"quality_factor", qf},
-                                          {"heat_factor", hf},
-                                          {"reputation_factor", rf},
-                                          {"gross", gross}});
-        }
-
-        const int percent = work->investment.value("percent", 0);
-        std::int64_t company_share = 0;
-        std::int64_t reward = 0;
-        if (work->mode == "committee") {
-            company_share = gross_total * percent / 100;
-        } else if (gross_total >= budget) {
-            reward = budget * 200 / 1000;   // [PLACEHOLDER] 承制成功奖励 20%
-        }
-
-        if (company_share > 0) {
-            state.finance.entries.push_back(LedgerEntry{
-                "w" + std::to_string(week) + ".commercial." + work_id, week, work_id, "commercial_share_received",
-                company_share, work->committee_id, "channel settlement"});
-            state.finance.balance += company_share;
-        }
-        if (reward > 0) {
-            state.finance.entries.push_back(LedgerEntry{
-                "w" + std::to_string(week) + ".reward." + work_id, week, work_id, "success_reward_received",
-                reward, std::nullopt, "contract success reward"});
-            state.finance.balance += reward;
-        }
-
-        static const std::map<std::string, int> kReputationDelta{{"S", 8}, {"A", 5}, {"B", 2}, {"C", 0}, {"D", -5}};
-        change_reputation(state, kReputationDelta.at(rating), "作品交付 " + rating);
-
-        // 委员会关闭 + 伙伴关系沉淀
-        if (work->committee_id) {
-            for (auto& committee : state.committees) {
-                if (!committee.is_object() || committee.value("id", std::string{}) != *work->committee_id) continue;
-                committee["status"] = "closed";
-                committee["closed_week"] = week;
-                static const std::map<std::string, int> kRelationshipDelta{{"S", 3}, {"A", 2}, {"B", 1}, {"C", 0}, {"D", -2}};
-                for (auto& partner : state.partners) {
-                    if (!partner.is_object()) continue;
-                    bool member = false;
-                    for (const auto& m : committee.at("members")) {
-                        if (m.value("partner_id", std::string{}) == partner.value("id", std::string{})) member = true;
-                    }
-                    if (!member) continue;
-                    const int delta = kRelationshipDelta.at(rating);
-                    partner["relationship"] = std::clamp(partner.value("relationship", 50) + delta, 0, 100);
-                    if (!partner.contains("history") || !partner.at("history").is_array()) partner["history"] = Json::array();
-                    partner["history"].push_back(Json{{"week", week}, {"work_id", work_id}, {"delta", delta},
-                                                      {"reason", std::string("作品交付 ") + rating}});
-                }
-            }
-        }
-
-        // Archive：只追加，记录交付所需事实与对账
-        Json episode_records = Json::array();
-        for (const auto& episode : work->episodes) {
-            const auto ep = kernel::aggregate_episode(episode);
-            Json dims = Json::object();
-            for (int i = 0; i < kDimensionCount; ++i) dims[kDimensions[static_cast<std::size_t>(i)]] = ep.dims[static_cast<std::size_t>(i)];
-            episode_records.push_back(Json{{"id", episode.id}, {"quality", Json{{"dims", dims}, {"mean", ep.mean}}}});
-        }
-        Json team = Json::array();
-        std::set<std::string> contributors;
-        for_each_item(*work, [&contributors](const WorkItem& item, const std::string&, const std::string&) {
-            for (const auto& id : item.contributors) contributors.insert(id);
-        });
-        for (const auto& id : contributors) {
-            const Staff* member = find_staff(state, id);
-            if (member != nullptr) team.push_back(Json{{"id", member->id}, {"name", member->name}, {"role", member->role}});
-        }
-        Json dims = Json::object();
-        for (int i = 0; i < kDimensionCount; ++i) dims[kDimensions[static_cast<std::size_t>(i)]] = quality.dims[static_cast<std::size_t>(i)];
-        Json record = Json{{"id", work_id},
-                           {"name", work->offer.value("name", std::string{})},
-                           {"source", work->offer.value("source", std::string{})},
-                           {"genre", genre},
-                           {"scale", work->offer.value("scale", std::string{})},
-                           {"mode", work->mode},
-                           {"investment_percent", percent},
-                           {"start_week", work->opened_week},
-                           {"end_week", week},
-                           {"end_reason", "delivered"},
-                           {"quality", Json{{"dims", dims}, {"mean", score}}},
-                           {"quality_score", score},
-                           {"rating", rating},
-                           {"commercial_revenue", gross_total},
-                           {"company_received", company_share + reward},
-                           {"finance_summary", Json{{"contract_received", budget},
-                                                    {"investment_paid", work->investment.value("paid", static_cast<std::int64_t>(0))},
-                                                    {"commercial_share", company_share},
-                                                    {"success_reward", reward}}},
-                           {"channels", channel_report},
-                           {"episodes", episode_records},
-                           {"team", team}};
-        if (!state.archive.contains("works") || !state.archive.at("works").is_array()) state.archive["works"] = Json::array();
-        state.archive["works"].push_back(record);
-
-        // 清理：归属、事件、项目本体
-        for (auto& member : state.staff) {
-            if (member.assignment_work_id && *member.assignment_work_id == work_id) member.assignment_work_id.reset();
-        }
-        state.events.pending.erase(
-            std::remove_if(state.events.pending.begin(), state.events.pending.end(),
-                           [&work_id](const PendingEvent& event) { return event.work_id == work_id; }),
-            state.events.pending.end());
-        state.works.erase(std::remove_if(state.works.begin(), state.works.end(),
-                                         [&work_id](const Project& item) { return item.id == work_id; }),
-                          state.works.end());
-
+        const auto outcome = settle_project(state, *work, "completed", false);
+        if (!outcome.ok) return encode(error_body(outcome.code, outcome.message));
         const auto errors = validate(state);
         if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "交付后状态非法: " + errors.front()));
-        return encode(Json{{"state", state},
-                           {"report", Json{{"work_id", work_id}, {"rating", rating}, {"quality_score", score},
-                                           {"commercial_revenue", gross_total}, {"company_received", company_share + reward},
-                                           {"commercial_share", company_share}, {"success_reward", reward},
-                                           {"channels", channel_report}}}});
+        return encode(Json{{"state", state}, {"report", outcome.report}});
     } catch (const Json::exception&) {
         return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
     } catch (...) {
@@ -1863,6 +2004,143 @@ std::string hash_state(const std::string& input) {
         const Json request = Json::parse(input);
         const GameState state = decode_state(request);
         return encode(Json{{"hash", state_hash(state)}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
+// M0 命令 20：主动结束。锁 closing，未交付项目转 delivering，由 finalize_delivery 逐个结清。
+std::string end_company(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        if (state.company.status != "running") {
+            return encode(error_body("COMPANY_ENDED", "公司已结束或正在关闭"));
+        }
+        Json closing = Json::array();
+        for (const auto& work : state.works) closing.push_back(work.id);
+
+        close_company(state, "voluntary");
+
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "关闭后状态非法: " + errors.front()));
+        return encode(Json{{"state", state},
+                           {"report", Json{{"status", state.company.status},
+                                           {"end_reason", state.company.end_reason.value_or("voluntary")},
+                                           {"closing_projects", closing}}}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
+// M0 命令 21：关闭路径结算。公司 closing 时逐个结清 delivering 项目；
+// 最后一个项目结清后公司转 ended，供 finalize_company 生成结局。
+std::string finalize_delivery(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        if (state.company.status == "ended") return encode(error_body("COMPANY_ENDED", "公司已结束"));
+        if (state.company.status != "closing") {
+            return encode(error_body("INVALID_PHASE", "只有 closing 状态可以调用 finalize_delivery"));
+        }
+        if (!request.contains("work_id") || !request.at("work_id").is_string()) {
+            return encode(error_body("INVALID_INPUT", "work_id 必须是字符串"));
+        }
+        const std::string work_id = request.at("work_id").get<std::string>();
+        Project* work = find_work(state, work_id);
+        if (work == nullptr) return encode(error_body("NOT_FOUND", "项目不存在"));
+        if (work->status != "delivering") {
+            return encode(error_body("INVALID_PHASE", "只有 delivering 项目可以在关闭后结清"));
+        }
+        const std::string reason =
+            work->delivery.is_object() ? work->delivery.value("reason", std::string("company_closed")) : std::string("company_closed");
+        // 关闭路径的“强制”与否只看门槛是否达成：已完成的作品仍按正常交付计价，
+        // 只有未达门槛才吃强制交付的商业折扣与扣罚。
+        const bool forced = !work->deliverable();
+
+        const auto outcome = settle_project(state, *work, reason, forced);
+        if (!outcome.ok) return encode(error_body(outcome.code, outcome.message));
+
+        if (state.works.empty()) state.company.status = "ended";
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "结清后状态非法: " + errors.front()));
+        return encode(Json{{"state", state},
+                           {"report", outcome.report},
+                           {"company_status", state.company.status}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
+// M0 命令 22：生成公司结局，只执行一次。归档到 archive.company_result。
+std::string finalize_company(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        if (state.company.status != "ended") {
+            return encode(error_body("INVALID_PHASE", "公司尚未结束"));
+        }
+        if (!state.works.empty()) {
+            return encode(error_body("INVALID_PHASE", "仍有未结清项目"));
+        }
+        if (!state.archive.is_object()) return encode(error_body("INVALID_STATE", "archive 必须是对象"));
+        if (state.archive.contains("company_result") && !state.archive.at("company_result").is_null()) {
+            return encode(error_body("INVALID_PHASE", "公司结局已生成"));
+        }
+
+        const std::string reason = state.company.end_reason.value_or("voluntary");
+        std::int64_t quality_sum = 0;
+        int total_projects = 0;
+        int best_score = -1;
+        std::string best_work_id;
+        std::string best_work_name;
+        int unfinished = 0;
+        if (state.archive.contains("works") && state.archive.at("works").is_array()) {
+            for (const auto& record : state.archive.at("works")) {
+                const int score = record.value("quality_score", 0);
+                quality_sum += score;
+                ++total_projects;
+                if (score > best_score) {
+                    best_score = score;
+                    best_work_id = record.value("id", std::string{});
+                    best_work_name = record.value("name", std::string{});
+                }
+                if (record.value("end_reason", std::string{}) != "completed") ++unfinished;
+            }
+        }
+        // [PLACEHOLDER] 公司评级复用作品分数线，待数值标定。
+        const int average = total_projects > 0 ? static_cast<int>(quality_sum / total_projects) : 0;
+        const std::string rating = rating_of(average);
+
+        Json highlights = Json::array();
+        Json negatives = Json::array();
+        if (!best_work_id.empty()) {
+            highlights.push_back("最佳作品：" + best_work_name + "（" + rating_of(best_score) + "）");
+        }
+        if (total_projects > 0 && average >= 75) highlights.push_back("作品平均质量达到 A 档");
+        if (reason == "bankrupt") negatives.push_back("资金链断裂，公司破产清算");
+        if (unfinished > 0) negatives.push_back(std::to_string(unfinished) + " 部作品未正常完成");
+
+        Json result = Json{{"reason", reason},
+                           {"weeks", state.company.week},
+                           {"final_funds", state.finance.balance},
+                           {"net_cash_change", state.finance.balance - state.finance.opening_funds},
+                           {"total_projects", total_projects},
+                           {"best_work_id", best_work_id.empty() ? Json(nullptr) : Json(best_work_id)},
+                           {"rating", rating},
+                           {"highlights", highlights},
+                           {"negatives", negatives}};
+        state.archive["company_result"] = result;
+
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "结局生成后状态非法: " + errors.front()));
+        return encode(Json{{"state", state}, {"result", result}});
     } catch (const Json::exception&) {
         return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
     } catch (...) {
