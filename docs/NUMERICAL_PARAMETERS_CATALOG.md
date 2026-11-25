@@ -5,6 +5,8 @@
 > 适用范围：首版 v4 全部需要填写、计算、配置、抽样或验证的数值。  
 > 维护原则：玩法规则以 [DECISION_LOG.md](DECISION_LOG.md) 为准；本文件只盘点数值对象、类型、状态和决策前应查阅的文件。不得因为本文件列出某个数值，就推断该机制已实现或该数值已获批准。
 
+> 四层数值锚点中与现行决策无冲突的已确认规则汇总见 [NUMERICAL_ANCHORS_BASELINE_2026-11-25.md](NUMERICAL_ANCHORS_BASELINE_2026-11-25.md)。该文件不新增规则或冻结待标定参数。
+
 ## 1. 如何使用这份清单
 
 本清单不按优先级或开发顺序排列。它按数值类型和所属系统列出应当检查的参数，便于负责人、模块负责人和数值标定人员逐项认领、讨论和补充。
@@ -51,7 +53,7 @@
 | 不同作品规模的集数 | TV、短篇、OVA、剧场版等集数范围 | **临时参考**：TV 12–13、短篇 1–3、OVA/剧场版 1 | [蓝图规范](BLUEPRINT_SPEC.md)、[TV 蓝图样例](blueprints/tv_standard.blueprint.json)、[#63 工期](https://github.com/zhengmin486/anime-production-committee/issues/63) |
 | 公共制作工作项数量 | 不同蓝图的公共制作项数量和拆分粒度 | **待细化 / 临时样例** | [蓝图规范](BLUEPRINT_SPEC.md)、[TV 蓝图样例](blueprints/tv_standard.blueprint.json)、[DOMAIN_ARCHITECTURE](DOMAIN_ARCHITECTURE.md) |
 | 单集工作项数量 | 六阶段下各工作项数量及拆分粒度 | **待细化 / 临时样例** | [蓝图规范](BLUEPRINT_SPEC.md)、[TV 蓝图样例](blueprints/tv_standard.blueprint.json) |
-| 核心员工编制上限 | 不同公司发展阶段允许的核心员工人数 | **待标定**；作画设施不再垄断扩编资格 | [DECISION_LOG](DECISION_LOG.md)、[DOMAIN_ARCHITECTURE](DOMAIN_ARCHITECTURE.md)、[#61 公司](https://github.com/zhengmin486/anime-production-committee/issues/61) |
+| 核心员工编制上限 | 不同公司成长里程碑允许的核心员工人数 | **待标定**；里程碑达成时立即解锁，只统计核心员工、不含临时工；已解锁名额永久保留、只增不减；不绑定设施等级/槽位/作画工作室，开放编制不收扩容费 | [DECISION_LOG](DECISION_LOG.md)、[DOMAIN_ARCHITECTURE](DOMAIN_ARCHITECTURE.md)、[#61 公司](https://github.com/zhengmin486/anime-production-committee/issues/61) |
 | 同时经营项目数 | 是否存在项目槽位硬上限 | **已确认**：不设置固定项目数上限 | [DECISION_LOG](DECISION_LOG.md)、[M0 契约](M0_CONTRACT_FREEZE.md) |
 | 市场企划槽位 | 初始槽位和最大槽位 | **已确认**：初始 4、上限 10 | [DECISION_LOG](DECISION_LOG.md)、[#59 市场](https://github.com/zhengmin486/anime-production-committee/issues/59) |
 | 市场每周刷新数量 | 每周补充数量、旧企划保留和替换数量 | **待标定** | [DECISION_LOG](DECISION_LOG.md)、[DESIGN_BACKLOG](DESIGN_BACKLOG_2026-11-25.md)、[#59 市场](https://github.com/zhengmin486/anime-production-committee/issues/59) |
@@ -87,8 +89,17 @@
 - 协力职业对产能的适配系数。**已确认锚点：60%**。
 - 不具备职业资格时的参与限制。**规则边界已确认，具体映射待细化**。
 - 六项专业能力分别对工作量、质量和监督统筹的贡献函数。**待标定**。
-- 监督岗位所需的 direction、management 等能力资格阈值。**待细化 / 待标定**。
-- 一名监督对项目团队产能、质量或协调的具体贡献。**待标定**，不得把管理负荷作为隐性惩罚重新引入。
+- 监督岗位所需的 direction、management 资格阈值（适用于演出/作画/脚本职业；监督职业天然具备资格）。**待标定**。
+- 主责与协力的质量贡献基准、协力质量上限及按实际完成工作量加权的参数。**待标定**。
+- 监督统筹占用员工本周精力的比例。**待标定**。
+- 监督剩余精力折算为本项目普通工作项产能的方式。**待标定**。
+- 多名主责员工共同承担同一工作项时的质量聚合方式。**待标定**。
+- 协力质量贡献如何按工作项基准线拉近/稳定质量下限。**待标定**。
+- 主责团队决定的工作项质量上限计算公式。**待标定**；协力不得突破该上限。
+- 监督对项目团队统筹、协调的其他数值贡献。**待标定**，不得把管理负荷作为隐性惩罚重新引入。
+- 被动离岗时临时代理监督的交接损失/代理效率修正。**待标定**。
+- 代理能力并列时的候选排序属于确定性工程规则，按稳定员工 ID 顺序，不做随机抽取。
+- 监督缺位停工时该项目本周制作进度为零，属于规则边界，不是可调平衡参数。
 
 **参考文件：** [DECISION_LOG.md](DECISION_LOG.md)、[DOMAIN_ARCHITECTURE.md](DOMAIN_ARCHITECTURE.md)、[M0_CONTRACT_FREEZE.md](M0_CONTRACT_FREEZE.md)、[#55 职业](https://github.com/zhengmin486/anime-production-committee/issues/55)。
 
@@ -131,6 +142,10 @@
 | 黄灯阈值 | 疲劳或士气何时进入轻提醒 | **待标定** | [DECISION_LOG](DECISION_LOG.md)、[事件/提醒规则](DECISION_LOG.md) |
 | 红灯阈值 | 进入强制休养状态的条件 | **待标定** | [DECISION_LOG](DECISION_LOG.md)、[#57 加班](https://github.com/zhengmin486/anime-production-committee/issues/57) |
 | 红灯休养期 | 强制休养持续几周 | **临时参考**：1–2 周；须核对现行规则 | [DESIGN_BACKLOG](DESIGN_BACKLOG_2026-11-25.md)、[DECISION_LOG](DECISION_LOG.md)、[#57 加班](https://github.com/zhengmin486/anime-production-committee/issues/57) |
+| 限时事件有效期 | 事件从触发周起可响应的周数 | **待标定**；触发当周计入，阶段 7 末到期 | [DECISION_LOG](DECISION_LOG.md)、事件模块设计 |
+| 关键事件升级门槛 | 哪些事件可配置一次超时升级 | **待标定/内容配置**；最多一次 | [DECISION_LOG](DECISION_LOG.md)、事件内容指南 |
+| 超时默认分支效果 | 普通事件首次超时自动执行的保守/消极分支效果 | **逐事件配置**；不得统一假设同一惩罚 | [DECISION_LOG](DECISION_LOG.md)、事件内容指南 |
+| 升级事件违约惩罚 | 升级后再次超时触发的硬性违约效果 | **逐事件配置/待标定** | [DECISION_LOG](DECISION_LOG.md)、事件内容指南 |
 | 普通员工磨合损失 | 接手他人已开工工作项时，一次性扣除的产出比例 | **待标定** | [DOMAIN_ARCHITECTURE](DOMAIN_ARCHITECTURE.md)、[M1 临时公式](M1_RUNTIME_SLICE.md)、[#55 职业](https://github.com/zhengmin486/anime-production-committee/issues/55)、[#56 标签](https://github.com/zhengmin486/anime-production-committee/issues/56) |
 | 监督换项目损失 | 监督人员切换项目时的团队级产能损失 | **待标定** | [DOMAIN_ARCHITECTURE](DOMAIN_ARCHITECTURE.md)、[M1 临时公式](M1_RUNTIME_SLICE.md)、[#55 职业](https://github.com/zhengmin486/anime-production-committee/issues/55) |
 | management 磨合减免 | management 能力如何缩放普通人员磨合损失 | **待标定** | [DOMAIN_ARCHITECTURE](DOMAIN_ARCHITECTURE.md)、[#55 职业](https://github.com/zhengmin486/anime-production-committee/issues/55) |
@@ -294,11 +309,12 @@
 - 初始核心员工人数及总周薪。
 - 公司固定运营成本。
 - 办公场地租金。
+- 办公场地扩容的一次性搬迁费（声望 190 解锁 4 槽、声望 350 解锁 6 槽；允许跨级直达目标规模）及扩容后的每周基础房租增量；租金增量从扩容确认后的下一次周结算起计提。
 - 行政、人事及其他固定支出。
 - 不同公司规模下的固定成本增长。
 - 闲置员工工资。
 - 设施维护费（需与各设施参数表保持一致）。
-- 固定费用在正常周和危机周的计提口径。
+- 固定费用按现行八阶段正常周结算口径计提；当前版本不存在危机周计提规则。
 - 公司规模改变时的费用变化。
 
 **决定前应查阅：** [DECISION_LOG.md](DECISION_LOG.md)、[DOMAIN_ARCHITECTURE](DOMAIN_ARCHITECTURE.md)、[M1 运行切片](M1_RUNTIME_SLICE.md)、[#61 公司](https://github.com/zhengmin486/anime-production-committee/issues/61)、[#64 经济](https://github.com/zhengmin486/anime-production-committee/issues/64)。
@@ -317,9 +333,11 @@
 
 ---
 
-## 10. 融资与资金危机
+## 10. 未来更新候选：融资与限时资金危机机制
 
-- 资金危机触发时的强制费用缺口判定。
+> 本节仅保存未来可能重新评估的参数方向，不属于首版规则、当前 M2.5 验收或现阶段平衡标定。当前执行 DEC-FIN-002/003：预检不足直接破产。
+
+- 危机触发条件与强制费用缺口判定。
 - 危机期限：进入危机后允许自救的周数。
 - 初次危机期限与再次进入危机是否相同。
 - 融资额度上限计算公式。
@@ -336,7 +354,7 @@
 - 危机期间固定成本变化（工资、运营、还款与利息）。
 - 交付结算后余额为负时进入危机的判定方式。
 
-**已确认而不属于待标定的规则：** 正常周预检失败时不提交正常制作结算；危机期间周数继续推进、继续计提固定成本、允许现金暂时为负；不自动借款；融资是唯一允许的新增资金动作；危机期限内未恢复偿付能力才破产。
+**本节状态：未来候选而非已确认规则。** 危机期限、负现金语义、融资、自救动作与危机周固定成本计提均未纳入当前版本；任何恢复方案必须重新提交规则变更并通过原子性与经济平衡审查。
 
 **决定前应查阅：** [DECISION_LOG.md](DECISION_LOG.md)、[DOMAIN_ARCHITECTURE](DOMAIN_ARCHITECTURE.md) 的 Finance/危机章节、[M0 契约](M0_CONTRACT_FREEZE.md)、[#61 公司](https://github.com/zhengmin486/anime-production-committee/issues/61)、[#64 经济](https://github.com/zhengmin486/anime-production-committee/issues/64)。
 

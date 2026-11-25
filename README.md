@@ -2,13 +2,13 @@
 
 ANIME PRODUCTION COMMITTEE · 动画制作公司经营模拟游戏
 
-《动画制作委员会》目标形态是参考开罗游戏的轻量经营模拟：公司可并行经营多部作品，项目制作由项目级公共制作与单集六阶段组成；单集工作按依赖、最低交付和并行关系推进。核心玩法决策见 [docs/DECISION_LOG.md](docs/DECISION_LOG.md)，目标领域架构见 [docs/DOMAIN_ARCHITECTURE.md](docs/DOMAIN_ARCHITECTURE.md)。
+《动画制作委员会》目标形态是参考开罗游戏的轻量经营模拟：公司可并行经营多部作品，项目制作由项目级公共制作与单集六阶段组成；单集工作按依赖、最低交付和并行关系推进。核心玩法决策见 [docs/DECISION_LOG.md](docs/DECISION_LOG.md)，目标领域架构见 [docs/DOMAIN_ARCHITECTURE.md](docs/DOMAIN_ARCHITECTURE.md)，M0 状态/命令契约见 [docs/M0_CONTRACT_FREEZE.md](docs/M0_CONTRACT_FREEZE.md)。当前资金规则为刚性支出预检不足时整周原子回滚并直接破产；限时危机周、负现金欠付和融资自救仅属未来更新候选。
 
 > **当前开发状态：M0 已完成，M1 v4 runtime 基础切片已合入 main，M2 正在推进。** V2/V3 页面、数据结构、五阶段与单项目测试记录属于历史纵向切片；v3 仍保留作迁移参照，正式运行时切换安排在 M6。目标规则、当前实现和验收状态见 [docs/PROGRESS.md](docs/PROGRESS.md)。
 
 ## M0 契约与 M1 v4 runtime
 
-v4 目标结构、合法动作、周结算与危机边界、存档策略见 [DATA_MODEL](docs/DATA_MODEL.md)、[API](docs/API.md)、[GAME_RULES](docs/GAME_RULES.md) 的 V3 部分。可编译契约与校验在 [gameV3.ts](apps/web/src/types/gameV3.ts)，静态夹具与契约测试供后续前后端独立开发。交接与尚未实现项见 [TEAM_PLAN](docs/TEAM_PLAN.md)。
+v4 目标结构、合法动作、周结算、财务预检与破产边界、存档策略以 [DOMAIN_ARCHITECTURE](docs/DOMAIN_ARCHITECTURE.md)、[M0 契约](docs/M0_CONTRACT_FREEZE.md) 和 [DECISION_LOG](docs/DECISION_LOG.md) 为准；[DATA_MODEL](docs/DATA_MODEL.md) 与 [API](docs/API.md) 仍是 V3 历史接口/数据契约。可编译契约与校验在 [gameV3.ts](apps/web/src/types/gameV3.ts)，静态夹具与契约测试供后续前后端独立开发。交接与尚未实现项见 [TEAM_PLAN](docs/TEAM_PLAN.md)。
 
 **以下 V2/V3 验收记录属于历史运行时证据。** M1 v4 runtime 已通过 PR #66 合入 main，但完整事件闭环、存档恢复、M2 单项目纵向闭环及 M6 前端切换仍按路线推进；不能把 M1 合入描述为目标玩法全部完成。
 
@@ -225,6 +225,7 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 - [本轮分工（V1.0 迁移）](docs/TEAM_PLAN.md)
 - [制作事件模块设计（M2 提案）](docs/EVENT_MODULE_DESIGN.md)
 - [事件内容填写指南](docs/EVENT_CONTENT_GUIDE.md)
+- [事件内容流水线（#50：卡片 schema、加载与校验）](docs/EVENT_CONTENT_PIPELINE.md)
 - [当前进度与方向](docs/PROGRESS.md)
 - [素材盘点：图片、图标、背景、字体与缺口（2026-11-24）](docs/ASSET_INVENTORY_2026-11-24.md)
 
