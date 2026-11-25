@@ -561,7 +561,7 @@ PoolCandidate {
 | `deposit_paid` | uint | 已付定金快照，用于正式接单时 100% 抵扣展示与对账 |
 | `offer_source_type` / `deposit_basis` | source classification / uint | 保留企划来源分类及企划生成时固定的基础立项费用；普通企划按 5%、IP 上门企划按 10% 计算定金，后续预算调整不得改变基数 |
 
-- **定金档位与基数**：普通企划按 `deposit_basis × 5%`，IP 上门企划按 `deposit_basis × 10%`；`offer_source_type` 与 `deposit_basis` 必须随 Offer 快照保存，来源类型决定档位，不允许玩家自行选择或切换。定金金额按系统货币最小单位执行既有金额取整规则。
+- **定金档位与基数**：普通企划按 `deposit_basis × 5%`，IP 上门企划按 `deposit_basis × 10%`；`offer_source_type` 与 `deposit_basis` 必须随 Offer 快照保存，来源类型决定档位，不允许玩家自行选择或切换。
 - **现金权威唯一**：定金的实际扣款、签约抵扣只发生在 `Finance.entries` 流水；`deposit_paid` 是企划侧快照/对账字段，不得作为第二本账。INV-16/17 照常约束。
 - 签约抵扣：锁定期内 `start_work` 该企划时，定金 100% 抵扣对应立项保证金或前期费用（经济语义等同返还预付款，但不是额外成本）；现金守卫按“全部应付款 − deposit_paid”计算。Finance 保留 `investment_paid`（若委员会）与 `contract_received`（合同预算）两笔账，定金已付部分从对应本次现金金额中抵扣，不得把定金再次计为支出，也不新增重复退款/收入流水。
 - 锁定保护：锁定期间（`week < locked_until`）该企划不受市场补充与自然过期影响（STATUS-49/51）；`expires_week` 的自然过期在锁定期内不生效。
