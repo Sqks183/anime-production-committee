@@ -66,7 +66,7 @@ v1.0 只给了骨架，并把"公共制作 + 单集 + 工作项"和"资金预检
 
 制作蓝图已从"待设计"变为"有可检查样例"：[蓝图规范](BLUEPRINT_SPEC.md) + [`tv_standard` 样例](blueprints/tv_standard.blueprint.json) + `npm run validate:blueprint`。
 
-**M0 契约已冻结**：[M0 契约冻结（v4.0）](M0_CONTRACT_FREEZE.md) 把状态形状、29 条不变式、21 个现行命令、16 个错误码、存档拒绝策略固化为可检查条目，并附两类校验器的运行记录。旧危机白名单仅作历史记录；冻结后改契约需走变更说明。
+**M0 契约已冻结**：[M0 契约冻结（v4.0）](M0_CONTRACT_FREEZE.md) 把状态形状、29 条不变式、23 个现行命令、16 个错误码、存档拒绝策略固化为可检查条目，并附两类校验器的运行记录。旧危机白名单仅作历史记录；冻结后改契约需走变更说明。
 
 ---
 
@@ -833,7 +833,8 @@ Committee { id, work_id, members[{partner_id, channel}], formed_week, status: ac
 
 MarketState {
   heat: {genre: {level: boom|high|mid|low, changed_week}}
-  slots: Offer[4], custom_offer: Offer|null, proposal: Offer|null
+  slots: Offer[4]                  // 初始 4 槽，后续扩展上限 10
+  custom_offer: Offer|null, proposal: Offer|null
   refresh_week, last_competition_round
   competitors: Competitor[]        // 由 seed 派生，见 §12.3
 }
@@ -1160,6 +1161,8 @@ UI 不计算规则。核心在每次命令后输出读模型；读模型**不持
 **第 520 周**：先合法完成第 520 周结算，再统一收尾——已满足交付条件的正常交付，未完成按当前完成度结算，不补完。
 
 ### 9.4 周回执契约
+
+> 分层：本节 `WeekReceipt` 是**玩家侧派生读模型**（§8.4），不是核心命令返回值。v4 核心 `advance_week` 的结算回执键树见 [DATA_DICTIONARY_V4.md](DATA_DICTIONARY_V4.md) §5.1；`causes/handover/blocking_items/highlights` 等解释性字段当前不在核心回执内，需由读模型层补齐或由核心按 B 级扩展。
 
 ```text
 WeekReceipt {
@@ -1599,7 +1602,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version, state: GameState }
 | C8 | 招聘/抽卡的"空闲窗口" | `DATA_MODEL` V3.6/V3.7：`hire_core`/`scout` 仅限 `running idle` 或 `project_settled` | **已由 DEC-PLAY-003（2026-11-24；即时入职时序于 2026-11-25 补充）确认废止**：该窗口是单项目时代的产物，多项目下会变成永远无法招聘。核心员工 `hire_core` 在签约命令中即时入职并可当周分配，签约费即时入账，首周周薪从签约后当前经营周的下一次周结算起计提（§8.5）；`scout` 仍按其自身即时寻访规则处理。 |
 | C9 | 五阶段 vs 单集六阶段 | `GAME_RULES`/`DATA_MODEL`/代码全为「整部作品五阶段」（script…postproduction） | **已被 DEC-PROD-001/002 覆盖**：六阶段属于单集，整部五阶段不再是目标形状。v3 五阶段仅作历史行为参照；`game_rules.hpp` 的 `stages` 数组与质量权重不得作为新口径 |
 | C10 | 管理能力的两种表述 | 框架 §4.2 原把「管理能力」列为共享资源并称"项目过多可能产生执行损耗" | **已修正**（`9c97684`）：框架 §4.2 第 4 条改为"管理专业能力用于监督、协调与检查，不设管理负荷/跨度/项目过多惩罚"。本架构按此执行，不形成负荷表 |
-| C11 | 立即破产 vs 限时危机 | 旧 V3/早期架构曾在立即破产与危机周之间存在冲突 | 已由 2026-11-25 DEC-FIN-002/003 明确：预检失败整周回滚并直接 bankrupt；当前 v4 不使用 `solvency` 状态机 |
+| C11 | 立即破产 vs 限时危机 | 旧 V3/早期架构曾在立即破产与危机周之间存在冲突 | 已由 2026-11-25 DEC-FIN-002/003 明确：预检失败整周回滚并直接 bankrupt；当前 v4 不启用 `solvency` 状态机，仅保留 normal 预留字段 |
 | C12 | 企划工作量形状 | `DATA_MODEL` `ProjectOffer.workloads` 为整部五阶段向量 | 以 `blueprint_id + episode_count + workload_scale_permille` 替换；旧字段随 v3 契约失效 |
 | C13 | 交付时机 | 旧规则只有"完成或到期"，没有主动交付 | **已由 DEC-PROD-004（2026-11-24）确认**：门槛达标后玩家可主动 `deliver_work`，交付即停止生产（§7.3.6）。旧"仅到期自动交付"口径废止 |
 
