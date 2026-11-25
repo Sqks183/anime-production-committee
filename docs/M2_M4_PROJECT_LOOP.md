@@ -1,6 +1,6 @@
 # M2 项目全链路 + M4 商业结算（实现说明）
 
-> 状态：**分支实现，未完成里程碑验收**。M2 主链路（立项 → 制作 → 交付/到期强制交付/中止 → 公司关闭 → Archive → 财务）与 M4 商业结算核心（委员会、投资、六窗口、分成、伙伴关系）已落地；§14.7 预检失败破产已接入，融资、监督任职、限时事件与 M3 供应商/市场刷新仍是缺口。
+> 状态：**分支实现，未完成里程碑验收**。M2 主链路（立项 → 制作 → 正常/到期交付 → 公司关闭 → Archive → 财务）与 M4 商业结算核心（委员会、投资、六窗口、分成、伙伴关系）已落地；INV-27 监督岗位、§14.7 八阶段周结算与 INV-29 到期默认分支已接入。中止处罚/履历、终局 pending 转移/归档、事件升级载荷仍待契约裁决；融资、M3 供应商/市场刷新仍是缺口。
 > 契约依据：[M0_CONTRACT_FREEZE.md](M0_CONTRACT_FREEZE.md) 命令 2/10/15/16/20/21/22、§7；[DOMAIN_ARCHITECTURE.md](DOMAIN_ARCHITECTURE.md) §7.3.6/§9.3/§10.1/§10.3/§10.6；[DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md) M2/M4。
 
 ## 1. 已实现命令
@@ -9,7 +9,7 @@
 | --- | --- | --- |
 | `start_work(offer_id, mode, percent?, committee_partner_ids?)` | running ∧ 企划存在 ∧ 模式合法 ∧（普通企划：`min_reputation` + `required_works`；原创草稿：`draft_status=valid`）∧ 委员会比例 10..100/10 ∧ 成员渠道不重复 ∧ 现金 ≥ 应付款 | 冻结企划快照、实例化蓝图、成立委员会、合同预算与投资两笔账、消费企划/草稿 |
 | `deliver_work(work_id)` | running ∧ producing ∧ 本项目无 pending 事件 ∧ 全部门槛项 delivered ∧ 未过截止 | 质量聚合 → 评级 → 六窗口结算 → 分账/BD 收入 → 委员会关闭/伙伴关系 → Archive → 清归属 → 移除项目 |
-| `abort_work(work_id)` | running ∧ producing ∧ 本项目无 pending 事件 | 终止项目、清归属、记财务/声望事实；**不写 WorkRecord**（见 §8 兼容性分析），扣罚记 0 并标 `penalty_pending` |
+| `abort_work(work_id)` | running ∧ producing；违约扣罚公式与中止履历结构未冻结 | 返回 `NOT_IMPLEMENTED`，不终止项目、不清归属、不扣款、不伪报 `penalty_pending` 完成 |
 | `create_custom_offer(name, source, scale, style)` | running ∧ 草稿槽空闲 ∧ 基础声望 ≥ 占位阈值 ∧ 枚举合法 | 只创建原创草稿（`draft_status=valid`），不建 Project、不收全部投资资金；开发费暂记 0 |
 | `adopt_proposal()` / `reject_proposal()` | running ∧ 存在提案（采纳还要求草稿槽空闲） | 提案转草稿或清空 |
 | `buy_tv_service(work_id)` | 委员会模式 ∧ 无电视台成员 ∧ 未购买 ∧ 现金 ≥ 总费用×投资比例 | 记 `distribution` 支出；结算时对适用窗口应用 130% 电视倍率 |
@@ -18,7 +18,7 @@
 | `finalize_delivery(work_id)` | closing ∧ 项目 delivering | 关闭路径交付结算；最后一个项目结清后公司转 ended |
 | `finalize_company()` | ended ∧ 无在制项目 ∧ 结局未生成 | 由 Archive 生成 `company_result`，只执行一次 |
 
-`advance_week` 内置两条自动路径（无需玩家确认）：项目到达 `deadline_week` 时按门槛完成度结算（达标 `completed`，未达标 `deadline`）；第 520 周完成当周结算后锁 `closing/time_limit`，剩余项目转 `delivering`。
+`advance_week` 内置两条自动路径（无需玩家确认）：项目到达 `deadline_week` 时按门槛完成度结算（达标 `completed`，未达标 `deadline`）；第 520 周完成当周结算后锁 `closing/time_limit`，剩余项目转 `delivering`。若破产或第 520 周关闭时仍有 pending，当前原子返回 `NOT_IMPLEMENTED`，保留事件与 producing 归属，等待终局事件归档/转移契约。
 
 通用：除 `initialize_game` 外全部“工作副本 + 一次提交”；失败不改变状态。
 
@@ -73,11 +73,11 @@
 
 流水科目：`contract_received`（+）、`investment_paid`（−）、`commercial_share_received`（+，含 BD/DVD 与委员会净池份额，靠 `memo` 区分）、`success_reward_received`（+）、`penalty`（−）、`distribution`（−，电视服务）；延期费暂记 `production`。
 
-周薪按 DEC-ECON-001 归因：已分配到项目的核心员工记 `work_id=项目`，闲置员工记 `work_id=null`（公司级成本）。
+周薪按 DEC-ECON-001 归因：核心与临时员工均按 `weekly_salary` 计入阶段 2 刚性预检和阶段 3 流水；已分配到项目的员工记 `work_id=项目`，闲置员工记 `work_id=null`（公司级成本）。
 
 `Archive.works` 追加一条 `WorkRecord`：作品事实、六维质量、质量分、评级、`end_reason`（`completed` / `deadline` / `company_closed`）、`forced`、`gate_completion_permille`、`commercial_revenue`、`bd_revenue`、`committee_pool`、`investor_share`、`company_received`、逐窗口对账、单集质量摘要、团队快照，以及 `finance_summary`（合同收入、投资本金、商业份额、BD、奖励、扣罚、`costs` 分类、`total_costs`、`profit`）与 `rules_status=placeholder`。记录只追加。
 
-> 中止（`abort_work`）不写 WorkRecord：M0 Archive 的 `end_reason` 只冻结了三种交付原因，中止不是交付。回执返回 `archived=false` 与 `penalty_pending=true`；等 #53 决定是否新增中止履历/枚举后再补，避免自行扩展冻结契约。
+> 中止（`abort_work`）不写 WorkRecord，且在当前契约下不执行：M0 Archive 的 `end_reason` 只冻结了三种交付原因，违约扣罚公式也未标定。实现返回 `NOT_IMPLEMENTED`，等 #53 决定中止履历结构、扣罚基数/系数及现金不足行为后再补，避免以 0 处罚和 `penalty_pending` 伪报完成。
 
 `Archive.company_result` 由 `finalize_company` 写入一次：`reason`（voluntary / bankrupt / time_limit）、周数、期末现金、净现金变化、作品数、最佳作品、公司评级（暂复用作品分数线）与 highlights/negatives。
 
@@ -92,44 +92,48 @@
 - Partner：类型枚举、渠道非空且唯一、关系 0..100、状态枚举。
 - Market：槽位 ≤4、企划预算/工期/蓝图/渠道/模式必填、热度档位合法。
 - Archive：记录 id 全局唯一、评级与 `end_reason` 枚举、`gate_completion_permille` 0..1000、结束周不晚于当前周。
-- 待处理事件：`expires_week` 必须为 null；同项目至多一条；交付/中止/关闭前必须先处理，不得清空（DEC-EVENT-001）。
+- 待处理事件：同项目至多一条；`expires_week=null` 表示非限期，限期必须落在 `triggered_week..triggered_week+7` 且带 `abandon` 默认分支；阶段 7 按 `(work_id,event_id)` 顺序只处理目标事件。升级载荷/已升级标记未冻结，当前不实现升级。交付/主动关闭前必须先处理，不得清空（DEC-EVENT-001）。
+- Project 监督岗位：每个 producing 项目恰有一名合格且 `assignment_work_id` 指向本项目的监督；开工自动定岗，调离执行原子 Swap/Replace，无替补则关键岗位锁定（INV-27）。
 - 立项后 id 全局唯一（含 Archive），避免归档后复用 `work_01`。
 
 ## 7. 测试
 
-`scripts/v4.test.mjs` 共 50 条；本轮与商业/关闭路径相关的关键用例：
+`scripts/v4.test.mjs` 共 70 条；本轮与项目闭环相关的关键用例：
 
 1. 到期强制交付：未达门槛在结算周自动交付，`deadline`、按完成度扣罚、归档并移除项目；
 2. 到期交付：门槛达成按 `completed` 正常计价，不扣罚；
 3. 关闭路径：`end_company` 锁 closing 并拒绝非结清命令，`finalize_delivery` 结清转 ended，`finalize_company` 只生成一次结局；
 4. 第 520 周：完成当周结算后锁 closing/time_limit，剩余项目转 `company_closed` 并可在关闭后结清；
 5. 事件保留：项目有 pending 时交付/关闭被拒，跨项目事件不被清理；
-6. 中止：`abort_work` 无商业收入、释放归属、不写 WorkRecord、`archived=false`；
+6. 中止：契约未冻结时 `abort_work` 返回 `NOT_IMPLEMENTED`，项目、归属、账本与 Archive 均不变；
 7. 商业归属：BD 恒归公司、委员会净池按比例分账、电视倍率 1000/1250/1300 分档、代理费逐行对账；
 8. 原创草稿：缺草稿/失效/有效三种路径，以及命令 12-14 的创建/采纳/拒绝；
 9. M1 输入边界：Staff 报酬字段与 `solvency.state` 缺失返回 `INVALID_INPUT`；
-10. §14.7 预检失败：整周回滚、不扣款、直接 closing/bankrupt。
+10. §14.7 预检失败：无 pending 时整周回滚、不扣款、直接 closing/bankrupt；有 pending 时原子返回 `NOT_IMPLEMENTED`，不误删事件；
+11. INV-27：开工定岗、无监督拒绝、空缺/悬空/不合格校验、关键岗位锁定与原子替补；
+12. INV-29：未到期保留、到期 abandon 快照只执行一次、多项目稳定顺序、成本封顶与阶段失败原子性；
+13. 第 520 周 pending：原子拒绝非法终局，事件、项目归属与周数不变。
 
-本机无 Emscripten，`npm run test:v4` 未跑；同一份测试正文用 MSVC 19.51 原生 CLI 执行 **50/50**。
+本机 `.tools/emsdk` 可执行真实 WASM 构建；`npm run test:v4` 结果 **70/70**。
 
 ## 8. 里程碑判定（如实）
 
 | 阶段 | 已具备 | 仍缺 |
 | --- | --- | --- |
-| M2 | 立项（含原创草稿准入）、蓝图实例化、制作、正常交付、到期强制交付、中止、公司关闭/结清/结局、Archive、成本归因、事件闭环（PR #92） | 监督任职（INV-27/§14.8）、限时事件（INV-29）、真实市场来源、12 集完整人工试玩 |
-| M2.5 | 预检失败整周回滚并直接破产终局（§14.7）、交付后负余额进 `closing/bankrupt` | 融资/贷款、资金压力周与终局展开 |
+| M2 | 立项（含原创草稿准入）、蓝图实例化、制作、正常交付、到期强制交付、公司关闭/结清/结局、Archive、成本归因、事件处理、INV-27 监督岗位、INV-29 到期默认分支 | 中止处罚/履历、终局 pending 归档/转移、事件升级载荷、真实市场来源、12 集完整人工试玩 |
+| M2.5 | 预检失败整周回滚并直接破产终局（§14.7，无 pending 场景）、交付后负余额进 `closing/bankrupt` | 破产/520 周携带 pending 的合法终局、融资/贷款与终局展开 |
 | M3 | 多项目并存、人员单项目归属、遍历顺序无关 | 企划槽刷新/竞争、供应商目录与外包、520 周长跑 |
 | M4 | 委员会、投资比例、六窗口、BD 归属、净池分成、电视倍率、伙伴关系与 history | 更多伙伴/渠道类型、合作关系玩法、特殊商业机会、完整对账报表 |
 
 **结论：不能宣称 M4 已验收。** 当前是把 M4 的商业结算核心接在 M2 主链路上；M2.5/M3 的缺口不补，M4 的“产业关系”只是一条单项目结算路径。
 
-**实现口径待 zm 确认**：①`closing → ended` 由“无在制项目”驱动（`close_company` 或最后一个 `finalize_delivery`）；②强制系数 600‰、扣罚 30%、评价修正 10 分、代理费 40%、电视总费用 60 万、草稿声望门槛 120/按 scale 预算均为 `[PLACEHOLDER]`，回执统一带 `rules_status=placeholder`；③`abort_work` 的违约扣罚系数未标定，记 0 + `penalty_pending`，且不写 WorkRecord（不扩展 Archive 冻结枚举）；④新 main 的 INV-27/§14.8 监督任职、INV-29 限时事件、§14.7 八阶段完整顺序尚未实现，已在文档标为缺口。
+**实现口径待 zm 确认**：①`closing → ended` 由“无在制项目”驱动（`close_company` 或最后一个 `finalize_delivery`）；②强制系数 600‰、扣罚 30%、评价修正 10 分、代理费 40%、电视总费用 60 万、草稿声望门槛 120/按 scale 预算均为 `[PLACEHOLDER]`，回执统一带 `rules_status=placeholder`；③`abort_work` 的扣罚基数/系数、现金不足行为与中止履历结构未冻结，当前返回 `NOT_IMPLEMENTED`；④破产/第 520 周遇到 pending 时，现有 Archive/EventState 没有合法的终局事件存放字段，当前原子返回 `NOT_IMPLEMENTED`；⑤事件升级门槛、载荷、二次超时硬罚与已升级标记未冻结，当前只实现到期 abandon 默认分支；⑥演出/作画/脚本职业转任监督的 direction/management 阈值仍待 #55 标定，当前仅允许天然具备资格的 director/animation_director/production_manager 任职。
 
 ## 9. 下一步
 
-1. 监督任职与 INV-27（与 Staff 模块协同）；
-2. INV-29 限时事件（依赖内容 schema 冻结默认分支/升级载荷）；
+1. 裁决中止扣罚/履历与破产、520 周 pending 的合法存放语义，再闭环 `abort_work` 与强制终局；
+2. 冻结事件升级门槛、载荷、二次超时硬罚与已升级标记；
 3. M2 真实市场来源与 12 集完整人工试玩；
-4. M3 企划槽刷新 + 供应商/外包 + 520 周压测；
+4. M3 企划槽刷新 + 供应商/外包 + 520 周长跑；
 5. M4 特殊商业机会、更多伙伴渠道与关系玩法；
-6. 以上全部在有 emsdk 的环境跑 `npm run test:v4` 并附输出。
+6. 以上变更继续在有 emsdk 的环境跑 `npm run test:v4` 并附输出。

@@ -228,6 +228,7 @@ void to_json(Json& j, const Project& value) {
              {"deadline_week", value.deadline_week},
              {"extension", value.extension},
              {"status", value.status},
+             {"supervisor_staff_id", value.supervisor_staff_id ? Json(*value.supervisor_staff_id) : Json(nullptr)},
              {"ip_id", value.ip_id ? Json(*value.ip_id) : Json(nullptr)},
              {"committee_id", value.committee_id ? Json(*value.committee_id) : Json(nullptr)},
              {"tv_service", value.tv_service},
@@ -251,6 +252,11 @@ void from_json(const Json& j, Project& value) {
     value.deadline_week = j.value("deadline_week", 0);
     value.extension = j.value("extension", Json::object());
     value.status = j.value("status", std::string{"producing"});
+    if (j.contains("supervisor_staff_id") && j.at("supervisor_staff_id").is_string()) {
+        value.supervisor_staff_id = j.at("supervisor_staff_id").get<std::string>();
+    } else {
+        value.supervisor_staff_id.reset();
+    }
     if (j.contains("ip_id") && j.at("ip_id").is_string()) value.ip_id = j.at("ip_id").get<std::string>();
     else value.ip_id.reset();
     if (j.contains("committee_id") && j.at("committee_id").is_string()) value.committee_id = j.at("committee_id").get<std::string>();

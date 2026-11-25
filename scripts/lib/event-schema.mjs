@@ -113,6 +113,9 @@ export function validateCard(card, source) {
   if (card.polarity === 'positive' && (!hasKind('accept') || !hasKind('decline'))) {
     fail('options', '正面事件必须有 accept 与 decline 选项')
   }
+  if (card.expires_weeks > 0 && (card.polarity !== 'negative' || !hasKind('abandon'))) {
+    fail('options', '限期事件必须有负面 polarity 与 abandon 默认分支')
+  }
   if (card.tier === 'major' && card.once_per_project !== true) fail('once_per_project', '重大事件必须 once_per_project=true')
   if (card.tier === 'major' && card.cooldown_weeks !== 0) fail('cooldown_weeks', '重大事件不能配冷却')
   return issues

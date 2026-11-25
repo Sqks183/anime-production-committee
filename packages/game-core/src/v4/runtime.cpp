@@ -282,6 +282,11 @@ GameState decode_state(const Json& request) {
     for (const auto& work : state.at("works")) {
         require(work, "id", "works[]");
         require(work, "status", "works[]");
+        // INV-27 的载体：缺键会被 from_json 读成 null，等于凭空制造监督空缺，必须显式出现。
+        require(work, "supervisor_staff_id", "works[]");
+        if (!work.at("supervisor_staff_id").is_null() && !work.at("supervisor_staff_id").is_string()) {
+            throw Json::type_error::create(302, "works[].supervisor_staff_id 必须是字符串或 null", nullptr);
+        }
         require(work, "common", "works[]");
         require(work, "episodes", "works[]");
         require(work.at("common"), "items", "works[].common");
@@ -310,6 +315,90 @@ GameState decode_state(const Json& request) {
         }
     }
     return state.get<GameState>();
+}
+
+// INV-27：监督是项目内岗位，不是员工身份。资格判定只用 kernel 里已有的
+// "基础职业即监督者"集合；DEC-STAFF-006 的演出/作画/脚本转任阈值属 DISC-11
+// 待标定参数，本文件不替它猜数值，已在 docs/M2_M4_PROJECT_LOOP.md 登记 PENDING。
+bool supervisor_qualified(const Staff& member) { return kernel::is_supervisor(member.role); }
+
+int ability_total(const Staff& member) {
+    int sum = 0;
+    for (const int value : member.abilities) sum += value;
+    return sum;
+}
+
+bool supervises_another_project(const GameState& state, const std::string& staff_id, const std::string& work_id) {
+    for (const auto& other : state.works) {
+        if (other.id == work_id || other.status != "producing") continue;
+        if (other.supervisor_staff_id && *other.supervisor_staff_id == staff_id) return true;
+    }
+    return false;
+}
+
+// §14.8 替补池：只取"同项目员工"与"公司空闲员工"，禁止从其他项目强行抽调。
+// 同项目优先，其次空闲；并列按能力总分降序、员工 id 升序（确定性）。
+// 已在别处挂监督岗的合格员工排在最后；合法状态中其归属属于其他项目，不会进入候选。
+bool supervisor_candidate_eligible(const Staff& member, const std::string& work_id) {
+    if (!supervisor_qualified(member)) return false;
+    if (member.assignment_work_id && *member.assignment_work_id != work_id) return false;
+    return true;
+}
+
+int supervisor_candidate_rank(const GameState& state, const Staff& member, const std::string& work_id) {
+    int rank = (member.assignment_work_id && *member.assignment_work_id == work_id) ? 0 : 1;
+    if (supervises_another_project(state, member.id, work_id)) rank += 2;
+    return rank;
+}
+
+const Staff* pick_supervisor(const GameState& state, const std::string& work_id, const std::string& exclude_id) {
+    const Staff* best = nullptr;
+    int best_rank = 0;
+    int best_score = 0;
+    for (const auto& member : state.staff) {
+        if (member.id == exclude_id || !supervisor_candidate_eligible(member, work_id)) continue;
+        const int rank = supervisor_candidate_rank(state, member, work_id);
+        const int score = ability_total(member);
+        if (best == nullptr || rank < best_rank ||
+            (rank == best_rank && (score > best_score || (score == best_score && member.id < best->id)))) {
+            best = &member;
+            best_rank = rank;
+            best_score = score;
+        }
+    }
+    return best;
+}
+
+// 开工即定岗：start_work 产出的在制项目必须已带合格监督，否则整条命令回滚。
+bool designate_supervisor(GameState& state, Project& work) {
+    const Staff* pick = pick_supervisor(state, work.id, "");
+    if (pick == nullptr) return false;
+    Staff* holder = find_staff(state, pick->id);
+    if (holder == nullptr) return false;
+    work.supervisor_staff_id = holder->id;
+    holder->assignment_work_id = work.id;
+    return true;
+}
+
+// 调离监督时的原子 Swap/Replace（§14.8）：当场找到替补才放行，否则关键岗位锁定。
+// 只在员工确实被指派在本项目上时才触发——挂岗但未被指派属兼任，不构成从本项目调离。
+bool replace_supervisor_post(GameState& state, const std::string& work_id, const std::string& leaving_staff_id) {
+    for (auto& work : state.works) {
+        if (work.id != work_id || work.status != "producing") continue;
+        if (!work.supervisor_staff_id || *work.supervisor_staff_id != leaving_staff_id) continue;
+        const Staff* leaving = nullptr;
+        for (const auto& member : state.staff) {
+            if (member.id == leaving_staff_id) leaving = &member;
+        }
+        if (leaving == nullptr || !leaving->assignment_work_id || *leaving->assignment_work_id != work.id) continue;
+        const Staff* pick = pick_supervisor(state, work.id, leaving_staff_id);
+        if (pick == nullptr) return false;
+        work.supervisor_staff_id = pick->id;
+        Staff* replacement = find_staff(state, pick->id);
+        if (replacement == nullptr) return false;
+        replacement->assignment_work_id = work.id;
+    }
+    return true;
 }
 
 }  // namespace
@@ -478,6 +567,41 @@ std::vector<std::string> validate(const GameState& state) {
         }
     }
 
+    // INV-27：每个 producing 项目恰有一名通过任职资格校验的监督（§14.8 / DEC-STAFF-008）。
+    // 只检查字段存在不构成不变量，这里逐条查空缺、悬空引用、资格与岗位/归属错配。
+    std::set<std::string> supervisor_ids;
+    for (const auto& work : state.works) {
+        if (work.status != "producing") continue;
+        if (!work.supervisor_staff_id || work.supervisor_staff_id->empty()) {
+            error("INV-27 在制项目缺少监督岗位指派: " + work.id);
+            continue;
+        }
+        const std::string& supervisor_id = *work.supervisor_staff_id;
+        if (!supervisor_ids.insert(supervisor_id).second) {
+            error("INV-27 同一员工重复担任监督: " + work.id + "/" + supervisor_id);
+            continue;
+        }
+        const Staff* holder = nullptr;
+        for (const auto& member : state.staff) {
+            if (member.id == supervisor_id) {
+                holder = &member;
+                break;
+            }
+        }
+        if (holder == nullptr) {
+            error("INV-27 监督指向不存在的员工: " + work.id + "/" + supervisor_id);
+            continue;
+        }
+        if (!supervisor_qualified(*holder)) {
+            error("INV-27 监督任职资格不通过: " + work.id + "/" + supervisor_id);
+            continue;
+        }
+        // INV-27：监督岗位与普通归属是同一份单项目分配；只挂名不分配不满足契约。
+        if (!holder->assignment_work_id || *holder->assignment_work_id != work.id) {
+            error("INV-27 监督未分配到该项目: " + work.id + "/" + supervisor_id);
+        }
+    }
+
     // 伙伴：渠道唯一、关系值范围、状态合法
     for (const auto& partner : state.partners) {
         if (!partner.is_object()) { error("INV-01 partner 必须是对象"); continue; }
@@ -611,7 +735,14 @@ std::vector<std::string> validate(const GameState& state) {
         if (event.expires_week && *event.expires_week < event.triggered_week) {
             error("INV-23 expires_week 早于触发周: " + event.event_id);
         }
-        if (event.expires_week) error("INV-23 首版不支持处理期限，expires_week 必须为 null: " + event.event_id);
+        if (event.expires_week && *event.expires_week > event.triggered_week + 7) {
+            error("INV-29 expires_week 超出八周处理上限: " + event.event_id);
+        }
+        if (event.expires_week &&
+            std::none_of(event.options.begin(), event.options.end(),
+                         [](const EventOptionView& option) { return option.kind == "abandon"; })) {
+            error("INV-29 限期事件缺少 abandon 默认分支: " + event.event_id);
+        }
         if (event.options.empty()) error("INV-23 待处理事件缺少选项快照: " + event.event_id);
     }
     for (const auto& [work_id, entry] : state.events.per_work) {
@@ -1161,6 +1292,38 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     return outcome;
 }
 
+void apply_event_effects(GameState& state, Project& work, const std::vector<EffectView>& effects, int week,
+                         const std::string& event_id);
+
+bool apply_event_option(GameState& state, const PendingEvent& pending, const EventOptionView& option, int week,
+                        bool automatic) {
+    Project* work = find_work(state, pending.work_id);
+    if (work == nullptr) return false;
+    std::int64_t cost = option.cost;
+    if (automatic) cost = std::min<std::int64_t>(cost, state.finance.balance);
+    if (cost > 0) {
+        state.finance.entries.push_back(LedgerEntry{
+            "w" + std::to_string(week) + ".event." + pending.event_id + "." + pending.work_id,
+            week, pending.work_id, "events", -cost, std::nullopt, pending.event_id});
+        state.finance.balance -= cost;
+    }
+    apply_event_effects(state, *work, option.effects, week, pending.event_id);
+    auto& entry = state.events.per_work[pending.work_id];
+    if (pending.cooldown_weeks > 0) entry.cooldowns[pending.event_id] = week + pending.cooldown_weeks;
+    if (pending.once_per_project &&
+        std::find(entry.major_seen.begin(), entry.major_seen.end(), pending.event_id) == entry.major_seen.end()) {
+        entry.major_seen.push_back(pending.event_id);
+    }
+    return true;
+}
+
+const EventOptionView* default_event_option(const PendingEvent& pending) {
+    for (const auto& option : pending.options) {
+        if (option.kind == "abandon") return &option;
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 std::string initialize(const std::string& input) {
@@ -1199,7 +1362,9 @@ std::string initialize(const std::string& input) {
             member.potential = abilities;
             member.talent_type = "specialist";
             member.weekly_salary = 40000;
-            member.signing_fee = 100000;
+            // 创始名册不是通过 hire_core 进来的，没有签约费可记；
+            // 留 0 才不会凭空出现一笔从未入过账的 signing_fee。
+            member.signing_fee = 0;
             member.fatigue = 0;
             member.morale = 80;
             return member;
@@ -1247,6 +1412,9 @@ std::string instantiate_work(const std::string& input) {
             return encode(error_body("INVALID_INPUT", error));
         }
         state.works.push_back(std::move(work));
+        if (!designate_supervisor(state, state.works.back())) {
+            return encode(error_body("INVALID_STATE", "INV-27 开工需要一名合格监督，名册中无可用候选人"));
+        }
 
         const auto errors = validate(state);
         if (!errors.empty()) return encode(error_body("INVALID_STATE", errors.front()));
@@ -1356,17 +1524,38 @@ std::string assign_staff(const std::string& input) {
 
         // M0 命令 4 的语义是 assign_staff(staff_id, work_id|null)。
         // 非法类型不能被静默解释成"取消分配"——那会让客户端一个拼写错误改变玩家归属。
+        // 目标先算出来，监督岗位才能在同一份副本里原子处理，不留可观察的空缺中间态（§14.8）。
+        std::optional<std::string> destination;
         if (request.at("work_id").is_null()) {
-            member->assignment_work_id.reset();
+            destination.reset();
         } else if (request.at("work_id").is_string()) {
             const std::string work_id = request.at("work_id").get<std::string>();
             if (work_id.empty()) return encode(error_body("INVALID_INPUT", "work_id 不能为空字符串"));
             const Project* work = find_work(state, work_id);
             if (work == nullptr) return encode(error_body("NOT_FOUND", "项目不存在"));
             if (work->status != "producing") return encode(error_body("INVALID_PHASE", "只有制作中的项目可以分配人员"));
-            member->assignment_work_id = work_id;
+            destination = work_id;
         } else {
             return encode(error_body("INVALID_INPUT", "work_id 必须是字符串或 null"));
+        }
+
+        // 把在任监督从本项目调走：必须先当场补位，否则关键岗位锁定、本次调动作废。
+        const std::string origin = member->assignment_work_id.value_or("");
+        if (origin != destination.value_or("") &&
+            !replace_supervisor_post(state, origin, staff_id)) {
+            return encode(error_body("INVALID_PHASE", "监督关键岗位锁定：同项目与公司空闲名册中无合格替补"));
+        }
+
+        if (destination) {
+            member->assignment_work_id = destination;
+            // 调入项目若监督空缺，合格员工到位即补位（§5 命令 4 的 Swap/Replace 入口）。
+            Project* target = find_work(state, *destination);
+            if (target != nullptr && (!target->supervisor_staff_id || target->supervisor_staff_id->empty()) &&
+                supervisor_qualified(*member)) {
+                target->supervisor_staff_id = member->id;
+            }
+        } else {
+            member->assignment_work_id.reset();
         }
 
         const auto errors = validate(state);
@@ -1397,6 +1586,13 @@ std::string advance_week(const std::string& input) {
         const auto pre_errors = validate(state);
         if (!pre_errors.empty()) return encode(error_body("INVALID_STATE", pre_errors.front()));
 
+        // ---- 阶段 1：计划冻结与快照；后续失败必须回到这里 ----
+        const GameState snapshot = state;
+        auto fail_stage = [&state, &snapshot](int stage, const std::string& code, const std::string& message) {
+            state = snapshot;
+            return encode(error_body(code.c_str(), "阶段 " + std::to_string(stage) + " 失败: " + message));
+        };
+
         const int week = state.company.week;
         Json works_report = Json::array();
         std::map<std::string, int> produced_by_staff;
@@ -1410,15 +1606,13 @@ std::string advance_week(const std::string& input) {
         std::sort(ordered_staff.begin(), ordered_staff.end(),
                   [](const Staff* a, const Staff* b) { return a->id < b->id; });
 
-        // ---- 阶段 2-3：刚性支出预检与扣款（§14.7：失败即回滚并破产终局）----
+        // ---- 阶段 2：刚性支出原子预检 ----
         std::map<std::string, int> assigned_count;
         for (const Staff* member : ordered_staff) {
             if (member->assignment_work_id) ++assigned_count[*member->assignment_work_id];
         }
         int64_t salary_total = 0;
-        for (const Staff* member : ordered_staff) {
-            if (member->employment == "core") salary_total += member->weekly_salary;
-        }
+        for (const auto& member : state.staff) salary_total += member.weekly_salary;
         const int64_t operations_total = kernel::weekly_operations_cost();
         int64_t production_total = 0;
         for (const Project* work : ordered) {
@@ -1428,6 +1622,10 @@ std::string advance_week(const std::string& input) {
         }
         const int64_t total_cost = salary_total + operations_total + production_total;
         if (state.finance.balance < total_cost) {
+            if (!state.events.pending.empty()) {
+                return encode(error_body("NOT_IMPLEMENTED",
+                                         "破产终局的 pending 转移/归档语义尚未冻结，不能清空事件或关闭其归属项目"));
+            }
             const int64_t gap = total_cost - state.finance.balance;
             const int64_t balance = state.finance.balance;
             // §14.7：预检失败不扣款、不推进、不生产，回滚至阶段 1 快照并直接破产终局。
@@ -1449,7 +1647,7 @@ std::string advance_week(const std::string& input) {
                                                {"events", Json{{"drawn", 0}, {"reason", "bankrupt"}}}}}});
         }
 
-        // ---- 阶段 6：原子记账（唯一账本，逐条可归因）----
+        // ---- 阶段 3：刚性支出扣款与流水 ----
         auto spend = [&state, week](const std::string& entry_id, std::optional<std::string> work_id,
                                     const char* category, int64_t amount, const std::string& memo) {
             if (amount <= 0) return;
@@ -1458,7 +1656,6 @@ std::string advance_week(const std::string& input) {
             state.finance.balance -= amount;
         };
         for (const Staff* member : ordered_staff) {
-            if (member->employment != "core") continue;
             // DEC-ECON-001：分配到项目的周薪归项目直接成本；闲置员工工资留在公司级。
             spend("w" + std::to_string(week) + ".salary." + member->id, member->assignment_work_id,
                   "salary", member->weekly_salary, member->id);
@@ -1471,6 +1668,8 @@ std::string advance_week(const std::string& input) {
                   work->plan.intensity);
         }
 
+        // ---- 阶段 4：项目生产推进与阶段切换 ----
+        std::map<std::string, std::set<int>> experience_gains;
         for (Project* work : ordered) {
             if (work->status != "producing") continue;
 
@@ -1523,11 +1722,7 @@ std::string advance_week(const std::string& input) {
                 if (result.points > 0) {
                     member->last_participation = Participation{work->id, item->id, week};
                     if (result.points >= kExperienceThreshold) {
-                        const int ability = ability_index(item->ability);
-                        if (ability >= 0) {
-                            member->experience[static_cast<std::size_t>(ability)] =
-                                std::min(100, member->experience[static_cast<std::size_t>(ability)] + 1);
-                        }
+                        experience_gains[member->id].insert(ability_index(item->ability));
                     }
                 }
             }
@@ -1548,9 +1743,14 @@ std::string advance_week(const std::string& input) {
                                         {"quality", Json{{"dims", dims}, {"mean", aggregated.mean}}}});
         }
 
-        // 人员状态结算（每人每周一次）
+        // ---- 阶段 5：人员经验、疲劳与红灯 ----
         Json staff_report = Json::array();
         for (auto& member : state.staff) {
+            for (const int ability : experience_gains[member.id]) {
+                if (ability < 0) continue;
+                member.experience[static_cast<std::size_t>(ability)] =
+                    std::min(100, member.experience[static_cast<std::size_t>(ability)] + 1);
+            }
             const int produced = produced_by_staff[member.id];
             if (produced > 0) {
                 member.fatigue = clamp_int(member.fatigue + kFatigueWorkGain, 0, 100);
@@ -1566,7 +1766,7 @@ std::string advance_week(const std::string& input) {
                                         {"fatigue", member.fatigue}, {"morale", member.morale}});
         }
 
-        // ---- 阶段 9–10：完成/到期 → 当周交付结算（玩家无需确认）----
+        // ---- 阶段 6：商业窗口、完成与交付收入 ----
         // 已达门槛记 completed；未达门槛按当前进度强制交付（deadline），
         // 扣罚与评价修正由 gate_completion_permille 决定。
         Json settlements = Json::array();
@@ -1579,15 +1779,48 @@ std::string advance_week(const std::string& input) {
             if (target == nullptr) continue;
             const bool complete = target->deliverable();
             const auto settled = settle_project(state, *target, complete ? "completed" : "deadline", !complete);
-            if (!settled.ok) return encode(error_body(settled.code, settled.message));
+            if (!settled.ok) return fail_stage(6, settled.code, settled.message);
             settlements.push_back(settled.report);
         }
 
-        // ---- 阶段 11：事件抽取（读本周已提交的结果，不碰账）----
+        // ---- 阶段 7：延迟状态倒计时与到期默认分支 ----
+        // 只按 (work_id,event_id) 稳定顺序处理本周已到期的已查看事件，不触碰其他 pending。
+        std::vector<PendingEvent> due_events;
+        for (const auto& pending : state.events.pending) {
+            if (pending.viewed && pending.expires_week && week >= *pending.expires_week) {
+                due_events.push_back(pending);
+            }
+        }
+        std::sort(due_events.begin(), due_events.end(), [](const PendingEvent& a, const PendingEvent& b) {
+            if (a.work_id != b.work_id) return a.work_id < b.work_id;
+            return a.event_id < b.event_id;
+        });
+        Json expired = Json::array();
+        for (const auto& pending : due_events) {
+            const EventOptionView* option = default_event_option(pending);
+            if (option == nullptr) return fail_stage(7, "INVALID_STATE", "限期事件缺少 abandon 默认分支");
+            if (!apply_event_option(state, pending, *option, week, true)) {
+                return fail_stage(7, "INVALID_STATE", "到期事件归属项目不存在");
+            }
+            auto& events = state.events.pending;
+            const auto hit = std::find_if(events.begin(), events.end(), [&pending](const PendingEvent& item) {
+                return item.work_id == pending.work_id && item.event_id == pending.event_id;
+            });
+            if (hit == events.end()) return fail_stage(7, "INVALID_STATE", "到期事件重复处理");
+            events.erase(hit);
+            expired.push_back(Json{{"work_id", pending.work_id}, {"event_id", pending.event_id},
+                                   {"option_id", option->id}, {"automatic", true}});
+        }
+
+        // ---- 阶段 8：随机事件抽取与周数 +1 ----
         // 每个 producing 项目各自至多一条；已有待处理事件的项目不再追加。
         // 第 520 周先合法完成当周结算，再统一收尾：不再抽事件，剩余项目转 closing 结清。
         Json events_report = Json::object();
         if (week + 1 >= kMaxWeek) {
+            if (!state.events.pending.empty()) {
+                return fail_stage(8, "NOT_IMPLEMENTED",
+                                  "第 520 周终局的 pending 转移/归档语义尚未冻结，不能清空事件或关闭其归属项目");
+            }
             close_company(state, "time_limit");
             events_report = Json{{"drawn", 0}, {"reason", "company_closed"}};
         } else {
@@ -1595,9 +1828,10 @@ std::string advance_week(const std::string& input) {
         }
 
         state.company.week = week + 1;
+        events_report["expired"] = expired;
 
         const auto post_errors = validate(state);
-        if (!post_errors.empty()) return encode(error_body("INTERNAL_ERROR", "结算后状态非法: " + post_errors.front()));
+        if (!post_errors.empty()) return fail_stage(8, "INTERNAL_ERROR", post_errors.front());
 
         Json report = Json{{"week", week},
                            {"works", works_report},
@@ -1898,6 +2132,11 @@ std::string start_work(const std::string& input) {
         work.opened_week = week;
         work.deadline_week = week + std::max(duration, 1);
         work.status = "producing";
+        // INV-27：开工即定岗。这里先补监督再动账，避免失败时留下"已入账无监督"的半状态。
+        // 人选按 §14.8 优先级从现有名册派生，不新增命令参数（M0 命令 2 签名不变）。
+        if (!designate_supervisor(state, work)) {
+            return encode(error_body("INVALID_STATE", "INV-27 开工需要一名合格监督，名册中无可用候选人"));
+        }
 
         std::string committee_id;
         if (mode == "committee") {
@@ -2001,9 +2240,8 @@ std::string deliver_work(const std::string& input) {
     }
 }
 
-// M0 命令 11：abort_work。终止项目、释放归属、写入 Archive。
-// 违约扣罚系数仍属待标定参数：本实现记 0 并在回执标记 penalty_pending，
-// 不虚构比例，也不跳过归档与清理。
+// M0 命令 11：abort_work。违约扣罚与中止履历尚未冻结；
+// 在契约补齐前原子拒绝，不能以 0 处罚 + penalty_pending 伪报完成。
 std::string abort_work(const std::string& input) {
     try {
         const Json request = Json::parse(input);
@@ -2012,18 +2250,14 @@ std::string abort_work(const std::string& input) {
         if (!request.contains("work_id") || !request.at("work_id").is_string()) {
             return encode(error_body("INVALID_INPUT", "work_id 必须是字符串"));
         }
+        const auto pre_errors = validate(state);
+        if (!pre_errors.empty()) return encode(error_body("INVALID_STATE", pre_errors.front()));
         const std::string work_id = request.at("work_id").get<std::string>();
         Project* work = find_work(state, work_id);
         if (work == nullptr) return encode(error_body("NOT_FOUND", "项目不存在"));
         if (work->status != "producing") return encode(error_body("INVALID_PHASE", "只有 producing 项目可以中止"));
-
-        const auto outcome = settle_project(state, *work, "aborted", true);
-        if (!outcome.ok) return encode(error_body(outcome.code, outcome.message));
-        const auto errors = validate(state);
-        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "中止后状态非法: " + errors.front()));
-        Json report = outcome.report;
-        report["penalty_pending"] = true;
-        return encode(Json{{"state", state}, {"report", report}});
+        return encode(error_body("NOT_IMPLEMENTED",
+                                 "abort_work 的违约扣罚公式与中止履历结构尚未冻结"));
     } catch (const Json::exception&) {
         return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
     } catch (...) {
@@ -2297,28 +2531,15 @@ std::string resolve_event(const std::string& input) {
             }
         }
         if (index >= state.events.pending.size()) return encode(error_body("NOT_FOUND", "待处理事件不存在"));
-        const std::string owner_id = state.events.pending[index].work_id;
+        const std::string owner_id = resolution.pending->work_id;
         Project* work = find_work(state, owner_id);
         if (work == nullptr) return encode(error_body("NOT_FOUND", "事件归属项目不存在"));
+        const std::string message = resolution.pending->name.empty() ? event_id : resolution.pending->name;
 
         const int week = state.company.week;
-        if (resolution.option->cost > 0) {
-            state.finance.entries.push_back(LedgerEntry{
-                "w" + std::to_string(week) + ".event." + event_id + "." + owner_id, week, owner_id, "events",
-                -resolution.option->cost, std::nullopt, event_id});
-            state.finance.balance -= resolution.option->cost;
+        if (!apply_event_option(state, *resolution.pending, *resolution.option, week, false)) {
+            return encode(error_body("NOT_FOUND", "事件归属项目不存在"));
         }
-        apply_event_effects(state, *work, resolution.option->effects, week, event_id);
-
-        auto& entry = state.events.per_work[owner_id];
-        if (resolution.pending->cooldown_weeks > 0) {
-            entry.cooldowns[event_id] = week + resolution.pending->cooldown_weeks;
-        }
-        if (resolution.pending->once_per_project &&
-            std::find(entry.major_seen.begin(), entry.major_seen.end(), event_id) == entry.major_seen.end()) {
-            entry.major_seen.push_back(event_id);
-        }
-        const std::string message = resolution.pending->name.empty() ? event_id : resolution.pending->name;
         state.events.pending.erase(state.events.pending.begin() + static_cast<std::ptrdiff_t>(index));
 
         const auto post_errors = validate(state);

@@ -150,6 +150,9 @@ struct Project {
     int deadline_week = 0;
     Json extension = Json::object();
     std::string status = "producing";      // planning / producing / delivering / settled
+    // INV-27/§14.8：监督是项目内岗位，不写进 Staff.role（DEC-STAFF-008），
+    // 也不用"归属里角色是监督者"推导——那样多人主责与原子换班都无法表达。
+    std::optional<std::string> supervisor_staff_id;
     std::optional<std::string> ip_id;
     std::optional<std::string> committee_id;
     Json tv_service = nullptr;             // M4：{channel, paid_week, fee}

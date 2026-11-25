@@ -76,7 +76,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | --- | --- | --- | --- |
 | `Company` | id, name, founded_week, week, status, reputation, reputation_log | end_reason（仅 running 为 null）, facilities（可空数组） | week ∈ [0,520]；status=running ⇒ week<520；core_staff_capacity 由成长里程碑单调推导，仅统计核心员工名册，不含临时员工 |
 | `Staff` | id, name, role, employment, abilities, experience, potential, revealed_potential, talent_type, signing_fee, weekly_salary, fatigue, morale, departure_warning, assignment_work_id | last_participation, temporary_contract | core/temp 均使用一次性 signing_fee + weekly_salary>0；不再使用 project_fee；core 的 temporary_contract=null；temp 的 assignment_work_id = 合同项目；公司至少保留 1 名 core |
-| `Project` | id, offer, mode, investment, channels, opened_week, deadline_week, extension, status, common, episodes, plan | ip_id, committee_id, tv_service, delivery | committee 模式才可有 committee_id；episodes 长度 = offer.episode_count |
+| `Project` | id, offer, mode, investment, channels, opened_week, deadline_week, extension, status, supervisor_staff_id, common, episodes, plan | ip_id, committee_id, tv_service, delivery | committee 模式才可有 committee_id；episodes 长度 = offer.episode_count |
 | `CommonProduction` | id, items | — | items 非空 |
 | `EpisodeProduction` | id, index, stages | — | stages 恰 6 个，键固定有序 |
 | `WorkItem` | id, key, ability, work_total, work_done, deliver_at, deps, is_gate, quality, contributors | — | 0 ≤ work_done ≤ work_total；deliver_at ∈ [1,1000] |
@@ -520,7 +520,7 @@ B–D 级变更，以及任何可能影响已确认玩法的 A 级修复，PR/Is
 - 命令 17（`advance_week`）的推进守卫只统计 `viewed=false` 的条目，`INVALID_PHASE` 消息给出未查看条数；已查看未处理事件原样保留在 `events.pending[]` 并可随周推进继续存在。
 - `events.pending[]` 每条必须带 `work_id/event_id/triggered_week/viewed`（INV-23）。`viewed` 缺失按非法输入拒绝，不静默当作未查看，避免旧形状存档被默认值放行推进。
 - 同一事件选项的 `cost` 与 `funds` 效果在同周产生多条流水时，账本条目 id 必须互不相同（INV-02）；事件强制支出以当前余额封顶，不得让现金转负。
-- 本条只登记已实现语义。§14.11 的到期倒计时、默认分支与一次性升级需要先在内容契约中冻结默认分支与升级载荷字段，首版 `expires_weeks` 仍按非 0 拒绝，作为未实现边界跟踪（#53 数据字典 / #13 内容标定）。
+- 本条登记已实现语义：内容卡 `expires_weeks` 允许 0..8；非 0 卡必须为负面事件并带 `abandon`，运行时以该冻结快照作为默认消极/保守分支。触发周计入期限，`expires_week = triggered_week + expires_weeks - 1`；仅已查看事件在阶段 7 到期处理，自动支出按当前现金封顶，只移除目标 `(work_id,event_id)`。§14.11 的一次升级仍未实现：升级门槛、替换载荷、升级后期限、二次超时硬罚与已升级标记尚未在内容契约冻结，任何升级配置均不得由实现者猜测。
 
 ### 14.13 Q3 招聘池与 Q4 定金锁定的字段契约（2026-11-25，依 #53 裁决）
 
