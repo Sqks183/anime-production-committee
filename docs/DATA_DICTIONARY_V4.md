@@ -177,7 +177,7 @@ GameState {
 
 - 同一命令内所有 id 全局唯一（INV-02，`claim_id`）。
 - 路径段用单数 `event`，category 用复数 `events`，登记 D-08。
-- DA §7.5 冻结 14 个当前 category；v4 代码目前只产出 `salary/operations/production/events`。收入类待交付命令实现。
+- DA §7.5 冻结 14 个当前 category；v4 代码目前只产出 `salary/operations/production/events`。`contract_received` 由 `start_work` 写入；`commercial_share_received` 与 `success_reward_received` 由交付结算写入。
 - 定金锁定与签约抵扣必须继续使用 `investment_paid` 与 `contract_received` 两笔立项账，`deposit_paid` 只是 Market 对账快照，不是第二本账。
 
 ### 3.8 `EventState`
@@ -227,13 +227,14 @@ Recruitment {
 }
 PoolCandidate { staff: Staff, expires_week: uint | null, origin: "regular" | "scout" }
 
-Offer 新增：expires_week, locked_until, lock_used, deposit_paid
+Offer 新增：expires_week, locked_until, lock_used, deposit_paid, offer_source_type, deposit_basis
 ```
 
 - 市场槽位初始 4、最大 10；同一企划 id 终身唯一。
 - 常规招聘池每周部分轮换；Scout 每周至多一次；候选 `expires_week` 是首个不可签约周，regular 候选为 `null`。
 - `lock_offer(offer_id)` 是命令 23；第 W 周成功锁定后覆盖 W/W+1，W+2 开局失效。
 - 同一企划终身只能锁定一次；到期释放槽位、定金不退，`lock_used` 保持 true。
+- 普通企划定金 5%、IP 上门企划 10%，按 Offer 生成时固定的 `deposit_basis` 计算；`offer_source_type` 与 `deposit_basis` 必须随 Offer 快照保存，后续预算调整不追溯改变定金。
 - 正式签约时定金 100% 抵扣；Finance 保留 `investment_paid/contract_received` 两笔账，不重复记录定金。
 -  pool 候选不是公司员工，不参与周结算、不计薪；hire 解包后 `expires_week/origin` 不得残留在 Staff。
 
