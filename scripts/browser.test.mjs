@@ -359,6 +359,62 @@ test('读取临近截止的合法边界存档并强制违约交付结算', async
   } finally { await context.close() }
 })
 
+test('原型事件可确认并回显样本结果，切换周次不写入状态', async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
+  try {
+    const page = await context.newPage()
+    const errors = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    await page.goto(`${baseUrl}/index.html?view=prototype`)
+    await page.getByRole('button', { name: '每周经营', exact: true }).click()
+    await page.getByRole('radio', { name: '选择本周返工' }).check()
+    await page.getByRole('button', { name: '确认处理（原型）' }).click()
+    const result = page.getByRole('region', { name: '事件处理结果' })
+    assert.match(await result.textContent(), /样本结果：本周返工，质量 \+2/)
+    await page.screenshot({ path: resolve(screenshots, 'prototype-event-resolved.png'), fullPage: true, animations: 'disabled' })
+    await page.getByRole('button', { name: /第 17 周/ }).click()
+    await page.getByRole('button', { name: /第 18 周/ }).click()
+    assert.match(await page.getByRole('region', { name: '事件处理结果' }).textContent(), /样本结果：本周返工，质量 \+2/)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+test('原型关闭中禁止推进，仅预览达标结清与总结', async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
+  try {
+    const page = await context.newPage()
+    await page.goto(`${baseUrl}/index.html?view=prototype`)
+    await page.getByRole('button', { name: '每周经营', exact: true }).click()
+    await page.getByRole('button', { name: /第 19 周/ }).click()
+    assert.equal(await page.getByRole('button', { name: '推进本周', exact: true }).isDisabled(), true)
+    await page.getByRole('button', { name: '预览待交付结清' }).click()
+    assert.match(await page.getByRole('region', { name: '待交付结清预览' }).textContent(), /第 6 集可关闭交付/)
+    await page.getByRole('button', { name: '预览经营总结' }).click()
+    assert.match(await page.getByRole('region', { name: '经营总结预览' }).textContent(), /核心 calculate_result/)
+    await page.screenshot({ path: resolve(screenshots, 'prototype-closing.png'), fullPage: true, animations: 'disabled' })
+  } finally { await context.close() }
+})
+
+test('原型财务筛选与 Archive 可操作，375px 无横向溢出', async () => {
+  const context = await browser.newContext({ viewport: { width: 375, height: 1000 } })
+  try {
+    const page = await context.newPage()
+    await page.goto(`${baseUrl}/index.html?view=prototype`)
+    const finance = page.getByRole('region', { name: '公司现金流水与项目归因' })
+    await finance.getByRole('combobox', { name: '周次' }).selectOption('18')
+    await finance.getByRole('combobox', { name: '归因' }).selectOption('p1')
+    assert.equal(await finance.getByRole('table', { name: '公司现金流水' }).getByRole('row').count(), 3)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    await finance.scrollIntoViewIfNeeded()
+    await page.screenshot({ path: resolve(screenshots, 'prototype-finance-375.png'), fullPage: true, animations: 'disabled' })
+    const archive = page.getByRole('region', { name: '作品 Archive 与经营历史' })
+    assert.equal(await archive.getByRole('listitem').count(), 3)
+    assert.equal(await archive.getByText('雾港信使 II', { exact: true }).count(), 0)
+    await archive.scrollIntoViewIfNeeded()
+    await page.screenshot({ path: resolve(screenshots, 'prototype-archive-375.png'), fullPage: true, animations: 'disabled' })
+  } finally { await context.close() }
+})
+
 for (const width of [375, 768]) {
   test(`${width}px 首页、报价、阶段配置、制作、结算无横向溢出，控件可操作`, async () => {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: 'reduce' })

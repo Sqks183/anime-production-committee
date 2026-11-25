@@ -4,11 +4,17 @@ import { decisionKindNames, episodeStageShortNames, ledgerNames, riskNames, week
 import type { PrototypeData, WorkItem } from './model'
 import { Panel, RiskTag, signedPoint, signedYuan, Stat, yuan } from './bits'
 
-const stateTones = { normal: 'state-normal', event_pending: 'state-event', cash_crisis: 'state-crisis' } as const
+const stateTones = { normal: 'state-normal', event_pending: 'state-event', cash_crisis: 'state-crisis', closing: 'state-closing' } as const
 
 export function WeeklyOperations({ data, onOpenProject }: { data: PrototypeData; onOpenProject: (projectId: string) => void }) {
   const [week, setWeek] = useState(data.receipts[0].week)
+  const [selectedOptions, setSelectedOptions] = useState<Record<number, string>>({})
+  const [resolvedEvents, setResolvedEvents] = useState<Record<string, { optionId: string; outcome: string }>>({})
+  const [closingView, setClosingView] = useState<'delivery' | 'summary' | null>(null)
   const receipt = data.receipts.find((item) => item.week === week) ?? data.receipts[0]
+  const resolution = receipt.event ? resolvedEvents[receipt.event.id] : undefined
+  const selectedOption = receipt.event ? selectedOptions[receipt.week] : undefined
+  const selectWeek = (next: number) => { setWeek(next); setClosingView(null) }
   const staffName = (staffId: string) => data.staff.find((person) => person.id === staffId)?.name ?? staffId
   const itemOf = (projectId: string, key: string | null): WorkItem | undefined => {
     const project = data.projects.find((item) => item.id === projectId)
@@ -18,15 +24,15 @@ export function WeeklyOperations({ data, onOpenProject }: { data: PrototypeData;
 
   return <div className="proto-screen">
     <div className="week-tabs" role="group" aria-label="周次快照">
-      {data.receipts.map((item) => <button key={item.week} className={`week-tab${item.week === week ? ' is-active' : ''}`} onClick={() => setWeek(item.week)}>
+      {data.receipts.map((item) => <button key={item.week} className={`week-tab${item.week === week ? ' is-active' : ''}`} onClick={() => selectWeek(item.week)}>
         <span>第 {item.week} 周</span><span className={`tab-state tab-${item.state}`}>{weekStateNames[item.state]}</span>{item.event && <Flag size={13} aria-hidden="true" />}
       </button>)}
       <span className="week-note">静态快照，切换周次不会触发真实结算</span>
     </div>
 
-    <div className={`state-banner ${stateTones[receipt.state]}`} role="status">
-      <p className="state-name">{weekStateNames[receipt.state]}</p>
-      <p className="state-note">{receipt.stateNote}</p>
+    <div className={`state-banner ${resolution ? stateTones.normal : stateTones[receipt.state]}`} role="status">
+      <p className="state-name">{resolution ? '事件已处理（原型）' : weekStateNames[receipt.state]}</p>
+      <p className="state-note">{resolution ? '本快照的事件已按样本选项处理；没有写入真实游戏状态，也没有触发周推进。' : receipt.stateNote}</p>
       {receipt.crisis && <dl className="crisis-facts">
         <div><dt>结算后现金</dt><dd>{yuan(receipt.crisis.cashAfterSettle)}</dd></div>
         <div><dt>下周强制支出</dt><dd>{yuan(receipt.crisis.forcedNextWeek)}</dd></div>
@@ -41,6 +47,37 @@ export function WeeklyOperations({ data, onOpenProject }: { data: PrototypeData;
         <ul className="quiet-list">{receipt.crisis.waysOut.map((line) => <li key={line}>{line}</li>)}</ul>
         <p className="proto-inline-note">禁止：立项、签外包、招聘、购买电视服务、创建自定企划，以及融资以外的重大承诺与新增项目支出。系统不自动借款、不自动追加投资、也不立即破产；期限内未恢复偿付能力才进入破产结算。</p>
       </div>
+    </Panel>}
+
+    {receipt.closing && <Panel eyebrow="CLOSING / 公司关闭" title="关闭中：只允许结清与总结" marks={['confirmed']}
+      note={receipt.closing.reason === 'bankrupt' ? '资金破产已触发结束流程。系统不会继续生产，也不会自动借款或追加投资。' : '公司主动进入结束流程，后续动作与破产关闭相同。'}>
+      <dl className="proto-stats proto-stats-tight">
+        <Stat strong label="公司现金" value={yuan(receipt.closing.cash)} hint="仍只有一个公司现金池" />
+        <Stat label="待结清项目" value={`${receipt.closing.pendingProjectIds.length} 部`} hint="只有达到最低交付门槛的部分可关闭交付" />
+        <Stat label="经营周" value="停止推进" hint="advance_week 不再接受操作" />
+      </dl>
+      <div className="closing-actions">
+        <button disabled>推进本周</button><span>不可用：公司已进入结束流程。</span>
+        <button className="button secondary" onClick={() => setClosingView('delivery')}>预览待交付结清</button>
+        <button className="button secondary" onClick={() => setClosingView('summary')}>预览经营总结</button>
+      </div>
+      <div className="proto-two-col">
+        <ul className="quiet-list">{receipt.closing.allowedActions.map((line) => <li key={line}>允许：{line}</li>)}</ul>
+        <ul className="quiet-list">{receipt.closing.blockedActions.map((line) => <li key={line}>禁止：{line}</li>)}</ul>
+      </div>
+      {closingView === 'delivery' && <div className="closing-preview" role="region" aria-label="待交付结清预览">
+        <h3 className="sub-heading">待交付结清（原型预览）</h3>
+        <ul className="quiet-list">{receipt.closing.pendingProjectIds.map((id) => {
+          const project = data.projects.find((item) => item.id === id)
+          const ready = project?.episodes.filter((episode) => episode.status === 'min_delivered') ?? []
+          return <li key={id}><strong>{project?.title ?? id}</strong>：{ready.length > 0 ? ready.map((episode) => `第 ${episode.index} 集可关闭交付`).join('、') : '没有达到门槛的单集，不能伪报完成'}</li>
+        })}</ul>
+      </div>}
+      {closingView === 'summary' && <div className="closing-preview" role="region" aria-label="经营总结预览">
+        <h3 className="sub-heading">经营总结（原型预览）</h3>
+        <p>公司现金 {yuan(data.company.cash)} · 已交付作品 {data.history.length} 部 · 在制项目 {data.projects.length} 部。</p>
+        <p className="proto-footnote">正式总结必须来自核心 calculate_result；这里只预览信息层级，不生成终局结果。</p>
+      </div>}
     </Panel>}
 
     <Panel eyebrow={`WEEKLY REPORT / 第 ${receipt.week} 周公司周报`} title={receipt.headline} marks={['confirmed']}>
@@ -113,16 +150,29 @@ export function WeeklyOperations({ data, onOpenProject }: { data: PrototypeData;
       aside={<p className="proto-since">{receipt.event.scope === 'project' ? `归属：${data.projects.find((project) => project.id === receipt.event?.projectId)?.title ?? '—'}` : '公司级'} · 需在 {receipt.event.deadlineWeek} 周前处理</p>}
       note={`${receipt.event.tier === 'major' ? '重大事件' : '普通事件'} —— ${receipt.event.description}`}>
       <ul className="signal-list">{receipt.event.signals.map((signal) => <li key={signal}>{signal}</li>)}</ul>
-      <table className="proto-table event-options">
-        <thead><tr><th>选项</th><th>确定代价</th><th>可能收益</th><th>风险</th><th>适用判断</th></tr></thead>
-        <tbody>{receipt.event.options.map((option) => <tr key={option.id}>
+      <div className="proto-table-wrap"><table className="proto-table event-options">
+        <thead><tr><th>选择</th><th>选项</th><th>确定代价</th><th>可能收益</th><th>风险</th><th>适用判断</th></tr></thead>
+        <tbody>{receipt.event.options.map((option) => <tr key={option.id} className={resolution?.optionId === option.id || selectedOption === option.id ? 'is-selected' : undefined}>
+          <td><input type="radio" name={`event-${receipt.event?.id}`} value={option.id} checked={resolution ? resolution.optionId === option.id : selectedOption === option.id} disabled={resolution !== undefined} onChange={() => setSelectedOptions((current) => ({ ...current, [receipt.week]: option.id }))} aria-label={`选择${option.label}`} /></td>
           <th scope="row">{option.label}</th>
           <td>{option.cost === 0 ? '不额外支出' : yuan(option.cost)}</td>
           <td>{option.gain}</td>
           <td><RiskTag level={option.risk} label={riskNames[option.risk]} /><span className="cell-sub">{option.riskNote}</span></td>
           <td>{option.fits}</td>
         </tr>)}</tbody>
-      </table>
+      </table></div>
+      {resolution ? <div className="event-resolution" role="region" aria-label="事件处理结果">
+        <p className="eyebrow">RESOLVED / 原型样本</p>
+        <h3>{receipt.event.options.find((option) => option.id === resolution.optionId)?.label}</h3>
+        <p>{resolution.outcome}</p>
+        <p className="proto-footnote">这里只切换本地交互状态，用于评审信息层级；不会修改模拟数据、不会触发周推进，也不会写入存档。</p>
+      </div> : <div className="event-confirm">
+        <p>已选择：<strong>{receipt.event.options.find((option) => option.id === selectedOption)?.label ?? '尚未选择'}</strong></p>
+        <button className="button primary" disabled={selectedOption === undefined} onClick={() => {
+          if (selectedOption === undefined) return
+          setResolvedEvents((current) => ({ ...current, [receipt.event!.id]: { optionId: selectedOption, outcome: receipt.event!.outcomes[selectedOption] } }))
+        }}>确认处理（原型）</button>
+      </div>}
       <p className="proto-footnote">事件归属具体项目，多数周只显示回执；同时满足触发条件时按优先级与种子选择，不允许一周大量弹窗。</p>
     </Panel> : <Panel eyebrow="EVENT / 制作异常" title="本周没有需要处理的事件" marks={['confirmed']}>
       <p className="proto-inline-note"><FileText size={16} aria-hidden="true" /> 普通周只呈现经营回执，事件不追求每周填满。</p>
