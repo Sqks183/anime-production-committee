@@ -143,7 +143,7 @@ npm run test:v4              # 构建 WASM 并跑契约测试（需 emsdk）
 
 ## 7. 测试与证据
 
-`scripts/v4.test.mjs` 共 34 条，其中事件相关 9 条：
+`scripts/v4.test.mjs` 共 36 条，其中事件相关 9 条：
 
 1. 内嵌目录 7 张卡、无 issue、id 稳定；
 2. 非法卡夹具：重复 id、未知 target、`funds` 为正、缺 label、schema_version 错误、`expires_weeks≠0`、空目录，错误定位到 card/field；
@@ -155,7 +155,7 @@ npm run test:v4              # 构建 WASM 并跑契约测试（需 emsdk）
 8. 查看语义：只标记目标事件、查看不等于处理、未查看阻塞推进、全部查看后允许推进；
 9. 结算账务：同一选项的 `cost` 与 `funds` 效果同周入账时账本 id 不冲突（INV-02），现金不因事件转负。
 
-本机 `.tools/emsdk` 可用，34 条已通过真实 WASM 构建复跑（`npm run test:v4`，34/34）；同一套用例另用 MSVC 19.51 原生 JSON 壳交叉验证过，原生壳只是临时工具、放在 `build/`（已 gitignore）不入库。
+本机 `.tools/emsdk` 可用，36 条已通过真实 WASM 构建复跑（`npm run test:v4`，36/36）；同一套用例另用 MSVC 19.51 原生 JSON 壳交叉验证过，原生壳只是临时工具、放在 `build/`（已 gitignore）不入库。
 
 ## 8. 边界与后续
 
