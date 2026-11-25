@@ -1134,6 +1134,45 @@ test('DEC-PLAN-001：原创草稿走独立准入，不复用普通企划声望/�
   assert.equal(started.state.works[0].offer.origin, 'custom')
 })
 
+test('M0 命令 12-14：原创草稿创建、提案采纳/拒绝', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  const request = { state, name: '自制短篇', source: 'original', scale: 'tv', style: 'normal' }
+  // 声望不足只挡草稿创建，不检查全部投资资金
+  assert.equal(call('create_custom_offer', request).error.code, 'INVALID_INPUT')
+
+  state.company.reputation = 150
+  request.state = state
+  const created = ok('create_custom_offer', request)
+  assert.equal(created.offer_id, 'custom_01')
+  assert.equal(created.state.finance.entries.length, 0)
+  assert.equal(created.state.finance.balance, state.finance.balance)
+  assert.equal(created.state.market.custom_offer.draft_status, 'valid')
+  assert.equal(created.state.market.custom_offer.development_fee, 0)
+  assert.equal(created.state.market.custom_offer.rules_status, 'placeholder')
+  assert.equal(call('create_custom_offer', { state: created.state, ...request, state: created.state }).error.code, 'INVALID_PHASE')
+
+  const started = ok('start_work', {
+    state: created.state,
+    offer_id: created.offer_id,
+    mode: 'committee',
+    percent: 50,
+    committee_partner_ids: ['partner_stream']
+  })
+  assert.equal(started.state.market.custom_offer, null)
+  assert.equal(started.state.works[0].offer.origin, 'custom')
+
+  let withProposal = ok('initialize', { seed: 7 }).state
+  withProposal.market.proposal = { ...withProposal.market.slots[0], id: 'proposal_01' }
+  const adopted = ok('adopt_proposal', { state: withProposal })
+  assert.equal(adopted.state.market.custom_offer.id, 'proposal_01')
+  assert.equal(adopted.state.market.proposal, null)
+  assert.equal(call('adopt_proposal', { state: adopted.state }).error.code, 'NOT_FOUND')
+
+  const rejected = ok('reject_proposal', { state: withProposal })
+  assert.equal(rejected.state.market.proposal, null)
+  assert.equal(call('adopt_proposal', { state: rejected.state }).error.code, 'NOT_FOUND')
+})
+
 test('M2 立项守卫：模式、比例、成员、资金与重复消费都拒绝且状态不变', () => {  const base = ok('initialize', { seed: 7 }).state
   const before = ok('hash_state', { state: base }).hash
   const cases = [

@@ -7,11 +7,13 @@
 
 | 命令 | 守卫 | 原子范围 |
 | --- | --- | --- |
-| `start_work(offer_id, mode, percent?, committee_partner_ids?)` | running ∧ 非危机 ∧ 企划存在 ∧ 模式合法 ∧（普通企划：`min_reputation` + `required_works`；原创草稿：`draft_status=valid`）∧ 委员会比例 10..100/10 ∧ 成员渠道不重复 ∧ 现金 ≥ 应付款 | 冻结企划快照、实例化蓝图、成立委员会、合同预算与投资两笔账、消费企划/草稿 |
+| `start_work(offer_id, mode, percent?, committee_partner_ids?)` | running ∧ 企划存在 ∧ 模式合法 ∧（普通企划：`min_reputation` + `required_works`；原创草稿：`draft_status=valid`）∧ 委员会比例 10..100/10 ∧ 成员渠道不重复 ∧ 现金 ≥ 应付款 | 冻结企划快照、实例化蓝图、成立委员会、合同预算与投资两笔账、消费企划/草稿 |
 | `deliver_work(work_id)` | running ∧ producing ∧ 本项目无 pending 事件 ∧ 全部门槛项 delivered ∧ 未过截止 | 质量聚合 → 评级 → 六窗口结算 → 分账/BD 收入 → 委员会关闭/伙伴关系 → Archive → 清归属 → 移除项目 |
 | `abort_work(work_id)` | running ∧ producing ∧ 本项目无 pending 事件 | 终止项目、清归属、记财务/声望事实；**不写 WorkRecord**（见 §8 兼容性分析），扣罚记 0 并标 `penalty_pending` |
-| `buy_tv_service(work_id)` | 委员会模式 ∧ 无电视台成员 ∧ 未购买 ∧ 非危机 ∧ 现金 ≥ 总费用×投资比例 | 记 `distribution` 支出；结算时对适用窗口应用 130% 电视倍率 |
-| `request_extension(work_id)` | 委员会模式 ∧ 未用过 ∧ 未过截止 ∧ 非危机 ∧ 现金 ≥ 25 万 | 截止周 +4、记延期费 |
+| `create_custom_offer(name, source, scale, style)` | running ∧ 草稿槽空闲 ∧ 基础声望 ≥ 占位阈值 ∧ 枚举合法 | 只创建原创草稿（`draft_status=valid`），不建 Project、不收全部投资资金；开发费暂记 0 |
+| `adopt_proposal()` / `reject_proposal()` | running ∧ 存在提案（采纳还要求草稿槽空闲） | 提案转草稿或清空 |
+| `buy_tv_service(work_id)` | 委员会模式 ∧ 无电视台成员 ∧ 未购买 ∧ 现金 ≥ 总费用×投资比例 | 记 `distribution` 支出；结算时对适用窗口应用 130% 电视倍率 |
+| `request_extension(work_id)` | 委员会模式 ∧ 未用过 ∧ 未过截止 ∧ 现金 ≥ 25 万 | 截止周 +4、记延期费 |
 | `end_company()` | running ∧ 无 pending 事件 | 锁 closing/voluntary；全部 producing 项目转 delivering、清归属；无项目时直接 ended |
 | `finalize_delivery(work_id)` | closing ∧ 项目 delivering | 关闭路径交付结算；最后一个项目结清后公司转 ended |
 | `finalize_company()` | ended ∧ 无在制项目 ∧ 结局未生成 | 由 Archive 生成 `company_result`，只执行一次 |
@@ -95,7 +97,7 @@
 
 ## 7. 测试
 
-`scripts/v4.test.mjs` 共 48 条；本轮与商业/关闭路径相关的关键用例：
+`scripts/v4.test.mjs` 共 49 条；本轮与商业/关闭路径相关的关键用例：
 
 1. 到期强制交付：未达门槛在结算周自动交付，`deadline`、按完成度扣罚、归档并移除项目；
 2. 到期交付：门槛达成按 `completed` 正常计价，不扣罚；
@@ -104,24 +106,24 @@
 5. 事件保留：项目有 pending 时交付/关闭被拒，跨项目事件不被清理；
 6. 中止：`abort_work` 无商业收入、释放归属、不写 WorkRecord、`archived=false`；
 7. 商业归属：BD 恒归公司、委员会净池按比例分账、电视倍率 1000/1250/1300 分档、代理费逐行对账；
-8. 原创草稿：缺草稿/失效/有效三种路径，证明不走普通企划声望与履历守卫；
+8. 原创草稿：缺草稿/失效/有效三种路径，以及命令 12-14 的创建/采纳/拒绝；
 9. M1 输入边界：Staff 报酬字段与 `solvency.state` 缺失返回 `INVALID_INPUT`；
 10. §14.7 预检失败：整周回滚、不扣款、直接 closing/bankrupt。
 
-本机无 Emscripten，`npm run test:v4` 未跑；同一份测试正文用 MSVC 19.51 原生 CLI 执行 **48/48**。
+本机无 Emscripten，`npm run test:v4` 未跑；同一份测试正文用 MSVC 19.51 原生 CLI 执行 **49/49**。
 
 ## 8. 里程碑判定（如实）
 
 | 阶段 | 已具备 | 仍缺 |
 | --- | --- | --- |
-| M2 | 立项（含原创草稿准入）、蓝图实例化、制作、正常交付、到期强制交付、中止、公司关闭/结清/结局、Archive、成本归因、事件闭环（PR #92） | `create_custom_offer` 草稿创建命令（开发费/槽位待标定）、监督任职（INV-27/§14.8）、真实市场来源、12 集完整人工试玩 |
+| M2 | 立项（含原创草稿准入）、蓝图实例化、制作、正常交付、到期强制交付、中止、公司关闭/结清/结局、Archive、成本归因、事件闭环（PR #92） | 监督任职（INV-27/§14.8）、限时事件（INV-29）、真实市场来源、12 集完整人工试玩 |
 | M2.5 | 预检失败整周回滚并直接破产终局（§14.7）、交付后负余额进 `closing/bankrupt` | 融资/贷款、资金压力周与终局展开 |
 | M3 | 多项目并存、人员单项目归属、遍历顺序无关 | 企划槽刷新/竞争、供应商目录与外包、520 周长跑 |
 | M4 | 委员会、投资比例、六窗口、BD 归属、净池分成、电视倍率、伙伴关系与 history | 更多伙伴/渠道类型、合作关系玩法、特殊商业机会、完整对账报表 |
 
 **结论：不能宣称 M4 已验收。** 当前是把 M4 的商业结算核心接在 M2 主链路上；M2.5/M3 的缺口不补，M4 的“产业关系”只是一条单项目结算路径。
 
-**实现口径待 zm 确认**：①`closing → ended` 由“无在制项目”驱动（`close_company` 或最后一个 `finalize_delivery`）；②强制系数 600‰、扣罚 30%、评价修正 10 分、代理费 40%、电视总费用 60 万均为 `[PLACEHOLDER]`，回执统一带 `rules_status=placeholder`；③`abort_work` 的违约扣罚系数未标定，记 0 + `penalty_pending`，且不写 WorkRecord（不扩展 Archive 冻结枚举）；④新 main 的 INV-27/§14.8 监督任职、INV-29 限时事件、§14.7 八阶段完整顺序尚未实现，已在文档标为缺口。
+**实现口径待 zm 确认**：①`closing → ended` 由“无在制项目”驱动（`close_company` 或最后一个 `finalize_delivery`）；②强制系数 600‰、扣罚 30%、评价修正 10 分、代理费 40%、电视总费用 60 万、草稿声望门槛 120/按 scale 预算均为 `[PLACEHOLDER]`，回执统一带 `rules_status=placeholder`；③`abort_work` 的违约扣罚系数未标定，记 0 + `penalty_pending`，且不写 WorkRecord（不扩展 Archive 冻结枚举）；④新 main 的 INV-27/§14.8 监督任职、INV-29 限时事件、§14.7 八阶段完整顺序尚未实现，已在文档标为缺口。
 
 ## 9. 下一步
 

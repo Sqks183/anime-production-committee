@@ -31,6 +31,20 @@ constexpr const char* kCommercialWindows[6] = {"domestic_streaming", "overseas",
 // [PLACEHOLDER] 外部代理手续费（三档开放中的第二档）与电视服务总费用。
 constexpr int kAgencyFeePermille = 400;
 constexpr std::int64_t kTvServiceFeeTotal = 600000;
+// [PLACEHOLDER] 原创草稿基础声望门槛与按 scale 推导的预算/工期。
+constexpr int kDraftMinReputation = 120;
+std::int64_t draft_budget(const std::string& scale) {
+    if (scale == "ova") return 600000;
+    if (scale == "short") return 900000;
+    if (scale == "movie") return 3000000;
+    return 1200000;   // tv（默认）
+}
+int draft_weeks(const std::string& scale) {
+    if (scale == "ova") return 12;
+    if (scale == "short") return 20;
+    if (scale == "movie") return 32;
+    return 26;        // tv（默认）
+}
 // 电视台委员会成员默认强力播出 125%；无成员时购买黄金档 130%。
 constexpr int kTvMultiplierMember = 1250;
 constexpr int kTvMultiplierPurchased = 1300;
@@ -1598,14 +1612,135 @@ std::string advance_week(const std::string& input) {
 
 // M0 契约名适配：薄封装，避免测试入口被误当成正式命令。
 
+// M0 命令 12：只创建原创草稿并检查基础声望资格；不建 Project、不扣全部投资资金。
+// 草稿开发费金额与扣费时点未冻结，本实现记 development_fee=0 并在文档标 PLACEHOLDER。
+std::string create_custom_offer(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
+        if (!state.market.is_object()) return encode(error_body("INVALID_STATE", "market 必须是对象"));
+        if (state.market.contains("custom_offer") && state.market.at("custom_offer").is_object()) {
+            return encode(error_body("INVALID_PHASE", "原创草稿槽已被占用"));
+        }
+        for (const char* key : {"name", "source", "scale", "style"}) {
+            if (!request.contains(key) || !request.at(key).is_string()) {
+                return encode(error_body("INVALID_INPUT", std::string(key) + " 必须是字符串"));
+            }
+        }
+        const std::string source = request.at("source").get<std::string>();
+        const std::string scale = request.at("scale").get<std::string>();
+        const std::string style = request.at("style").get<std::string>();
+        if (!one_of_text(source, {"manga", "light_novel", "game", "original"})) {
+            return encode(error_body("INVALID_INPUT", "source 非法"));
+        }
+        if (!one_of_text(scale, {"ova", "short", "tv", "movie"})) {
+            return encode(error_body("INVALID_INPUT", "scale 非法"));
+        }
+        if (!one_of_text(style, {"normal", "meme", "ai"})) {
+            return encode(error_body("INVALID_INPUT", "style 非法"));
+        }
+        if (state.company.reputation < kDraftMinReputation) {
+            return encode(error_body("INVALID_INPUT", "声望不足，无法创建原创草稿"));
+        }
+        const std::string draft_id = next_id(state, "custom_", static_cast<int>(state.archive.value("works", Json::array()).size()));
+        const std::int64_t budget = draft_budget(scale);
+        const int weeks = draft_weeks(scale);
+        const auto potential = [budget](int permille) { return budget * permille / 1000; };
+        state.market["custom_offer"] = Json{{"id", draft_id},
+                                            {"name", request.at("name")},
+                                            {"source", source},
+                                            {"scale", scale},
+                                            {"style", style},
+                                            {"genre", "original"},
+                                            {"origin", "custom"},
+                                            {"draft_status", "valid"},
+                                            {"created_week", state.company.week},
+                                            {"contract_budget", budget},
+                                            {"duration_weeks", weeks},
+                                            {"target_quality", 70},
+                                            {"blueprint_id", "tv_standard"},
+                                            {"episode_count", 12},
+                                            {"workload_scale_permille", 1000},
+                                            {"channel_potentials", Json{{"domestic_streaming", potential(2000)},
+                                                                        {"overseas", potential(1200)},
+                                                                        {"merchandise", potential(1000)},
+                                                                        {"music", potential(500)},
+                                                                        {"tv", potential(500)},
+                                                                        {"bd_dvd", potential(400)}}},
+                                            {"channels_baseline", Json::array({"domestic_streaming"})},
+                                            {"allowed_modes", Json::array({"committee"})},
+                                            {"committee_candidates", Json::array()},
+                                            {"min_reputation", 0},
+                                            {"required_works", Json::array()},
+                                            {"development_fee", 0},
+                                            {"rules_status", "placeholder"}};
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "草稿创建后状态非法: " + errors.front()));
+        return encode(Json{{"state", state}, {"offer_id", draft_id},
+                           {"contract_budget", budget}, {"rules_status", "placeholder"}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
+// M0 命令 13/14：提案转草稿 / 清空提案。提案目前由 fixture 注入，生成属 M3。
+std::string adopt_proposal(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
+        if (!state.market.is_object() || !state.market.contains("proposal") || !state.market.at("proposal").is_object()) {
+            return encode(error_body("NOT_FOUND", "没有可用提案"));
+        }
+        if (state.market.contains("custom_offer") && state.market.at("custom_offer").is_object()) {
+            return encode(error_body("INVALID_PHASE", "原创草稿槽已被占用"));
+        }
+        Json draft = state.market.at("proposal");
+        draft["id"] = draft.value("id", std::string("proposal_01"));
+        draft["origin"] = "custom";
+        draft["draft_status"] = "valid";
+        if (!draft.contains("allowed_modes") || draft.at("allowed_modes").empty()) {
+            draft["allowed_modes"] = Json::array({"committee"});
+        }
+        state.market["custom_offer"] = std::move(draft);
+        state.market["proposal"] = nullptr;
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "采纳后状态非法: " + errors.front()));
+        return encode(Json{{"state", state}, {"offer_id", state.market.at("custom_offer").at("id")}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
+std::string reject_proposal(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
+        if (!state.market.is_object() || !state.market.contains("proposal") || !state.market.at("proposal").is_object()) {
+            return encode(error_body("NOT_FOUND", "没有可用提案"));
+        }
+        state.market["proposal"] = nullptr;
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "拒绝后状态非法: " + errors.front()));
+        return encode(Json{{"state", state}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
 std::string start_work(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
-        if (state.finance.solvency.state == "crisis") {
-            return encode(error_body("CRISIS_COMMITMENT_BLOCKED", "资金危机期间不能立项"));
-        }
         if (!request.contains("offer_id") || !request.at("offer_id").is_string()) {
             return encode(error_body("INVALID_INPUT", "offer_id 必须是字符串"));
         }
@@ -1918,9 +2053,6 @@ std::string buy_tv_service(const std::string& input) {
         if (work->tv_service.is_object() && work->tv_service.value("purchased", false)) {
             return encode(error_body("INVALID_PHASE", "电视服务已购买"));
         }
-        if (state.finance.solvency.state == "crisis") {
-            return encode(error_body("CRISIS_COMMITMENT_BLOCKED", "危机期间不能新增支出"));
-        }
         // 玩家只承担自身投资比例，其余成员视为共同出资；结算时不重复扣款。
         const int percent = work->investment.value("percent", 0);
         const std::int64_t paid = kTvServiceFeeTotal * percent / 100;
@@ -1965,7 +2097,6 @@ std::string request_extension(const std::string& input) {
             return encode(error_body("INVALID_PHASE", "延期已使用"));
         }
         if (state.company.week > work->deadline_week) return encode(error_body("INVALID_PHASE", "已过截止"));
-        if (state.finance.solvency.state == "crisis") return encode(error_body("CRISIS_COMMITMENT_BLOCKED", "危机期间不能新增支出"));
         if (state.finance.balance < kExtensionFee) return encode(error_body("INSUFFICIENT_FUNDS", "现金不足"));
         work->deadline_week += kExtensionWeeks;
         work->extension = Json{{"used", true}, {"weeks", kExtensionWeeks},

@@ -15,6 +15,9 @@ EMSCRIPTEN_BINDINGS(apc_v4) {
     emscripten::function("set_work_plan", &apc::v4::set_work_plan);
     // 已对齐 M0 语义的命令。
     emscripten::function("start_work", &apc::v4::start_work);
+    emscripten::function("create_custom_offer", &apc::v4::create_custom_offer);
+    emscripten::function("adopt_proposal", &apc::v4::adopt_proposal);
+    emscripten::function("reject_proposal", &apc::v4::reject_proposal);
     emscripten::function("assign_staff", &apc::v4::assign_staff);
     emscripten::function("deliver_work", &apc::v4::deliver_work);
     emscripten::function("abort_work", &apc::v4::abort_work);

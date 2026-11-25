@@ -23,6 +23,9 @@ std::string initialize(const std::string& input);        // 内部/测试：{see
 std::string instantiate_work(const std::string& input);  // 内部/测试：{state, blueprint, work_id, duration_weeks?}
 std::string set_plan(const std::string& input);          // 内部/测试：{state, work_id, plan}
 std::string start_work(const std::string& input);        // M0 命令 2：{state, offer_id, mode, percent?, committee_partner_ids?}
+std::string create_custom_offer(const std::string& input); // M0 命令 12：{state, name, source, scale, style}
+std::string adopt_proposal(const std::string& input);     // M0 命令 13：{state}
+std::string reject_proposal(const std::string& input);    // M0 命令 14：{state}
 std::string assign_staff(const std::string& input);      // M0 命令 4：{state, staff_id, work_id|null}
 std::string deliver_work(const std::string& input);      // M0 命令 10：{state, work_id}
 std::string abort_work(const std::string& input);        // M0 命令 11：{state, work_id}
