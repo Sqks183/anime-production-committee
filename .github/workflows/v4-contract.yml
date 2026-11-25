@@ -1,6 +1,6 @@
 name: v4 contract tests
 
-# 事件内容流水线与 v4 契约测试的门禁：内容校验、生成文件一致性、34 条 JSON 契约用例，
+# 事件内容流水线与 v4 契约测试的门禁：内容校验、生成文件一致性、36 条 JSON 契约用例，
 # 以及 v4 契约形状审计（字段/命令/回执/账本/不变式口径，docs/v4-contract-shape.json）。
 # 依据 docs/EVENT_CONTENT_PIPELINE.md §3/§4/§7、docs/DATA_DICTIONARY_V4.md §9。
 
@@ -13,6 +13,14 @@ on:
       - "scripts/v4.test.mjs"
       - "scripts/audit-v4-contract.mjs"
       - "docs/v4-contract-shape.json"
+      - "docs/DATA_DICTIONARY_V4.md"
+      - "docs/M0_CONTRACT_FREEZE.md"
+      - "docs/DECISION_LOG.md"
+      - "docs/DOMAIN_ARCHITECTURE.md"
+      - "docs/EVENT_CONTENT_PIPELINE.md"
+      - "docs/blueprints/tv_standard.blueprint.json"
+      - "apps/web/src/types/gameV3.ts"
+      - "package.json"
       - "scripts/build-event-catalog.mjs"
       - "scripts/build-v4.mjs"
       - "scripts/validate-event-content.mjs"
@@ -25,6 +33,14 @@ on:
       - "scripts/v4.test.mjs"
       - "scripts/audit-v4-contract.mjs"
       - "docs/v4-contract-shape.json"
+      - "docs/DATA_DICTIONARY_V4.md"
+      - "docs/M0_CONTRACT_FREEZE.md"
+      - "docs/DECISION_LOG.md"
+      - "docs/DOMAIN_ARCHITECTURE.md"
+      - "docs/EVENT_CONTENT_PIPELINE.md"
+      - "docs/blueprints/tv_standard.blueprint.json"
+      - "apps/web/src/types/gameV3.ts"
+      - "package.json"
       - "scripts/build-event-catalog.mjs"
       - "scripts/build-v4.mjs"
       - "scripts/validate-event-content.mjs"

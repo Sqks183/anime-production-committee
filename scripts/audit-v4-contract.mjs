@@ -1,10 +1,4 @@
 #!/usr/bin/env node
-// v4 契约形状审计（#53）：把 docs/v4-contract-shape.json 与真实 WASM 输出逐字段比对。
-//
-// 为什么需要它：M0 冻结的是文档表格，文档说"已冻结"不等于代码就是这个形状。
-// 本脚本双向检查——字段消失、字段新增、契约要求的字段被悄悄实现，都会红。
-//
-// 用法：npm run build:v4 && npm run audit:v4
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -87,15 +81,122 @@ if (!pendingState) fail('未捕获到含 pending 事件的样例状态，事件�
 if (!viewReceipt || !resolveReceipt) fail('未走通"查看 + 处理（付费选项）"闭环，事件回执与 events 账本类目无法审计')
 
 // ---- 1. 命令导出集合 ----
-const v4Exports = shape.commands.exported.filter((name) => typeof core[name] === 'function')
+const readText = (...segments) => readFileSync(join(root, ...segments), 'utf8')
+const bindingSource = readText('packages', 'game-core', 'bindings', 'v4_bindings.cpp')
+const bindingExports = [...bindingSource.matchAll(/emscripten::function\("([^"]+)"/g)].map((match) => match[1]).sort()
+const registeredCommandSurface = [...new Set([...shape.commands.exported, ...shape.commands.aliases])].sort()
+if (bindingExports.join(',') !== registeredCommandSurface.join(',')) {
+  fail(`packages/game-core/bindings/v4_bindings.cpp 入口清单与 shape 不一致：${bindingExports.join(', ')}`)
+}
 const missingExports = shape.commands.exported.filter((name) => typeof core[name] !== 'function')
-const unexpectedExports = v4Exports.filter(
-  (name) => !shape.commands.exported.includes(name)
-)
-const leakedCommands = shape.commands.documented_not_exported.filter((name) => typeof core[name] === 'function')
+const documentedNotExported = shape.commands.documented_not_exported
+  .filter((name) => !shape.commands.aliases.includes(name))
+  .sort()
+const leakedCommands = documentedNotExported.filter((name) => typeof core[name] === 'function')
 if (missingExports.length) fail(`核心缺少已登记入口：${missingExports.join(', ')}`)
-if (unexpectedExports.length) fail(`核心新增未登记入口：${unexpectedExports.join(', ')}`)
 if (leakedCommands.length) fail(`M0 §5 未实现命令已出现入口，请同步数据字典 §4：${leakedCommands.join(', ')}`)
+const expectedCommandCount = shape.commands.documented_total
+if (expectedCommandCount !== 23) fail('M0 §5 当前冻结命令总数必须为 23')
+if (shape.commands.documented_total !== shape.commands.documented.length) fail('M0 §5 命令总数与命令清单不一致')
+if (new Set(shape.commands.documented).size !== shape.commands.documented.length) fail('M0 §5 命令清单存在重复项')
+if (shape.commands.positions.view_event !== 22 || shape.commands.positions.lock_offer !== 23) {
+  fail('M0 §5 命令编号必须保持 view_event=22、lock_offer=23')
+}
+
+const m0Source = readText('docs', 'M0_CONTRACT_FREEZE.md')
+const dictionarySource = readText('docs', 'DATA_DICTIONARY_V4.md')
+const architectureSource = readText('docs', 'DOMAIN_ARCHITECTURE.md')
+const decisionSource = readText('docs', 'DECISION_LOG.md')
+const m0RootShape = m0Source.match(/GameState \{([\s\S]*?)\n\}/)?.[1] || ''
+if (!/recruitment:\s*Recruitment/.test(m0RootShape)) {
+  fail('docs/M0_CONTRACT_FREEZE.md §2 根结构未登记 recruitment')
+}
+const documentedRows = [...m0Source.matchAll(/^\|\s*(\d+)\s*\|\s*`([^`]+)`/gm)]
+  .map((match) => ({ number: Number(match[1]), command: match[2].replace(/\(.*$/, '') }))
+const documentedNumbers = documentedRows.map((row) => row.number)
+const expectedNumbers = Array.from({ length: shape.commands.documented_total }, (_, index) => index + 1)
+if (documentedNumbers.join(',') !== expectedNumbers.join(',')) {
+  fail(`docs/M0_CONTRACT_FREEZE.md §5 命令编号不连续：${documentedNumbers.join(',')}（期望 1..${shape.commands.documented_total}）`)
+}
+const documentedNames = documentedRows.map((row) => row.command).sort()
+if (documentedNames.join(',') !== shape.commands.documented.slice().sort().join(',')) {
+  fail('docs/M0_CONTRACT_FREEZE.md §5 命令清单与 docs/v4-contract-shape.json 不一致')
+}
+const dictionaryCommandRows = [...dictionarySource.matchAll(/^\|\s*(\d+)\s*\|\s*`([^`]+)`/gm)]
+  .map((match) => ({ number: Number(match[1]), command: match[2].replace(/\(.*$/, '') }))
+if (dictionaryCommandRows.length !== shape.commands.documented_total ||
+    dictionaryCommandRows.map((row) => row.number).join(',') !== expectedNumbers.join(',') ||
+    dictionaryCommandRows.map((row) => row.command).sort().join(',') !== shape.commands.documented.slice().sort().join(',')) {
+  fail(`docs/DATA_DICTIONARY_V4.md §4 必须逐条列出 ${expectedCommandCount} 个命令`)
+}
+for (const item of shape.reserved_fields) {
+  if (!shape.paths[item.path]?.includes(item.field)) fail(`reserved_fields ${item.path}.${item.field} 未登记到 paths`)
+  if (!shape.contract_fields[item.path]?.includes(item.field)) {
+    fail(`reserved_fields ${item.path}.${item.field} 未登记到 contract_fields`)
+  }
+}
+for (const item of shape.historical_fields) {
+  if (shape.paths[item.path]?.includes(item.field)) fail(`历史字段 ${item.path}.${item.field} 不得进入 V4 paths`)
+  if (shape.reserved_fields.some((reserved) => reserved.path === item.path && reserved.field === item.field)) {
+    fail(`历史字段 ${item.path}.${item.field} 不得归入 reserved_fields`)
+  }
+  if (!/project_fee/.test(readText('apps', 'web', 'src', 'types', 'gameV3.ts'))) {
+    fail('历史 v3 project_fee 定义缺失，不能抹除历史字段来掩盖 V4 命名冲突')
+  }
+}
+for (const term of ['signing_fee + weekly_salary', '不再使用 project_fee', 'pool', 'pity', 'last_scout_week']) {
+  if (!dictionarySource.includes(term)) fail(`docs/DATA_DICTIONARY_V4.md 缺少已冻结口径：${term}`)
+}
+for (const term of ['locked_until', 'lock_used', 'deposit_paid']) {
+  if (![m0Source, dictionarySource, architectureSource].every((source) => source.includes(term))) {
+    fail(`Q3/Q4 字段未在 M0、数据字典与领域架构同步：${term}`)
+  }
+}
+for (const term of ['100% 抵扣', '定金不退', '锁定一次', '每周至多一次']) {
+  if (![m0Source, dictionarySource, architectureSource, decisionSource].every((source) => {
+    if (term !== '每周至多一次') return source.includes(term)
+    return /每周(?:至多|最多)(?:使用)?一次/.test(source)
+  })) {
+    fail(`Q3/Q4 产品语义未在四份权威文档同步：${term}`)
+  }
+}
+if (shape.future_contract.market_slots.initial !== 4 || shape.future_contract.market_slots.maximum !== 10) {
+  fail('市场槽位基线必须为初始 4、最大 10')
+}
+if (!m0Source.includes('slots ≤ 10，初始 4')) fail('docs/M0_CONTRACT_FREEZE.md 市场槽位仍为旧 4 槽上限')
+if (!architectureSource.includes('slots: Offer[4]') || !/上限\s*10/.test(architectureSource)) {
+  fail('docs/DOMAIN_ARCHITECTURE.md 市场槽位必须同时说明初始 4 与上限 10')
+}
+if (!shape.future_contract.lock_offer.once_per_proposal_lifetime ||
+    shape.future_contract.lock_offer.deposit_refund_on_expiry !== false ||
+    shape.future_contract.lock_offer.signing_deposit_credit_percent !== 100 ||
+    !shape.future_contract.lock_offer.deposit_is_ledger_snapshot_only) {
+  fail('Q4 基线不得放宽终身一次、到期不退、100% 抵扣或 Finance 唯一现金权威')
+}
+if (shape.future_contract.lock_offer.covered_weeks.join(',') !== 'W,W+1' ||
+    shape.future_contract.lock_offer.expires_at_week_start !== 'W+2') {
+  fail('Q4 锁定边界必须为 W/W+1 有效、W+2 开局失效')
+}
+if (shape.future_contract.scout.maximum_per_week !== 1) fail('Scout 基线必须为每周至多一次')
+if (!shape.future_contract.prohibited_current_implementations.includes('arrange_financing') ||
+    !shape.future_contract.prohibited_current_implementations.includes('crisis_settlement')) {
+  fail('未来契约清单必须明确禁止当前 arrange_financing 与危机结算')
+}
+for (const term of ['后续更新预留', 'loans=[]', 'solvency.state="normal"']) {
+  if (!dictionarySource.includes(term)) fail(`docs/DATA_DICTIONARY_V4.md 未将危机字段标为未来预留：${term}`)
+}
+for (const sourcePath of ['packages/game-core/src/v4/runtime.cpp', 'packages/game-core/src/v4/event.cpp', 'packages/game-core/src/v4/kernel.cpp']) {
+  const source = readText(...sourcePath.split('/'))
+  if (source.includes('arrange_financing')) fail(`${sourcePath} 不得包含当前禁止的 arrange_financing 实现`)
+  for (const category of shape.ledger.future_only_categories) {
+    if (source.includes(`"${category}"`)) fail(`${sourcePath} 已写入未来融资账本类目：${category}`)
+  }
+}
+for (const prohibited of ['solvency.state=="crisis"', 'solvency.state!="crisis"']) {
+  if (readText('packages', 'game-core', 'src', 'v4', 'runtime.cpp').includes(prohibited)) {
+    fail(`packages/game-core/src/v4/runtime.cpp 仍含 crisis 负余额放行条件：${prohibited}`)
+  }
+}
 
 // ---- 2. 状态/回执键树 ----
 // events.per_work / cooldowns 的键是 work_id / event_id（业务数据，不是字段名），
@@ -159,6 +260,14 @@ const requiredProbes = {
   'state.staff': (s) => delete s.staff,
   'state.works': (s) => delete s.works,
   'state.finance': (s) => delete s.finance,
+  'state.finance.loans': (s) => delete s.finance.loans,
+  'state.finance.solvency': (s) => delete s.finance.solvency,
+  'state.finance.solvency.state': (s) => delete s.finance.solvency.state,
+  'state.finance.solvency.since_week': (s) => delete s.finance.solvency.since_week,
+  'state.finance.solvency.deadline_week': (s) => delete s.finance.solvency.deadline_week,
+  'state.finance.solvency.gap': (s) => delete s.finance.solvency.gap,
+  'state.staff[].signing_fee': (s) => delete s.staff[0].signing_fee,
+  'state.staff[].weekly_salary': (s) => delete s.staff[0].weekly_salary,
   'state.events': (s) => delete s.events,
   'state.events.pending': (s) => delete s.events.pending,
   'state.events.pending[].viewed': (s) => delete s.events.pending[0].viewed
@@ -223,23 +332,119 @@ for (const [path, expected] of Object.entries(shape.empty_at_initialize)) {
   }
 }
 
-// ---- 6. 契约要求但未实现 / 代码多余 ----
+// ---- 6. 字段分类：reserved / historical / 已冻结但未实现 ----
 const fieldPresent = (path, field) => {
   const node = observed.get(path)
   return Boolean(node && node.has(field))
 }
 for (const item of shape.contract_required_missing) {
   if (fieldPresent(item.path, item.field)) {
-    fail(`契约字段 ${item.path}.${item.field} 已实现（${item.ref}）：请把它移入 paths 并更新数据字典`)
+    fail(`契约字段 ${item.path}.${item.field} 已实现（${item.ref}）：请把它移入 contract_required_missing 并更新数据字典`)
   }
 }
-for (const item of shape.code_extra_fields) {
+for (const item of shape.reserved_fields) {
   if (!fieldPresent(item.path, item.field)) {
-    fail(`超契约字段 ${item.path}.${item.field} 已移除（${item.ref}）：请更新 shape 与数据字典 §3/§8`)
+    fail(`reserved 字段 ${item.path}.${item.field} 缺失（${item.ref}）：不得删除未来扩展结构`)
   }
+}
+for (const item of shape.historical_fields) {
+  if (fieldPresent(item.path, item.field)) {
+    fail(`V4 出现历史字段 ${item.path}.${item.field}（${item.ref}）：v4 应使用 signing_fee`)
+  }
+}
+for (const [path, expected] of Object.entries(shape.contract_fields || {})) {
+  const actual = shape.paths[path]
+  if (!actual || actual.slice().sort().join(',') !== expected.slice().sort().join(',')) {
+    fail(`当前契约字段清单与 paths 不一致：${path}`)
+  }
+  for (const field of expected) {
+    const inReservedOrHistorical = [...shape.reserved_fields, ...shape.historical_fields]
+      .some((item) => item.path === path && item.field === field)
+    if (!inReservedOrHistorical) continue
+    const hasDefault = Object.hasOwn(shape.reserved_defaults, `${path}.${field}`)
+    const hasCurrentBehavior = typeof shape.current_behavior[field] === 'boolean'
+    if (!hasDefault && !hasCurrentBehavior) fail(`特殊分类字段 ${path}.${field} 缺少当前行为约束`)
+  }
+}
+for (const [path, fields] of Object.entries(shape.future_contract.fields)) {
+  if (shape.paths[path]?.some((field) => fields.includes(field))) {
+    fail(`未来契约字段已提前进入当前 V4：${path}（${shape.future_contract.status}）`)
+  }
+  if (fields.length === 0) fail(`未来契约字段清单为空：${path}`)
 }
 
-// ---- 7. 账本约定 ----
+// ---- 7. reserved 默认值、当前行为边界与历史命名 ----
+const assertSameJson = (actual, expected, label) => {
+  const canonical = (value) => Array.isArray(value)
+    ? value.map(canonical)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
+      : value
+  if (JSON.stringify(canonical(actual)) !== JSON.stringify(canonical(expected))) {
+    fail(`${label}：期望 ${JSON.stringify(expected)} 实际 ${JSON.stringify(actual)}`)
+  }
+}
+const getPath = (node, path) => path.split('.').slice(1).reduce((value, key) => value?.[key], node)
+const runtimeSource = readText('packages', 'game-core', 'src', 'v4', 'runtime.cpp')
+for (const [path, expected] of Object.entries(shape.reserved_defaults)) {
+  assertSameJson(getPath(init.state, path), expected, `初始化 reserved 默认值 ${path}`)
+  assertSameJson(getPath(state, path), expected, `运行后 reserved 默认值 ${path}`)
+}
+const assertSolvencyDefaults = (label, solvency) => {
+  assertSameJson(solvency?.state, 'normal', `${label} solvency.state`)
+  assertSameJson(solvency?.since_week, null, `${label} solvency.since_week`)
+  assertSameJson(solvency?.deadline_week, null, `${label} solvency.deadline_week`)
+  assertSameJson(solvency?.gap, 0, `${label} solvency.gap`)
+}
+assertSolvencyDefaults('initialize_game', init.state.finance.solvency)
+assertSolvencyDefaults('运行后', state.finance.solvency)
+for (const staff of [...init.state.staff, ...state.staff]) {
+  assertSameJson(staff.signing_fee, 0, `Staff.signing_fee 默认值 ${staff.id}`)
+  if ('project_fee' in staff) fail(`Staff ${staff.id} 仍输出历史字段 project_fee`)
+}
+const expectInvalidState = (label, mutate, invariant) => {
+  const probe = structuredClone(init.state)
+  mutate(probe)
+  const result = call('advance_week', { state: probe })
+  if (result.error?.code !== 'INVALID_STATE') {
+    fail(`${label} 应返回 INVALID_STATE，实际 ${result.error?.code || '成功返回'}`)
+  }
+  if (invariant && !result.error?.message?.includes(invariant)) {
+    fail(`${label} 未定位到 ${invariant}：${result.error?.message || '无错误消息'}`)
+  }
+}
+expectInvalidState('reserved finance.loans 非空', (probe) => { probe.finance.loans = [{ id: 'loan.future' }] }, 'INV-18')
+expectInvalidState('reserved finance.loans 类型错误', (probe) => { probe.finance.loans = {} }, 'INV-18')
+expectInvalidState('reserved solvency.state=crisis', (probe) => { probe.finance.solvency.state = 'crisis' }, 'INV-18')
+expectInvalidState('reserved solvency.since_week 非空', (probe) => { probe.finance.solvency.since_week = 1 }, 'INV-18')
+expectInvalidState('reserved solvency.deadline_week 非空', (probe) => { probe.finance.solvency.deadline_week = 2 }, 'INV-18')
+expectInvalidState('reserved solvency.gap 非零', (probe) => { probe.finance.solvency.gap = 1 }, 'INV-18')
+expectInvalidState('正常状态负余额', (probe) => {
+  probe.finance.opening_funds = 0
+  probe.finance.balance = -1
+  probe.finance.entries = [{ id: 'negative.fixture', week: 0, work_id: null, category: 'salary', amount: -1, counterparty: null, memo: 'negative fixture' }]
+}, 'INV-25')
+expectInvalidState('crisis 负余额', (probe) => {
+  probe.finance.opening_funds = 0
+  probe.finance.balance = -1
+  probe.finance.entries = [{ id: 'negative.crisis.fixture', week: 0, work_id: null, category: 'salary', amount: -1, counterparty: null, memo: 'negative crisis fixture' }]
+  probe.finance.solvency.state = 'crisis'
+}, 'INV-18')
+for (const category of shape.ledger.future_only_categories) {
+  if (shape.ledger.categories_frozen.includes(category)) fail(`未来账本类目 ${category} 不得混入当前冻结类目`)
+  if (state.finance.entries.some((entry) => entry.category === category)) fail(`当前运行产生了未来融资账本类目：${category}`)
+  if (runtimeSource.includes(`"${category}"`)) fail(`packages/game-core/src/v4/runtime.cpp 已写入未来融资账本类目：${category}`)
+}
+if (typeof core.arrange_financing === 'function') fail('当前核心不得导出未来 arrange_financing 命令')
+if (state.finance.balance < 0) fail(`INV-25 当前运行余额为负：${state.finance.balance}`)
+if (!shape.current_behavior.normal_balance_nonnegative || !shape.current_behavior.crisis_cannot_bypass_inv25 ||
+    shape.current_behavior.nonempty_loans_allowed || shape.current_behavior.crisis_state_allowed ||
+    shape.current_behavior.nondefault_solvency_fields_allowed ||
+    shape.current_behavior.future_ledger_categories_allowed || shape.current_behavior.arrange_financing_export_allowed) {
+  fail('docs/v4-contract-shape.json current_behavior 放宽了当前现金与危机边界')
+}
+
+// ---- 8. 账本约定 ----
 const categories = new Set(state.finance.entries.map((entry) => entry.category))
 for (const category of shape.ledger.categories_produced) {
   if (!categories.has(category)) fail(`账本类目未出现：${category}（本次运行产出 ${[...categories].sort().join(', ')}）`)
@@ -254,11 +459,10 @@ if (badIds.length) fail(`账本 id 不符合约定前缀：${badIds.slice(0, 3).
 const ids = state.finance.entries.map((entry) => entry.id)
 if (new Set(ids).size !== ids.length) fail('账本 id 重复（INV-02）')
 
-// ---- 8. 不变式与错误码（源码侧） ----
+// ---- 9. 不变式与错误码（源码侧） ----
 const v4Sources = ['runtime.cpp', 'event.cpp', 'kernel.cpp', 'model.cpp']
   .map((name) => readFileSync(join(root, 'packages', 'game-core', 'src', 'v4', name), 'utf8'))
   .join(String.fromCharCode(10))
-const runtimeSource = readFileSync(join(root, 'packages', 'game-core', 'src', 'v4', 'runtime.cpp'), 'utf8')
 const asserted = [...new Set(runtimeSource.match(/INV-\d{2}/g) || [])].sort()
 if (asserted.join(',') !== shape.invariants.asserted_in_validate.slice().sort().join(',')) {
   const added = asserted.filter((tag) => !shape.invariants.asserted_in_validate.includes(tag))
@@ -274,7 +478,7 @@ const produced = shape.error_codes.produced_by_v4_source.filter((code) => codesI
 const missingProduced = shape.error_codes.produced_by_v4_source.filter((code) => !codesInSource.includes(code))
 if (missingProduced.length) fail(`登记的错误码已不再产生：${missingProduced.join(', ')}`)
 
-// ---- 9. 资金预检失败信封（§4.3）与失败后状态不变 ----
+// ---- 10. 资金预检失败信封（§4.3）与失败后状态不变 ----
 const heavyBlueprint = JSON.parse(readFileSync(join(root, 'docs', 'blueprints', 'tv_standard.blueprint.json'), 'utf8'))
 let heavy = unwrap('instantiate_work', { state: structuredClone(init.state), blueprint: heavyBlueprint, work_id: 'work_heavy', duration_weeks: 26 }).state
 heavy = unwrap('assign_staff', {
@@ -313,11 +517,14 @@ if (!precheckFailure) {
 if (failures.length) {
   console.error(`v4 契约形状审计失败（${failures.length} 项）：`)
   for (const message of failures) console.error(`  - ${message}`)
-  console.error('\n处置：改代码对齐契约，或在 docs/DATA_DICTIONARY_V4.md 与 docs/v4-contract-shape.json 同步登记并按 M0 §13 分级评审。')
+  console.error('\n基线：docs/M0_CONTRACT_FREEZE.md、docs/DATA_DICTIONARY_V4.md、docs/v4-contract-shape.json。')
+  console.error('处置：修正代码或同批同步权威契约、数据字典、期望表与测试；不得删除 reserved_fields 或放宽当前危机边界。')
   process.exit(1)
 }
 console.log(
   `v4 契约形状审计通过：${Object.keys(shape.paths).length} 条形状、${Object.keys(shape.receipt_keys).length} 条回执、` +
+    `${shape.commands.documented_total} 条命令（view_event=22 / lock_offer=23）、` +
+    `${shape.reserved_fields.length} 个 reserved 字段、` +
     `${shape.invariants.asserted_in_validate.length}/${shape.invariants.declared_total} 条不变式有断言、` +
     `${produced.length} 个错误码在用、账本类目 ${[...categories].sort().join('/')}`
 )

@@ -1,23 +1,33 @@
 {
-  "baseline": "03e95f0",
-  "code_extra_fields": [
-    {
-      "field": "project_fee",
-      "path": "state.staff[]",
-      "ref": "§3.2 / D-02"
-    },
-    {
-      "field": "loans",
-      "path": "state.finance",
-      "ref": "§3.6 / D-01 / INV-18"
-    },
-    {
-      "field": "solvency",
-      "path": "state.finance",
-      "ref": "§3.6 / D-01 / INV-18 / INV-25"
-    }
-  ],
+  "baseline": "d56bc95",
+  "contract_freeze_merge": "4870e6193ff36032f3a38a19e6ff2a0feada0e5a",
   "commands": {
+    "documented_total": 23,
+    "documented": [
+      "initialize_game",
+      "start_work",
+      "set_work_plan",
+      "assign_staff",
+      "hire_core",
+      "scout",
+      "dismiss_staff",
+      "hire_temporary",
+      "sign_outsourcing",
+      "deliver_work",
+      "abort_work",
+      "create_custom_offer",
+      "adopt_proposal",
+      "reject_proposal",
+      "buy_tv_service",
+      "request_extension",
+      "advance_week",
+      "resolve_event",
+      "end_company",
+      "finalize_delivery",
+      "finalize_company",
+      "view_event",
+      "lock_offer"
+    ],
     "aliases": [
       "initialize",
       "instantiate_work",
@@ -37,6 +47,7 @@
       "reject_proposal",
       "buy_tv_service",
       "request_extension",
+      "lock_offer",
       "end_company",
       "finalize_delivery",
       "finalize_company"
@@ -54,18 +65,64 @@
       "set_work_plan",
       "validate_event_catalog",
       "view_event"
+    ],
+    "positions": {
+      "view_event": 22,
+      "lock_offer": 23
+    }
+  },
+  "contract_fields": {
+    "state.staff[]": [
+      "abilities",
+      "assignment_work_id",
+      "departure_warning",
+      "employment",
+      "experience",
+      "fatigue",
+      "id",
+      "last_participation",
+      "morale",
+      "name",
+      "potential",
+      "revealed_potential",
+      "role",
+      "signing_fee",
+      "talent_type",
+      "temporary_contract",
+      "weekly_salary"
+    ],
+    "state.finance": [
+      "balance",
+      "entries",
+      "loans",
+      "opening_funds",
+      "solvency"
     ]
   },
+  "reserved_fields": [
+    {
+      "field": "loans",
+      "path": "state.finance",
+      "ref": "§3.6 / M0 §3 / INV-18 / DECISION_LOG §7"
+    },
+    {
+      "field": "solvency",
+      "path": "state.finance",
+      "ref": "§3.6 / M0 §3 / INV-18 / INV-25 / DECISION_LOG §7"
+    }
+  ],
+  "historical_fields": [
+    {
+      "field": "project_fee",
+      "path": "state.staff[]",
+      "ref": "§3.2 / M0 §3 / §14.6 / v3 only"
+    }
+  ],
   "contract_required_missing": [
     {
       "field": "facilities",
       "path": "state.company",
       "ref": "§3.1 / §14.7 阶段2 / §14.9"
-    },
-    {
-      "field": "signing_fee",
-      "path": "state.staff[]",
-      "ref": "§3.2 / M0 §3 / §14.6"
     },
     {
       "field": "ip_id",
@@ -93,6 +150,61 @@
       "ref": "§3.8 / D-09"
     }
   ],
+  "future_contract": {
+    "source": "M0 §14.13 / DECISION_LOG §17 Q3/Q4",
+    "status": "frozen_target_not_implemented",
+    "fields": {
+      "state.recruitment": [
+        "last_scout_week",
+        "pity",
+        "pool"
+      ],
+      "state.recruitment.pity": [
+        "since_sr",
+        "since_ssr"
+      ],
+      "state.recruitment.pool[]": [
+        "expires_week",
+        "origin",
+        "staff"
+      ],
+      "state.market.slots[]": [
+        "deposit_paid",
+        "expires_week",
+        "lock_used",
+        "locked_until"
+      ]
+    },
+    "market_slots": {
+      "initial": 4,
+      "maximum": 10
+    },
+    "lock_offer": {
+      "covered_weeks": [
+        "W",
+        "W+1"
+      ],
+      "expires_at_week_start": "W+2",
+      "once_per_proposal_lifetime": true,
+      "deposit_refund_on_expiry": false,
+      "signing_deposit_credit_percent": 100,
+      "finance_categories": [
+        "investment_paid",
+        "contract_received"
+      ],
+      "deposit_is_ledger_snapshot_only": true
+    },
+    "scout": {
+      "maximum_per_week": 1,
+      "candidate_expiry_is_first_unavailable_week": true,
+      "regular_candidate_expires_week": null
+    },
+    "prohibited_current_implementations": [
+      "arrange_financing",
+      "crisis_week_advance",
+      "crisis_settlement"
+    ]
+  },
   "dynamic_key_maps": [
     "state.events.per_work",
     "state.events.per_work.*.cooldowns"
@@ -152,6 +264,7 @@
       "INV-11",
       "INV-12",
       "INV-16",
+      "INV-18",
       "INV-21",
       "INV-23",
       "INV-25"
@@ -187,6 +300,11 @@
       "w{week}.operations",
       "w{week}.production.",
       "w{week}.event."
+    ],
+    "future_only_categories": [
+      "financing_in",
+      "loan_repayment",
+      "loan_interest"
     ]
   },
   "optional_paths": {
@@ -356,9 +474,9 @@
       "morale",
       "name",
       "potential",
-      "project_fee",
       "revealed_potential",
       "role",
+      "signing_fee",
       "talent_type",
       "temporary_contract",
       "weekly_salary"
@@ -508,10 +626,36 @@
     "state.staff",
     "state.works",
     "state.finance",
+    "state.finance.loans",
+    "state.finance.solvency",
+    "state.finance.solvency.state",
+    "state.finance.solvency.since_week",
+    "state.finance.solvency.deadline_week",
+    "state.finance.solvency.gap",
+    "state.staff[].signing_fee",
+    "state.staff[].weekly_salary",
     "state.events",
     "state.events.pending",
     "state.events.pending[].viewed"
   ],
+  "reserved_defaults": {
+    "state.finance.loans": [],
+    "state.finance.solvency": {
+      "state": "normal",
+      "since_week": null,
+      "deadline_week": null,
+      "gap": 0
+    }
+  },
+  "current_behavior": {
+    "normal_balance_nonnegative": true,
+    "crisis_cannot_bypass_inv25": true,
+    "nonempty_loans_allowed": false,
+    "crisis_state_allowed": false,
+    "nondefault_solvency_fields_allowed": false,
+    "future_ledger_categories_allowed": false,
+    "arrange_financing_export_allowed": false
+  },
   "schema_version": 1,
   "source": "docs/DATA_DICTIONARY_V4.md"
 }

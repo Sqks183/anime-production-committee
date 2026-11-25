@@ -443,8 +443,11 @@ std::vector<std::string> validate(const GameState& state) {
     if (!state.finance.loans.is_array() || !state.finance.loans.empty()) {
         error("INV-18 当前 finance.loans 必须为空数组");
     }
-    if (state.finance.solvency.state != "normal") {
-        error("INV-18 当前 finance.solvency.state 必须为 normal");
+    if (state.finance.solvency.state != "normal" ||
+        state.finance.solvency.since_week.has_value() ||
+        state.finance.solvency.deadline_week.has_value() ||
+        state.finance.solvency.gap != 0) {
+        error("INV-18 当前 finance.solvency 必须保持 normal/null/null/0");
     }
     if (state.finance.balance < 0) error("INV-25 余额不能为负");
     return errors;

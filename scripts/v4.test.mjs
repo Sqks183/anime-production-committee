@@ -320,6 +320,9 @@ test('危机预留字段不得绕过非负现金约束', () => {
   }
 
   reject((state) => { state.finance.solvency.state = 'crisis' }, /INV-18/)
+  reject((state) => { state.finance.solvency.since_week = 1 }, /INV-18/)
+  reject((state) => { state.finance.solvency.deadline_week = 2 }, /INV-18/)
+  reject((state) => { state.finance.solvency.gap = 1 }, /INV-18/)
   reject((state) => { state.finance.loans = [{ id: 'future_loan' }] }, /INV-18/)
   reject((state) => { state.finance.loans = {} }, /INV-18/)
 
