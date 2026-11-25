@@ -37,6 +37,11 @@
 
 共享文件包括 `apps/web/src/types/game.ts`、`packages/game-core/bindings/embind.cpp`、`docs/API.md`、各 `package.json`、`package-lock.json` 和 `CMakeLists.txt`。需要跨边界修改时，先在 Issue 说明并协调，避免两人同时重写同一份协议或锁文件。
 
+## 开放式增量开发
+
+首版范围代表最低交付目标和当前优先级，不是对未来功能的禁止。成员可以在不违反已确认决策、不破坏主框架与跨模块契约、风险可控的前提下，自主扩展或提前实现未来候选功能；符合条件的成果默认接纳，不需要额外提交负责人决定是否采用。默认接纳不免除正常 PR、测试、文档同步和集成验收。
+
+只有涉及既定决策变更、核心玩法/主框架调整、跨模块契约或状态所有权变更、已确认数值基准变更及重大风险时，才提交负责人裁决。详见[开放式增量开发与提前实现原则](docs/OPEN_INCREMENTAL_DEVELOPMENT_POLICY.md)。
 ## 开发环境
 
 需要 Node >=22.12、npm >=10；核心开发还需要 Python 3、CMake、Ninja、C++17 编译器和固定版本 Emscripten。按 README 准备工具链后，在仓库根目录执行：
