@@ -212,6 +212,12 @@ GameState decode_state(const Json& request) {
     require(state.at("finance"), "opening_funds", "finance");
     require(state.at("finance"), "balance", "finance");
     require(state.at("finance"), "entries", "finance");
+    require(state.at("finance"), "loans", "finance");
+    require(state.at("finance"), "solvency", "finance");
+    require(state.at("finance").at("solvency"), "state", "finance.solvency");
+    require(state.at("finance").at("solvency"), "since_week", "finance.solvency");
+    require(state.at("finance").at("solvency"), "deadline_week", "finance.solvency");
+    require(state.at("finance").at("solvency"), "gap", "finance.solvency");
     if (!state.at("staff").is_array() || !state.at("works").is_array()) {
         throw Json::type_error::create(302, "staff / works 必须是数组", nullptr);
     }
@@ -219,6 +225,8 @@ GameState decode_state(const Json& request) {
         require(member, "id", "staff[]");
         require(member, "role", "staff[]");
         require(member, "abilities", "staff[]");
+        require(member, "signing_fee", "staff[]");
+        require(member, "weekly_salary", "staff[]");
     }
     for (const auto& work : state.at("works")) {
         require(work, "id", "works[]");
@@ -432,9 +440,13 @@ std::vector<std::string> validate(const GameState& state) {
         sum += entry.amount;
     }
     if (state.finance.balance != state.finance.opening_funds + sum) error("INV-16 余额不等于期初加流水合计");
-    if (state.finance.balance < 0 && state.finance.solvency.state != "crisis" && state.company.status == "running") {
-        error("INV-25 正常经营下余额不能为负");
+    if (!state.finance.loans.is_array() || !state.finance.loans.empty()) {
+        error("INV-18 当前 finance.loans 必须为空数组");
     }
+    if (state.finance.solvency.state != "normal") {
+        error("INV-18 当前 finance.solvency.state 必须为 normal");
+    }
+    if (state.finance.balance < 0) error("INV-25 余额不能为负");
     return errors;
 }
 

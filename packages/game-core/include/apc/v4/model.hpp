@@ -77,7 +77,7 @@ struct Staff {
     std::array<bool, kAbilityCount> revealed_potential{};
     std::string talent_type;
     int64_t weekly_salary = 0;
-    int64_t project_fee = 0;
+    int64_t signing_fee = 0;
     int fatigue = 0;
     int morale = 0;
     bool departure_warning = false;
@@ -170,7 +170,7 @@ struct LedgerEntry {
 };
 
 struct Solvency {
-    std::string state = "normal";   // normal / crisis
+    std::string state = "normal";   // 当前仅 normal；crisis 为后续更新预留
     std::optional<int> since_week;
     std::optional<int> deadline_week;
     int64_t gap = 0;
@@ -180,7 +180,7 @@ struct Finance {
     int64_t opening_funds = 0;
     int64_t balance = 0;
     std::vector<LedgerEntry> entries;
-    Json loans = Json::array();     // M2.5
+    Json loans = Json::array();     // 后续更新预留，当前必须为空
     Solvency solvency;
 };
 
