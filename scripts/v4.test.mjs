@@ -272,7 +272,7 @@ test('计划枚举非法取值被拒绝且状态不变', () => {
   }
 })
 
-test('现金不足时整周不提交，状态与流水都不变', () => {
+test('§14.7 预检失败：整周回滚并直接破产终局，不产生半结算', () => {
   let state = setupTiny()
   for (const staffId of ['staff_dir', 'staff_ka', 'staff_anim']) {
     state = ok('assign_staff', { state, staff_id: staffId, work_id: 'work_01' }).state
@@ -280,15 +280,18 @@ test('现金不足时整周不提交，状态与流水都不变', () => {
   // 本周需要 210000，只留 100000
   state.finance.opening_funds = 100000
   state.finance.balance = 100000
-  const before = ok('hash_state', { state }).hash
 
-  const result = call('advance_week', { state })
-  assert.equal(result.error.code, 'INSUFFICIENT_FUNDS')
-  assert.equal(result.error.gap, 110000)
-  assert.equal(ok('hash_state', { state }).hash, before, '失败不得留下半结算')
-  assert.equal(state.company.week, 0)
-  assert.equal(state.finance.entries.length, 0)
-  assert.equal(findItem(state, 'work_01', 'common.series_comp').work_done, 0)
+  const result = ok('advance_week', { state })
+  assert.equal(result.report.bankrupt, true)
+  assert.equal(result.report.skipped, true)
+  assert.equal(result.report.gap, 110000)
+  assert.equal(result.state.company.week, 0)
+  assert.equal(result.state.company.status, 'closing')
+  assert.equal(result.state.company.end_reason, 'bankrupt')
+  assert.equal(result.state.works[0].status, 'delivering')
+  assert.equal(result.state.finance.balance, 100000)
+  assert.equal(result.state.finance.entries.length, 0)
+  assert.equal(findItem(result.state, 'work_01', 'common.series_comp').work_done, 0)
 })
 
 test('双项目隔离：产出不串项目，作者不串项目', () => {
@@ -998,6 +1001,7 @@ function injectedEvent(workId) {
     expires_week: null,
     cooldown_weeks: 4,
     once_per_project: false,
+    viewed: false,
     options: [{
       id: 'accept',
       label: '维持原计划',
@@ -1042,15 +1046,16 @@ test('M2 中止：abort_work 归档 aborted、无商业收入、释放归属', (
 
   const aborted = ok('abort_work', { state, work_id: 'work_01' })
   assert.equal(aborted.report.end_reason, 'aborted')
+  assert.equal(aborted.report.archived, false)
   assert.equal(aborted.report.commercial_revenue, 0)
   assert.equal(aborted.report.penalty, 0)
   assert.equal(aborted.report.penalty_pending, true)
+  assert.equal(aborted.report.rules_status, 'placeholder')
   assert.equal(aborted.state.works.length, 0)
   assert.equal(aborted.state.staff.find((s) => s.id === 'staff_dir').assignment_work_id, null)
   assert.equal(aborted.state.finance.balance, before)
-  const record = aborted.state.archive.works[0]
-  assert.equal(record.end_reason, 'aborted')
-  assert.equal(record.company_received, 0)
+  // 不扩展 Archive 的冻结枚举：中止不写 WorkRecord
+  assert.equal(aborted.state.archive.works.length, 0)
   assert.equal(call('abort_work', { state: aborted.state, work_id: 'work_01' }).error.code, 'NOT_FOUND')
 })
 

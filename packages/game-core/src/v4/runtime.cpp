@@ -563,7 +563,7 @@ std::vector<std::string> validate(const GameState& state) {
             if (!one_of_text(record.value("rating", std::string{}), {"S", "A", "B", "C", "D"})) {
                 error("INV-01 archive.rating 非法: " + record_id);
             }
-            if (!one_of_text(record.value("end_reason", std::string{}), {"completed", "deadline", "company_closed", "aborted"})) {
+            if (!one_of_text(record.value("end_reason", std::string{}), {"completed", "deadline", "company_closed"})) {
                 error("INV-01 archive.end_reason 非法: " + record_id);
             }
             const int gcp = record.value("gate_completion_permille", 1000);
@@ -820,7 +820,6 @@ void change_reputation(GameState& state, int delta, const std::string& reason) {
 constexpr int kForcedCommercialPermille = 600;
 constexpr int kForcedPenaltyPermille = 300;   // 门槛完全未达时扣合同预算的 30%
 constexpr int kForcedScorePenaltyMax = 10;    // 评价修正上限（分）
-constexpr int kCrisisWeeks = 8;               // [PLACEHOLDER] 交付后负余额进入危机的期限
 
 // 门槛项完成度：逐项按 work_done/(deliver_at×work_total) 封顶 1000 后取平均。
 // 正常交付恒为 1000；只有强制/关闭路径会产生低于 1000 的值。
@@ -848,20 +847,6 @@ struct SettlementOutcome {
     Json report = Json::object();
 };
 
-// 交付后余额为负：正常经营下进入资金危机（M2.5 只落地“进入”这一步，
-// 危机周结算与融资仍未实现）。
-void enter_crisis_if_negative(GameState& state) {
-    if (state.finance.balance >= 0 || state.company.status != "running") return;
-    if (state.finance.solvency.state == "crisis") {
-        state.finance.solvency.gap = -state.finance.balance;
-        return;
-    }
-    state.finance.solvency.state = "crisis";
-    state.finance.solvency.since_week = state.company.week;
-    state.finance.solvency.deadline_week = state.company.week + kCrisisWeeks;
-    state.finance.solvency.gap = -state.finance.balance;
-}
-
 // 关闭公司：不可逆。未交付项目转 delivering，等 finalize_delivery 逐个结清。
 // 归属与待处理事件必须同步释放：INV-09 只允许归属 producing 项目，
 // INV-23 只允许事件挂在 producing 项目上。
@@ -877,6 +862,12 @@ void close_company(GameState& state, const std::string& reason) {
     // 待处理事件不得丢弃：调用方必须先确认没有 pending；这里不再静默清空。
     // 没有在制项目时无需逐个 finalize_delivery，直接结束（否则 closing→ended 无驱动）。
     if (state.works.empty()) state.company.status = "ended";
+}
+
+// 结算后余额为负：INV-25 只允许破产关闭出现负余额，不再进入可持续危机周。
+void enter_bankruptcy_if_negative(GameState& state) {
+    if (state.finance.balance >= 0 || state.company.status != "running") return;
+    close_company(state, "bankrupt");
 }
 
 // 一次交付结算：质量聚合 → 评级 → 渠道收入 → 分账/奖励/扣罚 → 声望 → 委员会 →
@@ -1107,12 +1098,19 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
                                                 {"profit", profit}}},
                        {"channels", channel_report},
                        {"episodes", episode_records},
-                       {"team", team}};
-    if (!state.archive.contains("works") || !state.archive.at("works").is_array()) state.archive["works"] = Json::array();
-    state.archive["works"].push_back(record);
+                       {"team", team},
+                       {"rules_status", "placeholder"}};
+    // aborted 不是交付：M0 Archive 只定义 completed/deadline/company_closed，
+    // 不扩展冻结枚举；中止只清项目并保留财务/声望事实（见文档兼容性分析）。
+    if (end_reason != "aborted") {
+        if (!state.archive.contains("works") || !state.archive.at("works").is_array()) state.archive["works"] = Json::array();
+        state.archive["works"].push_back(record);
+    }
 
     outcome.report = Json{{"work_id", work_id},
                           {"end_reason", end_reason},
+                          {"archived", end_reason != "aborted"},
+                          {"rules_status", "placeholder"},
                           {"forced", forced},
                           {"gate_completion_permille", gcp},
                           {"rating", rating},
@@ -1137,7 +1135,7 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
                                      [&work_id](const Project& item) { return item.id == work_id; }),
                       state.works.end());
 
-    enter_crisis_if_negative(state);
+    enter_bankruptcy_if_negative(state);
     outcome.ok = true;
     return outcome;
 }
@@ -1391,9 +1389,7 @@ std::string advance_week(const std::string& input) {
         std::sort(ordered_staff.begin(), ordered_staff.end(),
                   [](const Staff* a, const Staff* b) { return a->id < b->id; });
 
-        // ---- 阶段 5：强制费用预检（M1 最小切片：工资 + 运营 + 制作费）----
-        // 预检失败一律整周不提交：不推进、不记账、不生产。危机路径是 M2.5，
-        // 此处只保证"钱不够时周不会假装过完"。
+        // ---- 阶段 2-3：刚性支出预检与扣款（§14.7：失败即回滚并破产终局）----
         std::map<std::string, int> assigned_count;
         for (const Staff* member : ordered_staff) {
             if (member->assignment_work_id) ++assigned_count[*member->assignment_work_id];
@@ -1412,10 +1408,24 @@ std::string advance_week(const std::string& input) {
         const int64_t total_cost = salary_total + operations_total + production_total;
         if (state.finance.balance < total_cost) {
             const int64_t gap = total_cost - state.finance.balance;
-            return encode(Json{{"error",
-                                {{"code", "INSUFFICIENT_FUNDS"},
-                                 {"message", "本周强制费用不足，缺口 " + std::to_string(gap) + " 日元"},
-                                 {"gap", gap}}}});
+            const int64_t balance = state.finance.balance;
+            // §14.7：预检失败不扣款、不推进、不生产，回滚至阶段 1 快照并直接破产终局。
+            close_company(state, "bankrupt");
+            const auto bankrupt_errors = validate(state);
+            if (!bankrupt_errors.empty()) {
+                return encode(error_body("INTERNAL_ERROR", "破产终局状态非法: " + bankrupt_errors.front()));
+            }
+            return encode(Json{{"state", state},
+                               {"report", Json{{"week", week},
+                                               {"mode", "bankrupt"},
+                                               {"bankrupt", true},
+                                               {"skipped", true},
+                                               {"gap", gap},
+                                               {"funds", Json{{"delta", 0}, {"balance", balance}}},
+                                               {"works", Json::array()},
+                                               {"staff", Json::array()},
+                                               {"settlements", Json::array()},
+                                               {"events", Json{{"drawn", 0}, {"reason", "bankrupt"}}}}}});
         }
 
         // ---- 阶段 6：原子记账（唯一账本，逐条可归因）----
