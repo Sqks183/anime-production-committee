@@ -1,7 +1,8 @@
 name: v4 contract tests
 
-# 事件内容流水线与 v4 契约测试的门禁：内容校验、生成文件一致性与 34 条 JSON 契约用例。
-# 依据 docs/EVENT_CONTENT_PIPELINE.md §3/§4/§7。
+# 事件内容流水线与 v4 契约测试的门禁：内容校验、生成文件一致性、34 条 JSON 契约用例，
+# 以及 v4 契约形状审计（字段/命令/回执/账本/不变式口径，docs/v4-contract-shape.json）。
+# 依据 docs/EVENT_CONTENT_PIPELINE.md §3/§4/§7、docs/DATA_DICTIONARY_V4.md §9。
 
 on:
   push:
@@ -10,6 +11,8 @@ on:
       - "packages/game-core/**"
       - "scripts/lib/**"
       - "scripts/v4.test.mjs"
+      - "scripts/audit-v4-contract.mjs"
+      - "docs/v4-contract-shape.json"
       - "scripts/build-event-catalog.mjs"
       - "scripts/build-v4.mjs"
       - "scripts/validate-event-content.mjs"
@@ -20,6 +23,8 @@ on:
       - "packages/game-core/**"
       - "scripts/lib/**"
       - "scripts/v4.test.mjs"
+      - "scripts/audit-v4-contract.mjs"
+      - "docs/v4-contract-shape.json"
       - "scripts/build-event-catalog.mjs"
       - "scripts/build-v4.mjs"
       - "scripts/validate-event-content.mjs"
@@ -69,3 +74,5 @@ jobs:
           em++ --version
       - name: Build v4 module and run contract tests
         run: npm run test:v4
+      - name: Audit v4 contract shape against the data dictionary
+        run: node scripts/audit-v4-contract.mjs

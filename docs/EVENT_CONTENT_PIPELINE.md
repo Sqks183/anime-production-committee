@@ -114,6 +114,8 @@ npm run test:v4              # 构建 WASM 并跑契约测试（需 emsdk）
 
 ## 5. 运行时仲裁（M0 §14.1 / §14.12）
 
+> `events.pending[]` 与选项快照的实测字段清单、未冻结的 `episode_id/stage/item_id/escalation` 裁决项，见 [DATA_DICTIONARY_V4.md](DATA_DICTIONARY_V4.md) §3.8 与 §8 D-09。
+
 - `events.pending` 是数组；每个 `producing` 项目每周最多触发一个事件，不同项目可以在同一周各自触发。
 - 已有待处理事件的项目不会再次抽取；新事件不得覆盖、丢弃或合并旧事件。
 - **查看与处理分离（INV-23）**：每条 pending 带 `viewed`，触发时为 `false`。`view_event(work_id, event_id)` 只把目标事件标记为已查看，不结算、不扣款、不移除；已查看再调用幂等成功。

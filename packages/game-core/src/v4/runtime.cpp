@@ -724,7 +724,7 @@ std::string advance_week(const std::string& input) {
         std::sort(ordered_staff.begin(), ordered_staff.end(),
                   [](const Staff* a, const Staff* b) { return a->id < b->id; });
 
-        // ---- 阶段 5：强制费用预检（M1 最小切片：工资 + 运营 + 制作费）----
+        // ---- 阶段 2：刚性支出预检（M1 最小切片：工资 + 运营 + 制作费）----
         // 预检失败一律整周不提交：不推进、不记账、不生产。危机路径是 M2.5，
         // 此处只保证"钱不够时周不会假装过完"。
         std::map<std::string, int> assigned_count;
@@ -751,7 +751,7 @@ std::string advance_week(const std::string& input) {
                                  {"gap", gap}}}});
         }
 
-        // ---- 阶段 6：原子记账（唯一账本，逐条可归因）----
+        // ---- 阶段 3：刚性支出扣款（唯一账本，逐条可归因）----
         auto spend = [&state, week](const std::string& entry_id, std::optional<std::string> work_id,
                                     const char* category, int64_t amount, const std::string& memo) {
             if (amount <= 0) return;
@@ -867,7 +867,7 @@ std::string advance_week(const std::string& input) {
                                         {"fatigue", member.fatigue}, {"morale", member.morale}});
         }
 
-        // ---- 阶段 11：事件抽取（读本周已提交的结果，不碰账）----
+        // ---- 阶段 8：随机事件抽取与周数递增（读本周已提交的结果，不碰账）----
         // 每个 producing 项目各自至多一条；已有待处理事件的项目不再追加。
         const Json events_report = event::draw(state, week);
 
