@@ -50,7 +50,7 @@
 | 单周时间步 | 周结算的推进单位 | **已确认**：每次推进 1 周 | [DECISION_LOG](DECISION_LOG.md)、[M0 契约](M0_CONTRACT_FREEZE.md) |
 | 项目制作周期 | 各规模、题材、目标质量的制作周数 | **待标定** | [DECISION_LOG](DECISION_LOG.md)、[DOMAIN_ARCHITECTURE](DOMAIN_ARCHITECTURE.md)、[蓝图规范](BLUEPRINT_SPEC.md)、[#63 工期](https://github.com/zhengmin486/anime-production-committee/issues/63) |
 | 合同期限 | 不同企划的合同死线、交付日期 | **待标定 / 内容实例值** | [DECISION_LOG](DECISION_LOG.md)、[M0 契约](M0_CONTRACT_FREEZE.md)、[#59 市场](https://github.com/zhengmin486/anime-production-committee/issues/59)、[#63 工期](https://github.com/zhengmin486/anime-production-committee/issues/63) |
-| 不同作品规模的集数 | TV、短篇、OVA、剧场版等集数范围 | **临时参考**：TV 12–13、短篇 1–3、OVA/剧场版 1 | [蓝图规范](BLUEPRINT_SPEC.md)、[TV 蓝图样例](blueprints/tv_standard.blueprint.json)、[#63 工期](https://github.com/zhengmin486/anime-production-committee/issues/63) |
+| 不同作品规模的集数 | TV、短篇、OVA、剧场版等集数范围 | **已确认**：TV 12–13、短篇 1–4、OVA/剧场版 1 | [蓝图规范](BLUEPRINT_SPEC.md)、[TV 蓝图样例](blueprints/tv_standard.blueprint.json)、[#63 工期](https://github.com/zhengmin486/anime-production-committee/issues/63) |
 | 公共制作工作项数量 | 不同蓝图的公共制作项数量和拆分粒度 | **待细化 / 临时样例** | [蓝图规范](BLUEPRINT_SPEC.md)、[TV 蓝图样例](blueprints/tv_standard.blueprint.json)、[DOMAIN_ARCHITECTURE](DOMAIN_ARCHITECTURE.md) |
 | 单集工作项数量 | 六阶段下各工作项数量及拆分粒度 | **待细化 / 临时样例** | [蓝图规范](BLUEPRINT_SPEC.md)、[TV 蓝图样例](blueprints/tv_standard.blueprint.json) |
 | 核心员工编制上限 | 不同公司成长里程碑允许的核心员工人数 | **待标定**；里程碑达成时立即解锁，只统计核心员工、不含临时工；已解锁名额永久保留、只增不减；不绑定设施等级/槽位/作画工作室，开放编制不收扩容费 | [DECISION_LOG](DECISION_LOG.md)、[DOMAIN_ARCHITECTURE](DOMAIN_ARCHITECTURE.md)、[#61 公司](https://github.com/zhengmin486/anime-production-committee/issues/61) |

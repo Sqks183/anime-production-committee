@@ -667,7 +667,7 @@ start_work ⇒ 实例化：
 ```
 
 - 蓝图是**内容配置**，实例化后的工作项是**项目状态**：此后蓝图改版不影响在制项目。
-- 单集数：TV 12–13、短篇 1–3、OVA/剧场版 1（`[PLACEHOLDER]`，由平衡定值）。剧场版单集即"一部作品只有一个交付单元"，不需要特例代码。
+- 单集数：TV 12–13、短篇 1–4、OVA/剧场版 1（`[PLACEHOLDER]`，由平衡定值）。剧场版单集即"一部作品只有一个交付单元"，不需要特例代码。
 - 实例化时一次性写入全部工作项，不做懒加载：状态可校验、可复现。
 
 **蓝图必须先有可检查的样例，M0 才算完成**。规范见 [制作蓝图规范](BLUEPRINT_SPEC.md)，样例见 [`blueprints/tv_standard.blueprint.json`](blueprints/tv_standard.blueprint.json)，校验命令 `npm run validate:blueprint`。
