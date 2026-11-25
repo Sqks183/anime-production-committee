@@ -330,10 +330,11 @@ test('委员会可选阵容与空团队阶段快照在 WASM 具有相同校验�
   committee.project.investment_percent = 100
   committee.project.committee_pressure = 0
   committee.project.offer.allowed_modes = ['committee']
+  committee.project.total_investment = committee.project.offer.contract_budget * 2
   probeValidation(committee)
-  committee.project.committee = []
+  delete committee.project.committee
   probeValidation(committee)
-  committee.project.investment_percent = 99
+  committee.project.investment_percent = 9
   probeValidation(committee, 'INVALID_INPUT')
 
   const state = start()
