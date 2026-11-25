@@ -25,6 +25,7 @@ std::string set_plan(const std::string& input);          // 内部/测试：{sta
 std::string start_work(const std::string& input);        // M0 命令 2：{state, offer_id, mode, percent?, committee_partner_ids?}
 std::string assign_staff(const std::string& input);      // M0 命令 4：{state, staff_id, work_id|null}
 std::string deliver_work(const std::string& input);      // M0 命令 10：{state, work_id}
+std::string abort_work(const std::string& input);        // M0 命令 11：{state, work_id}
 std::string buy_tv_service(const std::string& input);    // M0 命令 15：{state, work_id}
 std::string request_extension(const std::string& input); // M0 命令 16：{state, work_id}
 std::string advance_week(const std::string& input);      // M0 命令 18：{state}

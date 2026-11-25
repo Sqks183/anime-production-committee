@@ -532,6 +532,18 @@ test('输入边界：缺必填字段返回 INVALID_INPUT，不用默认值掩盖
   const missingTotal = JSON.parse(JSON.stringify(state))
   delete missingTotal.works[0].common.items[0].work_total
   assert.equal(call('assign_staff', { state: missingTotal, staff_id: 'staff_dir', work_id: null }).error?.code, 'INVALID_INPUT')
+
+  // M0 §3/§14.6：Staff 报酬字段与 Finance.solvency 不得静默补默认值
+  for (const field of ['signing_fee', 'weekly_salary', 'fatigue', 'morale']) {
+    const missing = JSON.parse(JSON.stringify(state))
+    delete missing.staff[0][field]
+    assert.equal(call('assign_staff', { state: missing, staff_id: 'staff_dir', work_id: null }).error?.code, 'INVALID_INPUT')
+  }
+  const missingSolvency = JSON.parse(JSON.stringify(state))
+  delete missingSolvency.finance.solvency.state
+  assert.equal(call('assign_staff', { state: missingSolvency, staff_id: 'staff_dir', work_id: null }).error?.code, 'INVALID_INPUT')
+  assert.equal(state.staff[0].project_fee, undefined)
+  assert.equal(typeof state.staff[0].signing_fee, 'number')
 })
 
 test('契约名适配：initialize_game / set_work_plan 与内部入口等价', () => {
@@ -845,7 +857,7 @@ test('M2 立项：承制模式消费企划、合同预算入账、项目按蓝�
   assert.equal(state.works.length, 1)
   const work = state.works[0]
   assert.equal(work.mode, 'contract')
-  assert.deepEqual(work.channels, ['tv'])
+  assert.deepEqual(work.channels, ['domestic_streaming', 'tv'])
   assert.equal(work.offer.id, 'offer_01')
   assert.equal(work.deadline_week, 26)
   assert.equal(work.episodes.length, 12)
@@ -856,7 +868,7 @@ test('M2 立项：承制模式消费企划、合同预算入账、项目按蓝�
   assert.equal(state.finance.opening_funds + state.finance.entries.reduce((sum, e) => sum + e.amount, 0), state.finance.balance)
 })
 
-test('M2 立项：委员会模式成立委员会、支付投资份额、渠道合并', () => {
+test('M2 立项：委员会模式成立委员会、支付投资份额、成员渠道映射', () => {
   let state = ok('initialize', { seed: 7 }).state
   const started = ok('start_work', {
     state,
@@ -874,16 +886,30 @@ test('M2 立项：委员会模式成立委员会、支付投资份额、渠道�
   const committee = state.committees[0]
   assert.equal(committee.status, 'active')
   assert.equal(committee.members.length, 2)
-  assert.deepEqual(committee.members.map((m) => m.channel).sort(), ['streaming', 'tv'])
+  assert.deepEqual(committee.members.map((m) => m.channel).sort(), ['domestic_streaming', 'tv'])
   assert.equal(state.works[0].investment.percent, 50)
 
-  const withTv = ok('buy_tv_service', { state, work_id: 'work_01' })
+  // 已有电视台成员：默认获得播出曝光，不得再付费购买
+  const blocked = call('buy_tv_service', { state, work_id: 'work_01' })
+  assert.equal(blocked.error.code, 'MODE_NOT_ALLOWED')
+
+  // 无电视台成员：玩家按投资比例承担电视服务总费用
+  const second = ok('start_work', {
+    state,
+    offer_id: 'offer_02',
+    mode: 'committee',
+    percent: 50,
+    committee_partner_ids: ['partner_stream', 'partner_pub']
+  })
+  assert.equal(second.state.finance.balance, 2000000)
+  const withTv = ok('buy_tv_service', { state: second.state, work_id: second.work_id })
+  assert.equal(withTv.paid, 300000)   // 60 万 × 50%
   assert.equal(withTv.state.finance.balance, 1700000)
-  assert.equal(withTv.state.works[0].tv_service.channel, 'tv')
-  const extended = ok('request_extension', { state: withTv.state, work_id: 'work_01' })
-  assert.equal(extended.state.works[0].deadline_week, 30)
+  assert.equal(withTv.state.works.find((w) => w.id === second.work_id).tv_service.multiplier, 1300)
+  const extended = ok('request_extension', { state: withTv.state, work_id: second.work_id })
+  assert.equal(extended.state.works.find((w) => w.id === second.work_id).deadline_week, 28)
   assert.equal(extended.state.finance.balance, 1450000)
-  const twice = call('request_extension', { state: extended.state, work_id: 'work_01' })
+  const twice = call('request_extension', { state: extended.state, work_id: second.work_id })
   assert.equal(twice.error.code, 'INVALID_PHASE')
 })
 
@@ -902,17 +928,21 @@ test('M2 交付：门槛未达拒绝；达标后结算、归档、清归属、�
   firstCommon.contributors = ['staff_dir']
   const delivered = ok('deliver_work', { state, work_id: 'work_01' })
   assert.equal(delivered.report.rating, 'B')
-  assert.equal(delivered.report.success_reward, 240000)
+  // 承制只拿 BD/DVD，BD 收入未达合同预算，不触发成功奖励
+  assert.equal(delivered.report.success_reward, 0)
+  assert.ok(delivered.report.bd_revenue > 0)
+  assert.equal(delivered.report.commercial_revenue, delivered.report.bd_revenue)
   assert.equal(delivered.state.archive.works.length, 1)
   assert.equal(delivered.state.works.length, 0)
   assert.equal(delivered.state.staff.find((s) => s.id === 'staff_dir').assignment_work_id, null)
   assert.equal(delivered.state.company.reputation, 102)
-  assert.equal(delivered.state.finance.balance, 3200000 + 240000)
+  assert.equal(delivered.state.finance.balance, 3200000 + delivered.report.bd_revenue)
   const record = delivered.state.archive.works[0]
   assert.equal(record.id, 'work_01')
   assert.equal(record.mode, 'contract')
   assert.equal(record.finance_summary.contract_received, 1200000)
-  assert.equal(record.finance_summary.success_reward, 240000)
+  assert.equal(record.finance_summary.success_reward, 0)
+  assert.equal(record.finance_summary.bd_revenue, delivered.report.bd_revenue)
   assert.equal(record.team.length, 1)
   assert.equal(delivered.state.finance.opening_funds + delivered.state.finance.entries.reduce((sum, e) => sum + e.amount, 0), delivered.state.finance.balance)
 })
@@ -929,9 +959,20 @@ test('M4 交付：委员会按投资比例分账、关闭委员会并沉淀伙�
   state = completeWork(state, 'work_01', 80)
   const delivered = ok('deliver_work', { state, work_id: 'work_01' })
   const report = delivered.report
-  assert.equal(report.commercial_share, Math.floor(report.commercial_revenue * 50 / 100))
+  // 委员会只对扣除代理费后的净商业池按比例分账；BD 始终归公司，不进池。
+  assert.equal(report.commercial_share, Math.floor(report.committee_pool * 50 / 100))
+  assert.equal(report.investor_share, report.committee_pool - report.commercial_share)
+  assert.ok(report.bd_revenue > 0)
+  assert.equal(report.company_received, report.bd_revenue + report.commercial_share)
   assert.equal(report.success_reward, 0)
-  assert.equal(report.channels.length, 2)   // 基线 tv 与委员会 tv 合并，再加上 streaming
+  const poolLines = report.channels.filter((line) => line.owner === 'committee_pool')
+  const bdLines = report.channels.filter((line) => line.owner === 'company')
+  assert.equal(poolLines.reduce((sum, line) => sum + line.net, 0), report.committee_pool)
+  assert.equal(bdLines.reduce((sum, line) => sum + line.net, 0), report.bd_revenue)
+  for (const line of report.channels) {
+    assert.equal(line.net, Math.floor(line.gross * (1000 - line.agency_fee_permille) / 1000))
+  }
+  assert.equal(report.channels.length, 3)   // 国内配信 / 电视 / BD
   assert.equal(delivered.state.committees[0].status, 'closed')
   assert.equal(delivered.state.committees[0].closed_week, 0)
   for (const id of ['partner_tv', 'partner_stream']) {
@@ -945,10 +986,150 @@ test('M4 交付：委员会按投资比例分账、关闭委员会并沉淀伙�
   assert.equal(record.mode, 'committee')
   assert.equal(record.investment_percent, 50)
   assert.equal(record.finance_summary.commercial_share, report.commercial_share)
+  assert.equal(record.finance_summary.bd_revenue, report.bd_revenue)
 })
 
-test('M2 立项守卫：模式、比例、成员、资金与重复消费都拒绝且状态不变', () => {
-  const base = ok('initialize', { seed: 7 }).state
+function injectedEvent(workId) {
+  return {
+    event_id: 'schedule_slip',
+    name: '作画进度落后',
+    work_id: workId,
+    triggered_week: 0,
+    expires_week: null,
+    cooldown_weeks: 4,
+    once_per_project: false,
+    options: [{
+      id: 'accept',
+      label: '维持原计划',
+      kind: 'abandon',
+      risk_hint: '',
+      cost: 0,
+      effects: [{ scope: 'stage', target: 'quality', stage: 'animation', value: -3 }]
+    }]
+  }
+}
+
+test('DEC-EVENT-001：待处理事件阻止交付与关闭，跨项目事件不被清理', () => {
+  let state = twoProjectsNearDeadline()
+  state.events.pending.push(injectedEvent('work_a'), injectedEvent('work_b'))
+  const prepared = completeWork(JSON.parse(JSON.stringify(state)), 'work_a', 70)
+
+  const blocked = call('deliver_work', { state: prepared, work_id: 'work_a' })
+  assert.equal(blocked.error.code, 'INVALID_PHASE')
+  assert.equal(prepared.events.pending.length, 2)
+  assert.equal(call('end_company', { state: prepared }).error.code, 'INVALID_PHASE')
+
+  const afterA = ok('resolve_event', {
+    state: prepared,
+    work_id: 'work_a',
+    event_id: 'schedule_slip',
+    option_id: 'accept'
+  }).state
+  assert.equal(afterA.events.pending.length, 1)
+
+  const delivered = ok('deliver_work', { state: afterA, work_id: 'work_a' })
+  assert.equal(delivered.state.events.pending.length, 1)
+  assert.equal(delivered.state.events.pending[0].work_id, 'work_b')
+  assert.deepEqual(delivered.state.works.map((work) => work.id), ['work_b'])
+})
+
+test('M2 中止：abort_work 归档 aborted、无商业收入、释放归属', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state = ok('start_work', { state, offer_id: 'offer_01', mode: 'contract' }).state
+  state = assign(state, 'staff_dir')
+  state = completeWork(state, 'work_01', 70)
+  const before = state.finance.balance
+
+  const aborted = ok('abort_work', { state, work_id: 'work_01' })
+  assert.equal(aborted.report.end_reason, 'aborted')
+  assert.equal(aborted.report.commercial_revenue, 0)
+  assert.equal(aborted.report.penalty, 0)
+  assert.equal(aborted.report.penalty_pending, true)
+  assert.equal(aborted.state.works.length, 0)
+  assert.equal(aborted.state.staff.find((s) => s.id === 'staff_dir').assignment_work_id, null)
+  assert.equal(aborted.state.finance.balance, before)
+  const record = aborted.state.archive.works[0]
+  assert.equal(record.end_reason, 'aborted')
+  assert.equal(record.company_received, 0)
+  assert.equal(call('abort_work', { state: aborted.state, work_id: 'work_01' }).error.code, 'NOT_FOUND')
+})
+
+test('DEC-BD-001/COMM-002：电视倍率按成员/购买分档，BD 始终归公司', () => {
+  const withMember = (() => {
+    let state = ok('initialize', { seed: 7 }).state
+    state = ok('start_work', {
+      state, offer_id: 'offer_01', mode: 'committee', percent: 50,
+      committee_partner_ids: ['partner_tv', 'partner_stream']
+    }).state
+    state = completeWork(state, 'work_01', 70)
+    return ok('deliver_work', { state, work_id: 'work_01' }).report
+  })()
+  const lineOf = (report, id) => report.channels.find((line) => line.window === id)
+  assert.equal(lineOf(withMember, 'domestic_streaming').tv_multiplier, 1250)
+  assert.equal(lineOf(withMember, 'bd_dvd').owner, 'company')
+
+  const withoutPurchase = (() => {
+    let state = ok('initialize', { seed: 7 }).state
+    state = ok('start_work', {
+      state, offer_id: 'offer_02', mode: 'committee', percent: 50,
+      committee_partner_ids: ['partner_stream', 'partner_pub']
+    }).state
+    state = completeWork(state, 'work_01', 70)
+    return ok('deliver_work', { state, work_id: 'work_01' }).report
+  })()
+  assert.equal(lineOf(withoutPurchase, 'domestic_streaming').tv_multiplier, 1000)
+
+  const withPurchase = (() => {
+    let state = ok('initialize', { seed: 7 }).state
+    state = ok('start_work', {
+      state, offer_id: 'offer_02', mode: 'committee', percent: 50,
+      committee_partner_ids: ['partner_stream', 'partner_pub']
+    }).state
+    state = ok('buy_tv_service', { state, work_id: 'work_01' }).state
+    state = completeWork(state, 'work_01', 70)
+    return ok('deliver_work', { state, work_id: 'work_01' }).report
+  })()
+  assert.equal(lineOf(withPurchase, 'domestic_streaming').tv_multiplier, 1300)
+})
+
+test('DEC-PLAN-001：原创草稿走独立准入，不复用普通企划声望/履历守卫', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  const base = JSON.parse(JSON.stringify(state.market.slots[0]))
+  state.market.custom_offer = {
+    ...base,
+    id: 'custom_01',
+    name: '自制企划',
+    origin: 'custom',
+    allowed_modes: ['committee'],
+    draft_status: 'valid',
+    min_reputation: 999,
+    required_works: ['work_missing']
+  }
+  const missing = JSON.parse(JSON.stringify(state))
+  missing.market.custom_offer = null
+  const blocked = call('start_work', {
+    state: missing, offer_id: 'custom_01', mode: 'committee', percent: 50,
+    committee_partner_ids: ['partner_stream']
+  })
+  assert.equal(blocked.error.code, 'NOT_FOUND')
+
+  const expired = JSON.parse(JSON.stringify(state))
+  expired.market.custom_offer.draft_status = 'expired'
+  const invalid = call('start_work', {
+    state: expired, offer_id: 'custom_01', mode: 'committee', percent: 50,
+    committee_partner_ids: ['partner_stream']
+  })
+  assert.equal(invalid.error.code, 'INVALID_PHASE')
+
+  const started = ok('start_work', {
+    state, offer_id: 'custom_01', mode: 'committee', percent: 50,
+    committee_partner_ids: ['partner_stream']
+  })
+  assert.equal(started.state.market.custom_offer, null)
+  assert.equal(started.state.works[0].offer.origin, 'custom')
+})
+
+test('M2 立项守卫：模式、比例、成员、资金与重复消费都拒绝且状态不变', () => {  const base = ok('initialize', { seed: 7 }).state
   const before = ok('hash_state', { state: base }).hash
   const cases = [
     { offer_id: 'offer_03', mode: 'contract' },

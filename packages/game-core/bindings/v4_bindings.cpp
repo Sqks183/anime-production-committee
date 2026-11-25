@@ -17,6 +17,7 @@ EMSCRIPTEN_BINDINGS(apc_v4) {
     emscripten::function("start_work", &apc::v4::start_work);
     emscripten::function("assign_staff", &apc::v4::assign_staff);
     emscripten::function("deliver_work", &apc::v4::deliver_work);
+    emscripten::function("abort_work", &apc::v4::abort_work);
     emscripten::function("buy_tv_service", &apc::v4::buy_tv_service);
     emscripten::function("request_extension", &apc::v4::request_extension);
     emscripten::function("advance_week", &apc::v4::advance_week);

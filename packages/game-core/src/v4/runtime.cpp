@@ -24,6 +24,21 @@ constexpr int kFatigueWorkGain = 8;
 constexpr int kFatigueRestLoss = 4;
 constexpr int kExperienceThreshold = 20;
 
+// DEC-COMM-001/002、DEC-BD-001：六个常规商业窗口。
+// BD/DVD 始终归制作公司；其余窗口按委员会成员渠道或既有合作开放。
+constexpr const char* kWindowBd = "bd_dvd";
+constexpr const char* kCommercialWindows[6] = {"domestic_streaming", "overseas", "merchandise", "music", "tv", "bd_dvd"};
+// [PLACEHOLDER] 外部代理手续费（三档开放中的第二档）与电视服务总费用。
+constexpr int kAgencyFeePermille = 400;
+constexpr std::int64_t kTvServiceFeeTotal = 600000;
+// 电视台委员会成员默认强力播出 125%；无成员时购买黄金档 130%。
+constexpr int kTvMultiplierMember = 1250;
+constexpr int kTvMultiplierPurchased = 1300;
+
+bool tv_boost_window(const std::string& window) {
+    return window == "domestic_streaming" || window == "merchandise" || window == "music" || window == kWindowBd;
+}
+
 Json error_body(const char* code, const std::string& message) { return Json{{"error", {{"code", code}, {"message", message}}}}; }
 
 std::string encode(const Json& value) { return value.dump(); }
@@ -223,13 +238,29 @@ GameState decode_state(const Json& request) {
     require(state.at("finance"), "opening_funds", "finance");
     require(state.at("finance"), "balance", "finance");
     require(state.at("finance"), "entries", "finance");
+    require(state.at("finance"), "loans", "finance");
+    // solvency 决定危机分支与命令白名单；缺字段被 from_json 读成 normal 会静默改写经营状态。
+    require(state.at("finance"), "solvency", "finance");
+    require(state.at("finance").at("solvency"), "state", "finance.solvency");
     if (!state.at("staff").is_array() || !state.at("works").is_array()) {
         throw Json::type_error::create(302, "staff / works 必须是数组", nullptr);
     }
     for (const auto& member : state.at("staff")) {
         require(member, "id", "staff[]");
+        require(member, "name", "staff[]");
         require(member, "role", "staff[]");
+        require(member, "employment", "staff[]");
         require(member, "abilities", "staff[]");
+        require(member, "experience", "staff[]");
+        require(member, "potential", "staff[]");
+        require(member, "revealed_potential", "staff[]");
+        require(member, "talent_type", "staff[]");
+        require(member, "signing_fee", "staff[]");
+        require(member, "weekly_salary", "staff[]");
+        require(member, "fatigue", "staff[]");
+        require(member, "morale", "staff[]");
+        require(member, "departure_warning", "staff[]");
+        require(member, "assignment_work_id", "staff[]");
     }
     for (const auto& work : state.at("works")) {
         require(work, "id", "works[]");
@@ -301,6 +332,11 @@ std::vector<std::string> validate(const GameState& state) {
         }
         if (member.fatigue < 0 || member.fatigue > 100) error("INV-01 staff.fatigue 越界: " + member.id);
         if (member.morale < 0 || member.morale > 100) error("INV-01 staff.morale 越界: " + member.id);
+        if (member.signing_fee < 0) error("INV-01 staff.signing_fee 不能为负: " + member.id);
+        if (member.weekly_salary <= 0) error("INV-01 staff.weekly_salary 必须为正: " + member.id);
+        if (member.employment != "core" && member.employment != "temporary") {
+            error("INV-01 staff.employment 非法: " + member.id);
+        }
         if (member.last_participation) {
             // INV-11：参与记录严格是"上一周"或 null。跨周保留会让磨合判定
             // 与存档校验各有一套时间语义，所以周结算里没产出就清空。
@@ -527,7 +563,7 @@ std::vector<std::string> validate(const GameState& state) {
             if (!one_of_text(record.value("rating", std::string{}), {"S", "A", "B", "C", "D"})) {
                 error("INV-01 archive.rating 非法: " + record_id);
             }
-            if (!one_of_text(record.value("end_reason", std::string{}), {"completed", "deadline", "company_closed"})) {
+            if (!one_of_text(record.value("end_reason", std::string{}), {"completed", "deadline", "company_closed", "aborted"})) {
                 error("INV-01 archive.end_reason 非法: " + record_id);
             }
             const int gcp = record.value("gate_completion_permille", 1000);
@@ -670,16 +706,24 @@ Json make_offer(const char* id, const char* name, const char* source, const char
 Json initial_market() {
     Json slots = Json::array();
     slots.push_back(make_offer("offer_01", "星海邮差", "publisher", "sf", 1200000, 26, 70, 600, 700,
-                               Json{{"tv", 3600000}, {"streaming", 1800000}}, Json::array({"tv"}),
+                               Json{{"domestic_streaming", 1800000}, {"overseas", 1400000}, {"merchandise", 1200000},
+                                    {"music", 500000}, {"tv", 600000}, {"bd_dvd", 500000}},
+                               Json::array({"domestic_streaming", "tv"}),
                                Json::array({"contract", "committee"}), Json::array({"partner_tv", "partner_stream"})));
     slots.push_back(make_offer("offer_02", "雨夜食堂", "publisher", "drama", 900000, 24, 65, 520, 620,
-                               Json{{"tv", 2400000}, {"streaming", 2000000}}, Json::array({"streaming"}),
+                               Json{{"domestic_streaming", 2000000}, {"overseas", 800000}, {"merchandise", 600000},
+                                    {"music", 400000}, {"tv", 500000}, {"bd_dvd", 400000}},
+                               Json::array({"domestic_streaming"}),
                                Json::array({"contract", "committee"}), Json::array({"partner_stream", "partner_pub"})));
     slots.push_back(make_offer("offer_03", "机甲夏令营", "studio", "family", 1500000, 30, 75, 700, 760,
-                               Json{{"tv", 4200000}, {"publishing", 1200000}}, Json::array({"tv", "publishing"}),
+                               Json{{"domestic_streaming", 2200000}, {"overseas", 1200000}, {"merchandise", 2000000},
+                                    {"music", 700000}, {"tv", 700000}, {"bd_dvd", 600000}},
+                               Json::array({"domestic_streaming", "merchandise", "tv"}),
                                Json::array({"committee"}), Json::array({"partner_tv", "partner_pub"})));
     slots.push_back(make_offer("offer_04", "无声的告白", "publisher", "romance", 700000, 20, 60, 420, 520,
-                               Json{{"streaming", 1600000}, {"publishing", 600000}}, Json::array({"streaming"}),
+                               Json{{"domestic_streaming", 1400000}, {"overseas", 600000}, {"merchandise", 500000},
+                                    {"music", 600000}, {"tv", 400000}, {"bd_dvd", 500000}},
+                               Json::array({"domestic_streaming"}),
                                Json::array({"contract", "committee"}), Json::array({"partner_stream"})));
     return Json{{"heat", Json{{"sf", Json{{"level", "high"}, {"changed_week", 0}}},
                               {"drama", Json{{"level", "mid"}, {"changed_week", 0}}},
@@ -754,10 +798,11 @@ int reputation_factor(std::int64_t reputation) {
 int quality_factor(int mean) { return std::clamp(200 + mean * 8, 200, 1000); }
 
 std::string rating_of(int mean) {
+    // M2/V3.5 统一口径：85/75/65/50。
     if (mean >= 85) return "S";
     if (mean >= 75) return "A";
-    if (mean >= 60) return "B";
-    if (mean >= 45) return "C";
+    if (mean >= 65) return "B";
+    if (mean >= 50) return "C";
     return "D";
 }
 
@@ -829,7 +874,7 @@ void close_company(GameState& state, const std::string& reason) {
         work.delivery = Json{{"reason", "company_closed"}, {"at_week", state.company.week}};
     }
     for (auto& member : state.staff) member.assignment_work_id.reset();
-    state.events.pending.clear();
+    // 待处理事件不得丢弃：调用方必须先确认没有 pending；这里不再静默清空。
     // 没有在制项目时无需逐个 finalize_delivery，直接结束（否则 closing→ended 无驱动）。
     if (state.works.empty()) state.company.status = "ended";
 }
@@ -840,6 +885,13 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     SettlementOutcome outcome;
     const int week = state.company.week;
     const std::string work_id = work.id;
+    // DEC-EVENT-001：待处理事件不得因交付/中止/关闭被丢弃；先处理再结项。
+    for (const auto& pending : state.events.pending) {
+        if (pending.work_id != work_id) continue;
+        outcome.code = "INVALID_PHASE";
+        outcome.message = "该项目仍有待处理事件，请先处理： " + pending.event_id;
+        return outcome;
+    }
     const int gcp = forced ? gate_completion_permille(work) : 1000;
 
     const auto quality = kernel::aggregate_work(work);
@@ -848,67 +900,104 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     const int score = clamp_int(raw_score - correction, 0, 100);
     const std::string rating = rating_of(score);
 
-    const std::int64_t budget = work.offer.value("contract_budget", static_cast<std::int64_t>(0));
-    const std::string genre = work.offer.value("genre", std::string{});
+    // 内部测试夹具可以没有 offer；正式立项一定有快照。
+    const Json empty_offer = Json::object();
+    const Json& offer = work.offer.is_object() ? work.offer : empty_offer;
+    const std::int64_t budget = offer.value("contract_budget", static_cast<std::int64_t>(0));
+    const std::string genre = offer.value("genre", std::string{});
     const int qf = quality_factor(raw_score);
     const int hf = heat_factor(state.market, genre);
     const int rf = reputation_factor(state.company.reputation);
 
-    std::vector<std::string> channels = work.channels;
-    const auto add_channel = [&channels](const std::string& channel) {
-        if (std::find(channels.begin(), channels.end(), channel) == channels.end()) channels.push_back(channel);
-    };
+    const bool contract = work.mode != "committee";
+    const bool aborted = end_reason == "aborted";
+    const int percent = work.investment.value("percent", 0);
+
+    std::set<std::string> member_windows;
     if (work.committee_id) {
         for (const auto& committee : state.committees) {
             if (!committee.is_object() || committee.value("id", std::string{}) != *work.committee_id) continue;
             for (const auto& member : committee.at("members")) {
-                if (member.is_object() && member.contains("channel")) add_channel(member.at("channel").get<std::string>());
+                if (member.is_object() && member.contains("channel")) {
+                    member_windows.insert(member.at("channel").get<std::string>());
+                }
             }
         }
     }
-    if (work.tv_service.is_object() && work.tv_service.contains("channel")) {
-        add_channel(work.tv_service.at("channel").get<std::string>());
-    }
+    const bool tv_member = member_windows.count("tv") > 0;
+    const bool tv_purchased = work.tv_service.is_object() && work.tv_service.value("purchased", false);
+    const int tv_multiplier = tv_member ? kTvMultiplierMember : (tv_purchased ? kTvMultiplierPurchased : 1000);
+    const std::set<std::string> baseline(work.channels.begin(), work.channels.end());
 
     Json channel_report = Json::array();
     std::int64_t gross_total = 0;
-    for (const auto& channel : channels) {
+    std::int64_t bd_revenue = 0;
+    std::int64_t committee_pool = 0;
+    for (const char* window_key : kCommercialWindows) {
+        if (aborted) break;   // 中止项目不产生商业收入
+        const std::string window = window_key;
+        const bool bd = window == kWindowBd;
+        // 承制只拿 BD/DVD；委员会按成员渠道或既有合作开放其余窗口。
+        const bool open = bd || (!contract && (member_windows.count(window) > 0 || baseline.count(window) > 0));
         std::int64_t potential = 0;
-        if (work.offer.contains("channel_potentials") && work.offer.at("channel_potentials").is_object() &&
-            work.offer.at("channel_potentials").contains(channel) &&
-            work.offer.at("channel_potentials").at(channel).is_number_integer()) {
-            potential = work.offer.at("channel_potentials").at(channel).get<std::int64_t>();
+        if (offer.contains("channel_potentials") && offer.at("channel_potentials").is_object() &&
+            offer.at("channel_potentials").contains(window) &&
+            offer.at("channel_potentials").at(window).is_number_integer()) {
+            potential = offer.at("channel_potentials").at(window).get<std::int64_t>();
         }
+        if (!open || potential <= 0) continue;
+
         std::int64_t gross = potential;
         gross = gross * qf / 1000;
         gross = gross * hf / 1000;
         gross = gross * rf / 1000;
+        if (tv_boost_window(window)) gross = gross * tv_multiplier / 1000;
         if (forced) gross = gross * kForcedCommercialPermille / 1000;
+
+        // 三档开放：成员渠道 0 手续费；仅靠既有合作软绑定按代理费扣减。
+        const int agency = (contract || bd) ? 0 : (member_windows.count(window) > 0 ? 0 : kAgencyFeePermille);
+        const std::int64_t net = gross * (1000 - agency) / 1000;
         gross_total += gross;
-        channel_report.push_back(Json{{"channel", channel},
+        if (bd) bd_revenue += net;
+        else if (!contract) committee_pool += net;
+        channel_report.push_back(Json{{"window", window},
                                       {"potential", potential},
                                       {"quality_factor", qf},
                                       {"heat_factor", hf},
                                       {"reputation_factor", rf},
-                                      {"gross", gross}});
+                                      {"tv_multiplier", tv_boost_window(window) ? tv_multiplier : 1000},
+                                      {"agency_fee_permille", agency},
+                                      {"gross", gross},
+                                      {"net", net},
+                                      {"owner", bd ? "company" : "committee_pool"}});
     }
 
-    const int percent = work.investment.value("percent", 0);
     std::int64_t company_share = 0;
+    std::int64_t investor_share = 0;
     std::int64_t reward = 0;
-    if (work.mode == "committee") {
-        company_share = gross_total * percent / 100;
-    } else if (gross_total >= budget) {
+    if (!contract && !aborted) {
+        company_share = committee_pool * percent / 100;
+        investor_share = committee_pool - company_share;
+    } else if (contract && !aborted && bd_revenue >= budget) {
         reward = budget * 200 / 1000;   // [PLACEHOLDER] 承制成功奖励 20%
     }
     // 强制交付扣罚：按门槛缺口比例扣合同预算的 kForcedPenaltyPermille‰。
+    // 中止的违约扣罚系数未标定，记 0 并在回执标记 penalty_pending。
     const std::int64_t penalty =
-        forced ? budget * (1000 - gcp) / 1000 * kForcedPenaltyPermille / 1000 : static_cast<std::int64_t>(0);
+        (!aborted && forced) ? budget * (1000 - gcp) / 1000 * kForcedPenaltyPermille / 1000
+                             : static_cast<std::int64_t>(0);
+    const std::int64_t company_revenue = bd_revenue + company_share + reward;
 
+    if (bd_revenue > 0) {
+        state.finance.entries.push_back(LedgerEntry{
+            "w" + std::to_string(week) + ".bd." + work_id, week, work_id, "commercial_share_received",
+            bd_revenue, work.committee_id, "bd_dvd (company-owned)"});
+        state.finance.balance += bd_revenue;
+    }
     if (company_share > 0) {
         state.finance.entries.push_back(LedgerEntry{
             "w" + std::to_string(week) + ".commercial." + work_id, week, work_id, "commercial_share_received",
-            company_share, work.committee_id, "channel settlement"});
+            company_share, work.committee_id, "committee net pool share"});
         state.finance.balance += company_share;
     }
     if (reward > 0) {
@@ -970,11 +1059,28 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     }
     Json dims = Json::object();
     for (int i = 0; i < kDimensionCount; ++i) dims[kDimensions[static_cast<std::size_t>(i)]] = quality.dims[static_cast<std::size_t>(i)];
+
+    // DEC-ECON-001：只汇总归因到本项目的直接成本；公司固定成本保持 work_id=null。
+    static const std::set<std::string> kCostCategories{"salary", "production", "temporary", "outsourcing", "events",
+                                                       "extension", "distribution", "penalty", "development"};
+    Json cost_breakdown = Json::object();
+    std::int64_t total_costs = 0;
+    for (const auto& entry : state.finance.entries) {
+        if (!entry.work_id || *entry.work_id != work_id) continue;
+        if (kCostCategories.find(entry.category) == kCostCategories.end()) continue;
+        const std::int64_t amount = -entry.amount;
+        if (amount <= 0) continue;
+        cost_breakdown[entry.category] = cost_breakdown.value(entry.category, static_cast<std::int64_t>(0)) + amount;
+        total_costs += amount;
+    }
+    const std::int64_t investment_paid = work.investment.value("paid", static_cast<std::int64_t>(0));
+    const std::int64_t profit = budget + company_revenue - investment_paid - total_costs;
+
     Json record = Json{{"id", work_id},
-                       {"name", work.offer.value("name", std::string{})},
-                       {"source", work.offer.value("source", std::string{})},
+                       {"name", offer.value("name", std::string{})},
+                       {"source", offer.value("source", std::string{})},
                        {"genre", genre},
-                       {"scale", work.offer.value("scale", std::string{})},
+                       {"scale", offer.value("scale", std::string{})},
                        {"mode", work.mode},
                        {"investment_percent", percent},
                        {"start_week", work.opened_week},
@@ -986,12 +1092,19 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
                        {"quality_score", score},
                        {"rating", rating},
                        {"commercial_revenue", gross_total},
-                       {"company_received", company_share + reward},
+                       {"bd_revenue", bd_revenue},
+                       {"committee_pool", committee_pool},
+                       {"investor_share", investor_share},
+                       {"company_received", company_revenue},
                        {"finance_summary", Json{{"contract_received", budget},
-                                                {"investment_paid", work.investment.value("paid", static_cast<std::int64_t>(0))},
+                                                {"investment_paid", investment_paid},
                                                 {"commercial_share", company_share},
+                                                {"bd_revenue", bd_revenue},
                                                 {"success_reward", reward},
-                                                {"penalty", penalty}}},
+                                                {"penalty", penalty},
+                                                {"costs", cost_breakdown},
+                                                {"total_costs", total_costs},
+                                                {"profit", profit}}},
                        {"channels", channel_report},
                        {"episodes", episode_records},
                        {"team", team}};
@@ -1005,21 +1118,21 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
                           {"rating", rating},
                           {"quality_score", score},
                           {"commercial_revenue", gross_total},
-                          {"company_received", company_share + reward},
+                          {"bd_revenue", bd_revenue},
+                          {"committee_pool", committee_pool},
+                          {"company_received", company_revenue},
                           {"commercial_share", company_share},
+                          {"investor_share", investor_share},
                           {"success_reward", reward},
                           {"penalty", penalty},
-                          {"net_received", company_share + reward - penalty},
+                          {"total_costs", total_costs},
+                          {"net_received", company_revenue - penalty},
                           {"channels", channel_report}};
 
-    // 清理：归属、事件、项目本体
+    // 清理：归属、项目本体（待处理事件已在入口拒绝，不在此删除）
     for (auto& member : state.staff) {
         if (member.assignment_work_id && *member.assignment_work_id == work_id) member.assignment_work_id.reset();
     }
-    state.events.pending.erase(
-        std::remove_if(state.events.pending.begin(), state.events.pending.end(),
-                       [&work_id](const PendingEvent& event) { return event.work_id == work_id; }),
-        state.events.pending.end());
     state.works.erase(std::remove_if(state.works.begin(), state.works.end(),
                                      [&work_id](const Project& item) { return item.id == work_id; }),
                       state.works.end());
@@ -1067,6 +1180,7 @@ std::string initialize(const std::string& input) {
             member.potential = abilities;
             member.talent_type = "specialist";
             member.weekly_salary = 40000;
+            member.signing_fee = 100000;
             member.fatigue = 0;
             member.morale = 80;
             return member;
@@ -1076,7 +1190,7 @@ std::string initialize(const std::string& input) {
         state.staff.push_back(make_staff("staff_anim", "许动画", "animator", {40, 45, 60, 75, 40, 50}));
 
         state.partners = Json::array({make_partner("partner_tv", "东都电视台", "tv", "tv", 65),
-                                      make_partner("partner_stream", "海流配信", "streaming", "streaming", 55),
+                                      make_partner("partner_stream", "海流配信", "streaming", "domestic_streaming", 55),
                                       make_partner("partner_pub", "白鹭出版", "publisher", "publishing", 45)});
         state.finance.opening_funds = 2000000;
         state.finance.balance = 2000000;
@@ -1314,8 +1428,9 @@ std::string advance_week(const std::string& input) {
         };
         for (const Staff* member : ordered_staff) {
             if (member->employment != "core") continue;
-            spend("w" + std::to_string(week) + ".salary." + member->id, std::nullopt, "salary",
-                  member->weekly_salary, member->id);
+            // DEC-ECON-001：分配到项目的周薪归项目直接成本；闲置员工工资留在公司级。
+            spend("w" + std::to_string(week) + ".salary." + member->id, member->assignment_work_id,
+                  "salary", member->weekly_salary, member->id);
         }
         spend("w" + std::to_string(week) + ".operations", std::nullopt, "operations", operations_total, "公司运营");
         for (const Project* work : ordered) {
@@ -1496,9 +1611,39 @@ std::string start_work(const std::string& input) {
         const Json* offer = find_offer(state, offer_id);
         if (offer == nullptr) return encode(error_body("NOT_FOUND", "企划不存在或已被消费"));
         const Json& snapshot = *offer;
-        const int min_reputation = snapshot.value("min_reputation", 0);
-        if (state.company.reputation < min_reputation) {
-            return encode(error_body("MODE_NOT_ALLOWED", "声望不足，无法接取该企划"));
+        // DEC-PLAN-001 两级准入：普通企划看声望/履历；原创草稿只看草稿是否有效，
+        // 草稿资格在 create_custom_offer 阶段检查，正式开工才检查全部应付款。
+        const std::string origin = snapshot.value("origin", std::string("publisher"));
+        if (origin == "custom") {
+            if (!state.market.contains("custom_offer") || !state.market.at("custom_offer").is_object() ||
+                state.market.at("custom_offer").value("id", std::string{}) != offer_id) {
+                return encode(error_body("NOT_FOUND", "原创草稿不存在或已被消费"));
+            }
+            if (state.market.at("custom_offer").value("draft_status", std::string{}) != "valid") {
+                return encode(error_body("INVALID_PHASE", "原创草稿已失效"));
+            }
+        } else {
+            const int min_reputation = snapshot.value("min_reputation", 0);
+            if (state.company.reputation < min_reputation) {
+                return encode(error_body("MODE_NOT_ALLOWED", "声望不足，无法接取该企划"));
+            }
+            if (snapshot.contains("required_works") && snapshot.at("required_works").is_array()) {
+                for (const auto& required : snapshot.at("required_works")) {
+                    if (!required.is_string()) {
+                        return encode(error_body("INVALID_STATE", "企划 required_works 必须是字符串数组"));
+                    }
+                    const std::string required_id = required.get<std::string>();
+                    bool found = false;
+                    if (state.archive.contains("works") && state.archive.at("works").is_array()) {
+                        for (const auto& record : state.archive.at("works")) {
+                            if (record.value("id", std::string{}) == required_id) found = true;
+                        }
+                    }
+                    if (!found) {
+                        return encode(error_body("MODE_NOT_ALLOWED", "缺少前置作品: " + required_id));
+                    }
+                }
+            }
         }
         const auto& allowed = snapshot.at("allowed_modes");
         bool mode_allowed = false;
@@ -1704,9 +1849,38 @@ std::string deliver_work(const std::string& input) {
     }
 }
 
+// M0 命令 11：abort_work。终止项目、释放归属、写入 Archive。
+// 违约扣罚系数仍属待标定参数：本实现记 0 并在回执标记 penalty_pending，
+// 不虚构比例，也不跳过归档与清理。
+std::string abort_work(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
+        if (!request.contains("work_id") || !request.at("work_id").is_string()) {
+            return encode(error_body("INVALID_INPUT", "work_id 必须是字符串"));
+        }
+        const std::string work_id = request.at("work_id").get<std::string>();
+        Project* work = find_work(state, work_id);
+        if (work == nullptr) return encode(error_body("NOT_FOUND", "项目不存在"));
+        if (work->status != "producing") return encode(error_body("INVALID_PHASE", "只有 producing 项目可以中止"));
+
+        const auto outcome = settle_project(state, *work, "aborted", true);
+        if (!outcome.ok) return encode(error_body(outcome.code, outcome.message));
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "中止后状态非法: " + errors.front()));
+        Json report = outcome.report;
+        report["penalty_pending"] = true;
+        return encode(Json{{"state", state}, {"report", report}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
 std::string buy_tv_service(const std::string& input) {
     try {
-        constexpr std::int64_t kTvServiceFee = 300000;
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
@@ -1717,18 +1891,45 @@ std::string buy_tv_service(const std::string& input) {
         if (work == nullptr) return encode(error_body("NOT_FOUND", "项目不存在"));
         if (work->mode != "committee") return encode(error_body("MODE_NOT_ALLOWED", "承制项目不能购买电视服务"));
         if (work->status != "producing") return encode(error_body("INVALID_PHASE", "只有 producing 项目可以购买"));
-        if (!work->tv_service.is_null()) return encode(error_body("INVALID_PHASE", "电视服务已购买"));
-        if (state.finance.solvency.state == "crisis") return encode(error_body("CRISIS_COMMITMENT_BLOCKED", "危机期间不能新增支出"));
-        if (state.finance.balance < kTvServiceFee) return encode(error_body("INSUFFICIENT_FUNDS", "现金不足"));
-        work->tv_service = Json{{"channel", "tv"}, {"paid_week", state.company.week}, {"fee", kTvServiceFee}};
-        if (std::find(work->channels.begin(), work->channels.end(), "tv") == work->channels.end()) work->channels.push_back("tv");
+        // DEC-COMM-002：已有电视台委员会成员时默认获得强力播出，不再收费。
+        bool tv_member = false;
+        if (work->committee_id) {
+            for (const auto& committee : state.committees) {
+                if (!committee.is_object() || committee.value("id", std::string{}) != *work->committee_id) continue;
+                for (const auto& member : committee.at("members")) {
+                    const Json* partner = find_partner(state, member.value("partner_id", std::string{}));
+                    if (partner != nullptr && partner->value("type", std::string{}) == "tv") tv_member = true;
+                }
+            }
+        }
+        if (tv_member) {
+            return encode(error_body("MODE_NOT_ALLOWED", "已有电视台委员会成员，默认获得播出曝光，无需购买"));
+        }
+        if (work->tv_service.is_object() && work->tv_service.value("purchased", false)) {
+            return encode(error_body("INVALID_PHASE", "电视服务已购买"));
+        }
+        if (state.finance.solvency.state == "crisis") {
+            return encode(error_body("CRISIS_COMMITMENT_BLOCKED", "危机期间不能新增支出"));
+        }
+        // 玩家只承担自身投资比例，其余成员视为共同出资；结算时不重复扣款。
+        const int percent = work->investment.value("percent", 0);
+        const std::int64_t paid = kTvServiceFeeTotal * percent / 100;
+        if (state.finance.balance < paid) return encode(error_body("INSUFFICIENT_FUNDS", "现金不足"));
+
+        work->tv_service = Json{{"purchased", true},
+                                {"channel", "tv"},
+                                {"paid_week", state.company.week},
+                                {"fee_total", kTvServiceFeeTotal},
+                                {"paid", paid},
+                                {"multiplier", kTvMultiplierPurchased}};
         state.finance.entries.push_back(LedgerEntry{
             "w" + std::to_string(state.company.week) + ".tv_service." + work->id, state.company.week, work->id,
-            "production", -kTvServiceFee, std::nullopt, "tv_service"});
-        state.finance.balance -= kTvServiceFee;
+            "distribution", -paid, std::nullopt, "tv_service"});
+        state.finance.balance -= paid;
         const auto errors = validate(state);
         if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "购买后状态非法: " + errors.front()));
-        return encode(Json{{"state", state}});
+        return encode(Json{{"state", state}, {"paid", paid},
+                           {"multiplier", kTvMultiplierPurchased}});
     } catch (const Json::exception&) {
         return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
     } catch (...) {
@@ -2018,6 +2219,10 @@ std::string end_company(const std::string& input) {
         GameState state = decode_state(request);
         if (state.company.status != "running") {
             return encode(error_body("COMPANY_ENDED", "公司已结束或正在关闭"));
+        }
+        // 关闭会把在制项目转 delivering，pending 事件将失去归属；必须先逐条处理。
+        if (!state.events.pending.empty()) {
+            return encode(error_body("INVALID_PHASE", "仍有待处理事件，处理完才能结束公司"));
         }
         Json closing = Json::array();
         for (const auto& work : state.works) closing.push_back(work.id);

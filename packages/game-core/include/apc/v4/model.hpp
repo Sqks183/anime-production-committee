@@ -77,7 +77,7 @@ struct Staff {
     std::array<bool, kAbilityCount> revealed_potential{};
     std::string talent_type;
     int64_t weekly_salary = 0;
-    int64_t project_fee = 0;
+    int64_t signing_fee = 0;    // 一次性签约费；project_fee 已由 M0 §14.6 废弃
     int fatigue = 0;
     int morale = 0;
     bool departure_warning = false;
