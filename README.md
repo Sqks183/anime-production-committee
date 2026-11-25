@@ -206,6 +206,7 @@ Sites 官方插件本地打包约束：单文件不超过 50 MiB，整体发布 
 
 - [贡献与协作指南](CONTRIBUTING.md)
 - [权威玩法决策登记册](docs/DECISION_LOG.md)
+- [数值参数总清单与标定查阅索引](docs/NUMERICAL_PARAMETERS_CATALOG.md)
 - [项目文档导航](docs/README.md)
 - [研究与审计成果目录](docs/RESEARCH_CATALOG.md)
 - [核心玩法重构框架（当前设计基线）](docs/CORE_GAMEPLAY_REBUILD_FRAMEWORK.md)
