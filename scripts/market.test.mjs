@@ -1,0 +1,162 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  Stream, GENRES, SCALES, HEAT_LEVELS, DEFAULT_PARAMS,
+  hashText, draw, drawBelow, PURPOSE,
+  generateOffer, initialMarket, expireOffers, releaseExpiredLocks,
+  topUpMarket, weeklyMarketStep, lockOffer, depositBase, startWorkCash,
+  isIdReuse, heatLevel,
+} from './lib/market-oracle.mjs'
+
+// ---- 随机原语（与 kernel.cpp / recruit-oracle 同一算法）----
+
+test('hashText FNV-1a 已知向量', () => {
+  assert.equal(hashText(''), 2166136261)
+  assert.equal(hashText('a'), 0xe40c292c)
+  assert.equal(hashText('foobar'), 0xbf9cf968)
+})
+
+test('draw 同坐标恒等、分量敏感、值域合法', () => {
+  const base = draw(42, 5, Stream.market, PURPOSE.offer_gen, 3)
+  assert.equal(base, draw(42, 5, Stream.market, PURPOSE.offer_gen, 3))
+  assert.notEqual(base, draw(43, 5, Stream.market, PURPOSE.offer_gen, 3))
+  assert.notEqual(base, draw(42, 6, Stream.market, PURPOSE.offer_gen, 3))
+  assert.notEqual(base, draw(42, 5, Stream.staff, PURPOSE.offer_gen, 3))
+  assert.notEqual(base, draw(42, 5, Stream.market, PURPOSE.heat, 3))
+  assert.notEqual(base, draw(42, 5, Stream.market, PURPOSE.offer_gen, 4))
+  assert.ok(base >= 0 && base <= 0xffffffff)
+})
+
+// ---- 企划生成 ----
+
+test('企划形状符合架构 §7.4 + §14.7 生命周期字段', () => {
+  const offer = generateOffer(42, 3, 0)
+  assert.ok(GENRES.includes(offer.genre))
+  assert.ok(SCALES.includes(offer.scale))
+  assert.ok(offer.episode_count > 0)
+  assert.ok(offer.contract_budget > 0)
+  assert.deepEqual(offer.allowed_modes, ['contract', 'committee'])
+  assert.ok(offer.expires_week >= 3 + DEFAULT_PARAMS.expiry_min && offer.expires_week <= 3 + DEFAULT_PARAMS.expiry_max)
+  assert.equal(offer.locked_until, null)
+  assert.equal(offer.lock_used, false)
+  assert.equal(offer.deposit_paid, 0)
+})
+
+test('企划 id 坐标决定：同周同 index 同 id，跨周不同（终身唯一基础）', () => {
+  const a = generateOffer(42, 3, 1)
+  const b = generateOffer(42, 3, 1)
+  const c = generateOffer(42, 4, 1)
+  assert.equal(a.id, b.id)
+  assert.notEqual(a.id, c.id)
+})
+
+test('初始市场 4 个，互不重复', () => {
+  const slots = initialMarket(42)
+  assert.equal(slots.length, 4)
+  assert.equal(new Set(slots.map((o) => o.id)).size, 4)
+})
+
+// ---- 自然补充与过期 ----
+
+function offer(id, expires, lockedUntil = null) {
+  return { id, expires_week: expires, locked_until: lockedUntil, lock_used: lockedUntil != null, deposit_paid: 0 }
+}
+
+test('自然补充保留存活企划逐字段不变，不清空重抽', () => {
+  const slots = [offer('o0', 5), offer('o1', 6)]
+  const snapshot = JSON.stringify(slots)
+  const result = topUpMarket(slots, 42, 1, { params: { weekly_add: 2 } })
+  for (const o of result.slots.filter((x) => ['o0', 'o1'].includes(x.id))) {
+    assert.equal(JSON.stringify(o), JSON.stringify(slots.find((b) => b.id === o.id)))
+  }
+  assert.equal(result.added_ids.length, 2)
+  assert.equal(JSON.stringify(slots), snapshot, '入参不被修改')
+})
+
+test('补充受上限 10 约束；满员不补充', () => {
+  const full = Array.from({ length: 10 }, (_, i) => offer('f' + i, 50))
+  const result = topUpMarket(full, 42, 1, { params: { weekly_add: 5 } })
+  assert.equal(result.added_ids.length, 0)
+  assert.equal(result.slots.length, 10)
+  const nine = full.slice(0, 9)
+  const r2 = topUpMarket(nine, 42, 1, { params: { weekly_add: 5 } })
+  assert.equal(r2.slots.length, 10)
+})
+
+test('自然过期边界：expires_week 当周有效，次周移除', () => {
+  const slots = [offer('e', 5)]
+  assert.equal(expireOffers(slots, 5).length, 1)
+  assert.equal(expireOffers(slots, 6).length, 0)
+})
+
+test('锁定保护：锁定期内自然过期不生效', () => {
+  const slots = [offer('L', 4, 7)]
+  assert.equal(expireOffers(slots, 6).length, 1)
+  assert.equal(expireOffers(slots, 7).length, 1)
+})
+
+test('锁定到期未接单：释放槽位，即使自然有效期未到', () => {
+  const slots = [offer('L', 20, 7), offer('N', 20)]
+  assert.deepEqual(releaseExpiredLocks(slots, 8).map((o) => o.id), ['N'])
+  assert.deepEqual(releaseExpiredLocks(slots, 7).map((o) => o.id), ['L', 'N'])
+})
+
+test('周结算市场步顺序：释放到期锁定 → 自然过期 → 补充', () => {
+  const slots = [offer('deadLock', 20, 4), offer('expired', 2), offer('alive', 30)]
+  const result = weeklyMarketStep(slots, 42, 5, { params: { weekly_add: 1 } })
+  const ids = result.slots.map((o) => o.id)
+  assert.ok(!ids.includes('deadLock'))
+  assert.ok(!ids.includes('expired'))
+  assert.ok(ids.includes('alive'))
+  assert.equal(result.added_ids.length, 1)
+})
+
+// ---- 定金锁定 ----
+
+test('lock_offer 成功语义：两周（Q4 确认）、终身标记、定金快照', () => {
+  const o = offer('o', 8)
+  const result = lockOffer(o, 5, 800000)
+  assert.equal(result.error, null)
+  assert.equal(result.offer.locked_until, 7)
+  assert.equal(result.offer.lock_used, true)
+  assert.equal(result.offer.deposit_paid, 800000)
+  assert.equal(o.lock_used, false, '入参不被修改')
+})
+
+test('终身一次：lock_used=true 拒绝再锁，即使锁定已到期', () => {
+  const o = { ...offer('o', 30), lock_used: true, locked_until: null, deposit_paid: 800000 }
+  assert.equal(lockOffer(o, 10, 800000).error, 'INVALID_INPUT')
+})
+
+test('已过期企划不可锁定', () => {
+  assert.equal(lockOffer(offer('o', 8), 9, 100).error, 'NOT_FOUND')
+})
+
+test('定金基数提案 = 生成时基础立项费用；抵扣 100% 不重复计成本', () => {
+  const o = generateOffer(42, 3, 0)
+  assert.equal(depositBase(o), o.contract_budget)
+  const locked = lockOffer(o, 3, 800000).offer
+  const cash = startWorkCash(locked, 10000000)
+  assert.equal(cash.deposit_applied, 800000)
+  assert.equal(cash.cash_due, 9200000)
+  const small = startWorkCash(locked, 500000)
+  assert.equal(small.cash_due, 0)
+  assert.equal(small.deposit_applied, 500000)
+})
+
+test('历史 id 复用被拒（防删除再生成绕过锁定历史）', () => {
+  const o = generateOffer(42, 3, 1)
+  assert.equal(isIdReuse(o.id, [o.id]), true)
+  assert.equal(isIdReuse(o.id, []), false)
+})
+
+// ---- 热度 ----
+
+test('热度坐标恒等、取值合法、随周/题材变化', () => {
+  const a = heatLevel(42, 3, 'action')
+  assert.equal(a, heatLevel(42, 3, 'action'))
+  assert.ok(HEAT_LEVELS.includes(a))
+  const levels = new Set()
+  for (let w = 0; w < 40; w++) levels.add(heatLevel(42, w, 'action'))
+  assert.ok(levels.size >= 2, '热度应随周变化')
+})

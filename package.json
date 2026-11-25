@@ -29,7 +29,9 @@
     "validate:blueprint": "node scripts/validate-blueprint.mjs docs/blueprints/tv_standard.blueprint.json",
     "validate:handover": "node scripts/check-handover-cases.mjs docs/fixtures/handover_cases.json",
     "build:v4": "node scripts/build-v4.mjs",
-    "test:v4": "node scripts/build-v4.mjs && node --test scripts/v4.test.mjs"
+    "test:v4": "node scripts/build-v4.mjs && node --test scripts/v4.test.mjs",
+    "validate:market": "node scripts/check-market-cases.mjs docs/fixtures/market_cases.json",
+    "test:market": "node --test scripts/market.test.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.65.1"
