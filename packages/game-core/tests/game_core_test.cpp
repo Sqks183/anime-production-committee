@@ -1,9 +1,9 @@
 #include "game_core.hpp"
 #include "game_rules.hpp"
-#include "game_validation.hpp"
 
 #include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 #include <gtest/gtest.h>
@@ -59,145 +59,6 @@ void expect_error(const std::string& output, const char* code) {
     ASSERT_EQ(result["error"].size(), 2U); EXPECT_EQ(result["error"]["code"], code);
     ASSERT_TRUE(result["error"]["message"].is_string()); EXPECT_FALSE(result["error"]["message"].get<std::string>().empty());
 }
-void expect_validation(const Json& state, bool valid) {
-    const auto before = state.dump();
-    const auto seed = state.at("seed");
-    const auto funds = state.at("company").at("funds");
-    const auto week = state.at("company").at("week");
-    if (valid) {
-        EXPECT_NO_THROW(apc::validate_state(state));
-    } else {
-        EXPECT_ANY_THROW(apc::validate_state(state));
-    }
-    EXPECT_EQ(state.dump(), before);
-    EXPECT_EQ(state.at("seed"), seed);
-    EXPECT_EQ(state.at("company").at("funds"), funds);
-    EXPECT_EQ(state.at("company").at("week"), week);
-}
-void expect_invalid_state(const Json& state) {
-    expect_validation(state, false);
-    const auto before = state.dump();
-    expect_error(apc::start_project(Json{{"state", state}, {"offer_id", "proj_ova_01"}, {"mode", "contract"}, {"investment_percent", 0}}.dump()), "INVALID_INPUT");
-    expect_error(apc::apply_decision(Json{{"state", state}, {"decision", {{"type", "end_company"}}}}.dump()), "INVALID_INPUT");
-    expect_error(apc::advance_week(Json{{"state", state}}.dump()), "INVALID_INPUT");
-    expect_error(apc::resolve_event(Json{{"state", state}, {"option_id", "option_dynamic"}}.dump()), "INVALID_INPUT");
-    expect_error(apc::calculate_result(Json{{"state", state}, {"scope", "company"}}.dump()), "INVALID_INPUT");
-    EXPECT_EQ(state.dump(), before);
-}
-using Mutations = std::vector<std::function<void(Json&)>>;
-void expect_invalid_mutations(const Json& base, const Mutations& mutations) {
-    expect_validation(base, true);
-    for (std::size_t i = 0; i < mutations.size(); ++i) {
-        SCOPED_TRACE(i);
-        auto state = base;
-        mutations[i](state);
-        expect_invalid_state(state);
-    }
-}
-void update_salary_preview(Json& state) {
-    if (state.at("preview").is_null()) return;
-    std::int64_t salary = 0;
-    for (const auto& person : state.at("company").at("staff")) salary += person.at("weekly_salary").get<std::int64_t>();
-    auto& preview = state["preview"];
-    preview["total_cost"] = preview.at("total_cost").get<std::int64_t>() - preview.at("costs").at("salary").get<std::int64_t>() + salary;
-    preview["costs"]["salary"] = salary;
-    preview["next_week"] = state.at("company").at("week").get<int>() + 1;
-}
-Json dynamic_staff(const std::string& id, const char* employment = "core") {
-    auto person = initialize().at("company").at("staff").at(0);
-    person["id"] = id;
-    person["name"] = "Independent creator " + id;
-    person["role"] = "scriptwriter";
-    person["employment"] = employment;
-    person["weekly_salary"] = std::string(employment) == "core" ? 1000 : 0;
-    person["project_fee"] = std::string(employment) == "temporary" ? 7500 : 0;
-    person["talent_type"] = "ordinary";
-    person["clues"] = Json::array({"Flexible background", "Independent practice"});
-    person["traits"] = Json::array({"patient"});
-    person["fatigue"] = 16;
-    person["morale"] = 50;
-    person["departure_warning"] = true;
-    for (auto ability : apc::rules::abilities) {
-        person["abilities"][ability] = 1;
-        person["potential"][ability] = 100;
-        person["experience"][ability] = 123;
-        person["revealed_potential"][ability] = true;
-    }
-    return person;
-}
-Json assignment(const Json& person, const char* focus = "planning") {
-    return {{"staff_id", person.at("id")}, {"role", person.at("role")}, {"focus", focus}};
-}
-Json configuration(const Json& assignments = Json::array()) {
-    return {{"assignments", assignments}, {"policy", "balanced"}, {"overtime", false}};
-}
-Json configure_with(const Json& state, const Json& config) {
-    return call(apc::apply_decision, {{"state", state}, {"decision", {{"type", "configure_stage"},
-        {"stage", state.at("project").at("current_stage")}, {"configuration", config}}}}).at("state");
-}
-Json dynamic_offer(const std::string& id) {
-    auto offer = initialize().at("offers").at(0);
-    offer["id"] = id;
-    offer["name"] = "Independent adaptation " + id;
-    offer["source"] = "game";
-    offer["scale"] = "short";
-    offer["contract_budget"] = 2469135;
-    offer["duration_weeks"] = 19;
-    offer["target_quality"] = 1;
-    offer["audience_base"] = 0;
-    offer["commercial_potential"] = 100;
-    offer["risk"] = "high";
-    for (auto stage : apc::rules::stages) offer["workloads"][stage] = 1;
-    return offer;
-}
-Json supplier() {
-    return {{"id", "supplier_dynamic"}, {"name", "Independent studio"}, {"specialties", {"planning", "management"}},
-        {"capacity", 100}, {"quality", 80}, {"speed", 7}, {"unit_price", 123}, {"reliability", 100}, {"unlocked", true}};
-}
-Json outsource_task() {
-    return {{"id", "task_dynamic"}, {"supplier_id", "supplier_dynamic"}, {"stage", "script"}, {"ability", "planning"},
-        {"work_total", 10}, {"work_done", 0}, {"mode", "normal"}, {"fee_paid", 1230}, {"due_week", 1000}, {"status", "active"}};
-}
-Json committee_member(const std::string& id, const std::string& channel = "publisher") {
-    return {{"id", id}, {"name", "Partner " + id}, {"channel", channel}};
-}
-void make_committee(Json& state, int investment = 30) {
-    auto& project = state["project"];
-    project["offer"]["allowed_modes"] = Json::array({"contract", "committee"});
-    project["mode"] = "committee";
-    project["investment_percent"] = investment;
-    project["committee_pressure"] = 40;
-    project["total_investment"] = project.at("offer").at("contract_budget").get<std::int64_t>() * 2;
-    project["finance"]["contract_received"] = 0;
-    project["finance"]["investment_paid"] = 1000000;
-    project.erase("committee");
-}
-Json pending_event() {
-    return {{"id", "event_dynamic"}, {"category", "budget"}, {"stage", "script"}, {"title", "Budget review"},
-        {"description", "A signed budget threshold was crossed."}, {"trigger", {{"metric", "cash_delta"}, {"value", -123}, {"threshold", -100}}},
-        {"options", Json::array({{{"id", "option_dynamic"}, {"label", "Review"}, {"cost", 0}, {"allows_reconfigure", true}, {"disabled_reason", nullptr}},
-            {{"id", "option_deferred"}, {"label", "Defer"}, {"cost", 25}, {"allows_reconfigure", false}, {"disabled_reason", "Unavailable"}}})}};
-}
-Json roster_snapshots(const Json& state) {
-    Json team = Json::array();
-    const auto append = [&team](const Json& roster) {
-        for (const auto& person : roster) team.push_back({{"staff_id", person.at("id")}, {"name", person.at("name")},
-            {"role", person.at("role")}, {"employment", person.at("employment")}, {"abilities", person.at("abilities")}});
-    };
-    append(state.at("company").at("staff"));
-    if (!state.at("project").is_null()) append(state.at("project").at("temporary_staff"));
-    return team;
-}
-void expect_mode_blocked(Method method, const Json& request, bool specialty = false) {
-    const auto before = request.dump();
-    const auto output = method(before);
-    expect_error(output, "MODE_NOT_ALLOWED");
-    if (specialty) {
-        const auto message = Json::parse(output).at("error").at("message").get<std::string>();
-        EXPECT_TRUE(message.find("specialty") != std::string::npos || message.find(u8"专业") != std::string::npos) << message;
-    }
-    EXPECT_EQ(request.dump(), before);
-}
 }
 
 TEST(Initialize, V3CompanyStateAndFourOffers) {
@@ -208,8 +69,7 @@ TEST(Initialize, V3CompanyStateAndFourOffers) {
         EXPECT_EQ(state.at("company").at("week"), 0); EXPECT_EQ(state.at("company").at("status"), "running");
         EXPECT_TRUE(state.at("company").at("end_reason").is_null());
         EXPECT_EQ(state.at("company").at("funds"), 2000000); EXPECT_EQ(state.at("company").at("initial_funds"), 2000000);
-        EXPECT_EQ(state.at("company").at("reputation"), 100); EXPECT_EQ(state.at("company").at("staff").size(), 4U);
-    EXPECT_TRUE(state.at("company").at("reputation_log").is_array()); EXPECT_TRUE(state.at("company").at("reputation_log").empty());
+        EXPECT_EQ(state.at("company").at("reputation"), 0); EXPECT_EQ(state.at("company").at("staff").size(), 4U);
         EXPECT_EQ(state.at("offers").size(), 4U); EXPECT_TRUE(state.at("project").is_null());
         EXPECT_TRUE(state.at("pending_event").is_null()); EXPECT_TRUE(state.at("history").empty());
         EXPECT_TRUE(state.at("recruitment_pool").empty()); EXPECT_TRUE(state.at("suppliers").empty());
@@ -370,7 +230,6 @@ TEST(AdvanceWeek, QualityCarriesOverCappedByPreviousStage) {
 TEST(AdvanceWeek, DeadlineAndBankruptcyAndTimeLimit) {
     auto state = configure(start());
     state["project"]["deadline_week"] = 2;
-    state["project"]["offer"]["duration_weeks"] = 2;
     const auto late = play_weeks(state, 2);
     EXPECT_EQ(late.at("phase"), "project_ready");
     EXPECT_EQ(late.at("project").at("delivery_reason"), "deadline");
@@ -407,7 +266,6 @@ TEST(AdvanceWeek, DeadlineAndBankruptcyAndTimeLimit) {
 TEST(CalculateResult, DeadlinePenaltyGolden) {
     auto state = configure(start());
     state["project"]["deadline_week"] = 2;
-    state["project"]["offer"]["duration_weeks"] = 2;
     state = play_weeks(state, 2);
     const auto output = call(apc::calculate_result, {{"state", state}, {"scope", "project"}});
     const auto& receipt = output.at("result");
@@ -420,8 +278,7 @@ TEST(CalculateResult, DeadlinePenaltyGolden) {
     EXPECT_EQ(receipt.at("id"), "proj_ova_01");
     EXPECT_EQ(receipt.at("team").size(), 4U);
     EXPECT_EQ(output.at("state").at("company").at("funds"), 4780000);
-    EXPECT_EQ(output.at("state").at("company").at("reputation"), 95);
-    EXPECT_EQ(output.at("state").at("company").at("reputation_log").size(), 1U);
+    EXPECT_EQ(output.at("state").at("company").at("reputation"), 0);
     EXPECT_EQ(output.at("state").at("phase"), "project_settled");
     EXPECT_TRUE(output.at("state").at("project").is_null());
     EXPECT_EQ(output.at("state").at("last_project_id"), "proj_ova_01");
@@ -447,230 +304,6 @@ TEST(CalculateResult, InvariantsAndReturnToMarket) {
     expect_error(apc::calculate_result(Json{{"state", start()}, {"scope", "company"}}.dump()), "INVALID_PHASE");
     expect_error(apc::calculate_result(Json{{"state", initialize()}, {"scope", "unknown"}}.dump()), "INVALID_INPUT");
     expect_error(apc::calculate_result(Json{{"state", initialize()}, {"scope", "company"}}.dump()), "INVALID_PHASE");
-}
-namespace {
-// 五阶段各 1 工作量、19 周工期：能在截止周前跑完全部阶段，交付原因为 completed。
-Json completed_ready(std::uint32_t seed = 12345, const char* id = "dynamic_reputation", int target_quality = 1) {
-    auto idle = initialize(seed);
-    auto offer = dynamic_offer(id);
-    offer["target_quality"] = target_quality;
-    idle["offers"][0] = offer;
-    expect_validation(idle, true);
-    const auto state = call(apc::start_project, {{"state", idle}, {"offer_id", id}, {"mode", "contract"}, {"investment_percent", 0}}).at("state");
-    return play_until_ready(state);
-}
-// 两周工期配实际需要的周数：必然按 deadline 违约交付，用于覆盖负向变化。
-Json deadline_ready(Json idle = initialize()) {
-    auto state = configure(call(apc::start_project, {{"state", idle}, {"offer_id", "proj_ova_01"}, {"mode", "contract"}, {"investment_percent", 0}}).at("state"));
-    state["project"]["deadline_week"] = 2;
-    state["project"]["offer"]["duration_weeks"] = 2;
-    return play_weeks(state, 2);
-}
-Json closed_ready() {
-    auto state = play_weeks(configure(start()), 1);
-    return call(apc::apply_decision, {{"state", state}, {"decision", {{"type", "end_company"}}}}).at("state");
-}
-}
-TEST(Reputation, InitialValueIsOneHundred) {
-    for (auto seed : {0U, 12345U, 0xffffffffU}) {
-        const auto state = initialize(seed);
-        EXPECT_EQ(state.at("company").at("reputation"), 100);
-        expect_validation(state, true);
-    }
-}
-TEST(Reputation, CompletedSettlementAboveTargetAddsTen) {
-    const auto ready = completed_ready();
-    EXPECT_EQ(ready.at("project").at("delivery_reason"), "completed");
-    const auto output = call(apc::calculate_result, {{"state", ready}, {"scope", "project"}});
-    EXPECT_GE(output.at("result").at("quality_score"), 1);
-    EXPECT_EQ(output.at("state").at("company").at("reputation"), 110);
-    expect_validation(output.at("state"), true);
-}
-TEST(Reputation, CompletedSettlementBelowTargetAddsThree) {
-    const auto ready = completed_ready(12345, "dynamic_below_target", 100);
-    EXPECT_EQ(ready.at("project").at("delivery_reason"), "completed");
-    const auto output = call(apc::calculate_result, {{"state", ready}, {"scope", "project"}});
-    EXPECT_LT(output.at("result").at("quality_score"), 100);
-    EXPECT_EQ(output.at("state").at("company").at("reputation"), 103);
-    expect_validation(output.at("state"), true);
-}
-TEST(Reputation, DeadlineSettlementSubtractsFive) {
-    const auto ready = deadline_ready();
-    EXPECT_EQ(ready.at("project").at("delivery_reason"), "deadline");
-    const auto output = call(apc::calculate_result, {{"state", ready}, {"scope", "project"}});
-    EXPECT_EQ(output.at("state").at("company").at("reputation"), 95);
-    expect_validation(output.at("state"), true);
-}
-TEST(Reputation, ClosedDeliveryHasNoReputationRuleAndStaysUnchanged) {
-    const auto ready = closed_ready();
-    EXPECT_EQ(ready.at("project").at("delivery_reason"), "company_closed");
-    const auto output = call(apc::calculate_result, {{"state", ready}, {"scope", "project"}});
-    EXPECT_EQ(output.at("state").at("company").at("reputation"), 100);
-    EXPECT_TRUE(output.at("state").at("company").at("reputation_log").empty());
-    expect_validation(output.at("state"), true);
-}
-TEST(Reputation, FloorAtZeroNeverNegative) {
-    for (auto start_value : {0, 3, 5}) {
-        SCOPED_TRACE(start_value);
-        auto ready = deadline_ready();
-        ready["company"]["reputation"] = start_value;
-        ready["company"]["reputation_log"] = Json::array();
-        expect_validation(ready, true);
-        const auto output = call(apc::calculate_result, {{"state", ready}, {"scope", "project"}});
-        EXPECT_EQ(output.at("state").at("company").at("reputation"), 0);
-        expect_validation(output.at("state"), true);
-        const auto& log = output.at("state").at("company").at("reputation_log");
-        EXPECT_EQ(log.size(), start_value == 0 ? 0U : 1U);
-        if (start_value != 0) EXPECT_EQ(log.at(0).at("delta"), -start_value);
-    }
-}
-TEST(Reputation, NoUpperCapBeforeTheSafeIntegerCeiling) {
-    for (auto start_value : {max_i - 10, std::int64_t{9007199254740000}}) {
-        SCOPED_TRACE(start_value);
-        auto ready = completed_ready();
-        ready["company"]["reputation"] = start_value;
-        ready["company"]["reputation_log"] = Json::array();
-        expect_validation(ready, true);
-        const auto output = call(apc::calculate_result, {{"state", ready}, {"scope", "project"}});
-        EXPECT_EQ(output.at("state").at("company").at("reputation"), start_value + 10);
-        expect_validation(output.at("state"), true);
-    }
-    auto idle = initialize();
-    idle["company"]["reputation"] = max_i;
-    idle["company"]["reputation_log"] = Json::array();
-    expect_validation(idle, true);
-}
-TEST(Reputation, SafeIntegerCeilingOverflowIsRejectedAtomically) {
-    auto ready = completed_ready();
-    ready["company"]["reputation"] = max_i;
-    ready["company"]["reputation_log"] = Json::array();
-    expect_validation(ready, true);
-    const auto before = ready.dump();
-    expect_error(apc::calculate_result(Json{{"state", ready}, {"scope", "project"}}.dump()), "INVALID_INPUT");
-    EXPECT_EQ(ready.dump(), before);
-}
-TEST(Reputation, InvalidReputationInputsWriteNothing) {
-    expect_invalid_mutations(initialize(), {
-        [](Json& s) { s["company"]["reputation"] = -1; },
-        [](Json& s) { s["company"]["reputation"] = -max_i; },
-        [](Json& s) { s["company"]["reputation"] = 1.5; },
-        [](Json& s) { s["company"]["reputation"] = nullptr; },
-        [](Json& s) { s["company"]["reputation"] = "100"; },
-        [](Json& s) { s["company"]["reputation"] = max_i + 1; }
-    });
-}
-TEST(Reputation, DoesNotChangeWithoutASettlement) {
-    auto state = initialize();
-    for (int week = 1; week <= 8; ++week) {
-        state = advance(state).at("state");
-        EXPECT_EQ(state.at("company").at("week"), week);
-        EXPECT_EQ(state.at("company").at("reputation"), 100);
-        EXPECT_TRUE(state.at("company").at("reputation_log").empty());
-    }
-    const auto producing = play_weeks(configure(start()), 3);
-    EXPECT_EQ(producing.at("company").at("week"), 3);
-    EXPECT_EQ(producing.at("company").at("reputation"), 100);
-    EXPECT_TRUE(producing.at("company").at("reputation_log").empty());
-}
-TEST(Reputation, LogRecordsReasonAndEffectiveDelta) {
-    const auto output = call(apc::calculate_result, {{"state", completed_ready(7)}, {"scope", "project"}});
-    const auto& log = output.at("state").at("company").at("reputation_log");
-    ASSERT_EQ(log.size(), 1U);
-    EXPECT_EQ(log.at(0).at("week"), output.at("state").at("company").at("week"));
-    EXPECT_EQ(log.at(0).at("reason"), "project_settled_success");
-    EXPECT_EQ(log.at(0).at("delta"), 10);
-    EXPECT_EQ(log.at(0).at("reputation_after"), 110);
-    const auto below = call(apc::calculate_result, {{"state", completed_ready(7, "dynamic_log_below", 100)}, {"scope", "project"}});
-    EXPECT_EQ(below.at("state").at("company").at("reputation_log").at(0).at("reason"), "project_settled_below_target");
-    EXPECT_EQ(below.at("state").at("company").at("reputation_log").at(0).at("delta"), 3);
-    const auto late = call(apc::calculate_result, {{"state", deadline_ready()}, {"scope", "project"}});
-    EXPECT_EQ(late.at("state").at("company").at("reputation_log").at(0).at("reason"), "project_settled_deadline");
-    EXPECT_EQ(late.at("state").at("company").at("reputation_log").at(0).at("delta"), -5);
-    expect_validation(late.at("state"), true);
-}
-TEST(Reputation, LogAccumulatesAcrossProjects) {
-    const auto first = call(apc::calculate_result, {{"state", completed_ready()}, {"scope", "project"}}).at("state");
-    auto market = call(apc::apply_decision, {{"state", first}, {"decision", {{"type", "return_to_market"}}}}).at("state");
-    EXPECT_EQ(market.at("company").at("reputation_log").size(), 1U);
-    market["offers"][0] = dynamic_offer("dynamic_reputation_second");
-    expect_validation(market, true);
-    const auto again = call(apc::start_project, {{"state", market}, {"offer_id", "dynamic_reputation_second"}, {"mode", "contract"}, {"investment_percent", 0}}).at("state");
-    const auto output = call(apc::calculate_result, {{"state", play_until_ready(again)}, {"scope", "project"}});
-    const auto& log = output.at("state").at("company").at("reputation_log");
-    ASSERT_EQ(log.size(), 2U);
-    EXPECT_EQ(log.at(1).at("reason"), "project_settled_success");
-    EXPECT_EQ(log.at(1).at("reputation_after"), 120);
-    EXPECT_GE(log.at(1).at("week").get<std::int64_t>(), log.at(0).at("week").get<std::int64_t>());
-    EXPECT_EQ(output.at("state").at("company").at("reputation"), 120);
-    expect_validation(output.at("state"), true);
-}
-TEST(Reputation, MissingLogIsAValidLegacySaveAndRegrowsOnSettlement) {
-    auto ready = deadline_ready();
-    ready["company"].erase("reputation_log");
-    expect_validation(ready, true);
-    // optional 字段只有缺席与数组两种合法写法，null 不是"没有历史"的合法拼写（同 scout_pity）。
-    auto nulled = ready;
-    nulled["company"]["reputation_log"] = nullptr;
-    expect_invalid_state(nulled);
-    // 空账本只表示没有记账，校验器不会用它反推声望应当是多少。
-    auto blank = ready;
-    blank["company"]["reputation_log"] = Json::array();
-    expect_validation(blank, true);
-    const auto output = call(apc::calculate_result, {{"state", ready}, {"scope", "project"}});
-    const auto& log = output.at("state").at("company").at("reputation_log");
-    ASSERT_EQ(log.size(), 1U);
-    EXPECT_EQ(log.at(0).at("reason"), "project_settled_deadline");
-    EXPECT_EQ(log.at(0).at("reputation_after"), 95);
-    expect_validation(output.at("state"), true);
-    // 初始值调整之前写出的存档（声望 0、无日志）仍然合法并继续记账。
-    auto legacy = deadline_ready();
-    legacy["company"]["reputation"] = 0;
-    legacy["company"].erase("reputation_log");
-    expect_validation(legacy, true);
-    EXPECT_EQ(call(apc::calculate_result, {{"state", legacy}, {"scope", "project"}}).at("state").at("company").at("reputation"), 0);
-}
-TEST(Reputation, LogTamperingIsRejectedWithoutAnyWrite) {
-    const auto settled = call(apc::calculate_result, {{"state", completed_ready()}, {"scope", "project"}}).at("state");
-    auto base = settled;
-    base["company"]["reputation"] = 120;
-    base["company"]["reputation_log"].push_back({{"week", 5}, {"reason", "project_settled_success"}, {"delta", 10}, {"reputation_after", 120}});
-    expect_validation(base, true);
-    expect_invalid_mutations(base, {
-        [](Json& s) { s["company"]["reputation_log"] = nullptr; },
-        [](Json& s) { s["company"]["reputation_log"] = Json::object(); },
-        [](Json& s) { s["company"]["reputation_log"] = Json::array({Json::object()}); },
-        [](Json& s) { s["company"]["reputation_log"][0].erase("reason"); },
-        [](Json& s) { s["company"]["reputation_log"][0].erase("delta"); },
-        [](Json& s) { s["company"]["reputation_log"][0]["reason"] = ""; },
-        [](Json& s) { s["company"]["reputation_log"][0]["reason"] = nullptr; },
-        [](Json& s) { s["company"]["reputation_log"][0]["delta"] = 0; },
-        [](Json& s) { s["company"]["reputation_log"][0]["delta"] = 1.5; },
-        [](Json& s) { s["company"]["reputation_log"][0]["delta"] = max_i + 1; },
-        [](Json& s) { s["company"]["reputation_log"][0]["week"] = -1; },
-        [](Json& s) { s["company"]["reputation_log"][0]["week"] = 521; },
-        [](Json& s) { s["company"]["reputation_log"][0]["reputation_after"] = 119; },
-        [](Json& s) { s["company"]["reputation_log"][0]["reputation_after"] = -1; },
-        // 末笔必须等于当前声望，且逐笔前后值衔接。
-        [](Json& s) { s["company"]["reputation"] = 121; },
-        [](Json& s) { s["company"]["reputation_log"][1]["reputation_after"] = 131; },
-        [](Json& s) { s["company"]["reputation_log"][1]["delta"] = 11; },
-        // 周次只能前进。
-        [](Json& s) { s["company"]["reputation_log"][1]["week"] = 4; },
-        // 追加序列只能挂在末尾：把后一笔插到前面会打断周次与前后值衔接。
-        [](Json& s) { auto entry = s["company"]["reputation_log"][1]; s["company"]["reputation_log"].erase(1); s["company"]["reputation_log"].insert(s["company"]["reputation_log"].begin(), entry); },
-        // 声望降到钳制线以下没有合法记录可表达。
-        [](Json& s) { s["company"]["reputation"] = 110; s["company"]["reputation_log"][1]["reputation_after"] = 110; s["company"]["reputation_log"][1]["delta"] = 0; }
-    });
-}
-TEST(Reputation, SameSeedAndActionsProduceSameResult) {
-    for (auto seed : {0U, 12345U, 0xffffffffU}) {
-        const auto first = Json::parse(apc::calculate_result(Json{{"state", completed_ready(seed)}, {"scope", "project"}}.dump()));
-        play_until_ready(configure(start(4242)));
-        const auto second = Json::parse(apc::calculate_result(Json{{"state", completed_ready(seed)}, {"scope", "project"}}.dump()));
-        EXPECT_EQ(first, second) << "seed " << seed;
-        EXPECT_EQ(second.at("state").at("company").at("reputation"), 110);
-        EXPECT_EQ(second.at("state").at("company").at("reputation_log").size(), 1U);
-    }
 }
 TEST(Endings, VoluntaryEndSettlesPendingProjectThenSummary) {
     auto state = play_weeks(configure(start()), 1);
@@ -769,7 +402,6 @@ namespace {
 Json settledBase() {
     auto state = configure(start(3));
     state["project"]["deadline_week"] = 2;
-    state["project"]["offer"]["duration_weeks"] = 2;
     state = play_weeks(state, 2);
     return call(apc::calculate_result, {{"state", state}, {"scope", "project"}}).at("state");
 }
@@ -811,9 +443,9 @@ TEST(Validation, NumericBoundsAndSchema) {
         [](Json& s) { s["company"]["status"] = "ended"; },
         [](Json& s) { s["company"]["status"] = "closing"; s["company"]["end_reason"] = "time_limit"; },
         [](Json& s) { s["company"]["staff"][0]["id"] = "staff_99"; },
-        [](Json& s) { s["company"]["staff"][0]["weekly_salary"] = -1; },
+        [](Json& s) { s["company"]["staff"][0]["weekly_salary"] = 1000; },
         [](Json& s) { s["company"]["staff"][0]["morale"] = 101; },
-        [](Json& s) { s["company"]["staff"][1]["abilities"]["drawing"] = 101; },
+        [](Json& s) { s["company"]["staff"][1]["abilities"]["drawing"] = 1; },
         [](Json& s) { s["company"]["staff"][2]["clues"] = Json::array(); },
         [](Json& s) { s["project"]["mode"] = "committee"; },
         [](Json& s) { s["project"]["investment_percent"] = 5; },
@@ -825,7 +457,7 @@ TEST(Validation, NumericBoundsAndSchema) {
         [](Json& s) { s["project"]["committee_pressure"] = Json::object(); },
         [](Json& s) { s["project"]["temporary_staff"] = Json::array({Json::object()}); },
         [](Json& s) { s["project"]["outsourcing"] = Json::array({Json::object()}); },
-        [](Json& s) { s["project"]["finance"]["costs"]["events"] = -1; },
+        [](Json& s) { s["project"]["finance"]["costs"]["events"] = 1; },
         [](Json& s) { s["project"]["finance"]["investment_paid"] = 1; },
         [](Json& s) { s["project"]["finance"]["commercial_share_received"] = 1; },
         [](Json& s) { s["project"]["start_week"] = 3; },
@@ -844,11 +476,11 @@ TEST(Validation, NumericBoundsAndSchema) {
             expect_error(method(Json{{"state", state}}.dump()), "INVALID_INPUT");
     }
     const std::vector<std::function<void(Json&)>> idle_mutations = {
-        [](Json& s) { s["offers"][0]["id"] = ""; },
-        [](Json& s) { s["offers"][0]["allowed_modes"] = Json::array({"contract", "contract"}); },
+        [](Json& s) { s["offers"][0]["id"] = "unknown"; },
+        [](Json& s) { s["offers"][0]["allowed_modes"] = Json::array({"contract", "committee"}); },
         [](Json& s) { s["offers"][1]["id"] = s["offers"][0]["id"]; },
         [](Json& s) { s["offers"].erase(0); },
-        [](Json& s) { s["offers"][2]["contract_budget"] = 1; },
+        [](Json& s) { s["offers"][2]["total_investment"] = 1; },
         [](Json& s) { s["preview"]["total_cost"] = 99999; }
     };
     for (const auto& mutate : idle_mutations) {
@@ -896,869 +528,151 @@ TEST(Validation, InvalidUtf8IsCaught) {
     expect_error(apc::initialize_game(input), "INVALID_INPUT");
 }
 
-TEST(ValidatorCompatibility, DynamicRosterSizesAndFieldsAreNotCatalogBound) {
-    for (int count : {0, 1, 4, 7}) {
-        SCOPED_TRACE(count);
-        auto state = initialize();
-        state["company"]["staff"] = Json::array();
-        for (int i = 0; i < count; ++i) state["company"]["staff"].push_back(dynamic_staff("creator_" + std::to_string(i)));
-        update_salary_preview(state);
-        expect_validation(state, true);
-        const auto output = advance(state);
-        EXPECT_EQ(output.at("report").at("costs").at("salary"), count * 1000);
-        EXPECT_EQ(output.at("state").at("company").at("funds"), 2000000 - 30000 - count * 1000);
-        expect_validation(output.at("state"), true);
-    }
-    auto state = initialize();
-    state["company"]["staff"][0]["id"] = "staff_99";
-    state["company"]["staff"][0]["weekly_salary"] = 1000;
-    state["company"]["staff"][1]["abilities"]["drawing"] = 1;
-    update_salary_preview(state);
-    expect_validation(state, true);
-    auto producing = start();
-    producing["project"]["finance"]["costs"]["events"] = 1;
-    expect_validation(producing, true);
-}
-
-TEST(ValidatorCompatibility, StaffFieldBoundsAndEmploymentConstraints) {
-    auto state = start();
-    state["company"]["staff"].push_back(dynamic_staff("extra_core"));
-    auto& person = state["company"]["staff"].back();
-    person["weekly_salary"] = max_i - 180000;
-    person["clues"] = Json::array({"One clue"});
-    person["traits"] = Json::array();
-    for (auto ability : apc::rules::abilities) {
-        person["abilities"][ability] = 100;
-        person["potential"][ability] = 100;
-        person["experience"][ability] = max_i;
-    }
-    expect_validation(state, true);
-    person = dynamic_staff("extra_core");
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["company"]["staff"].back()["id"] = " "; },
-        [](Json& s) { s["company"]["staff"].push_back(s["company"]["staff"].back()); },
-        [](Json& s) { s["company"]["staff"].back()["name"] = ""; },
-        [](Json& s) { s["company"]["staff"].back()["role"] = "producer"; },
-        [](Json& s) { s["company"]["staff"].back()["employment"] = "temporary"; s["company"]["staff"].back()["weekly_salary"] = 0; },
-        [](Json& s) { s["company"]["staff"].back()["project_fee"] = 1; },
-        [](Json& s) { s["company"]["staff"].back()["weekly_salary"] = -1; },
-        [](Json& s) { s["company"]["staff"].back()["abilities"]["drawing"] = 101; },
-        [](Json& s) { s["company"]["staff"].back()["potential"]["drawing"] = 0; },
-        [](Json& s) { s["company"]["staff"].back()["potential"]["drawing"] = 101; },
-        [](Json& s) { s["company"]["staff"].back()["experience"]["drawing"] = -1; },
-        [](Json& s) { s["company"]["staff"].back()["experience"]["drawing"] = max_i + 1; },
-        [](Json& s) { s["company"]["staff"].back()["revealed_potential"]["drawing"] = 1; },
-        [](Json& s) { s["company"]["staff"].back()["talent_type"] = "legendary"; },
-        [](Json& s) { s["company"]["staff"].back()["clues"] = Json::array(); },
-        [](Json& s) { s["company"]["staff"].back()["clues"] = Json::array({"a", "b", "c"}); },
-        [](Json& s) { s["company"]["staff"].back()["traits"] = Json::array({1}); },
-        [](Json& s) { s["company"]["staff"].back()["fatigue"] = -1; },
-        [](Json& s) { s["company"]["staff"].back()["morale"] = 101; },
-        [](Json& s) { s["company"]["staff"].back()["departure_warning"] = 0; },
-        [](Json& s) { s["company"]["staff"].back()["abilities"].erase("planning"); }
-    });
-}
-
-TEST(ValidatorCompatibility, RecruitmentAcceptsBothEmploymentsWithoutPayroll) {
-    auto state = initialize();
-    state["recruitment_pool"] = Json::array({dynamic_staff("candidate_core"), dynamic_staff("candidate_temp", "temporary")});
-    expect_validation(state, true);
-    const auto output = advance(state);
-    EXPECT_EQ(output.at("report").at("costs").at("salary"), 150000);
-    EXPECT_EQ(output.at("state").at("company").at("funds"), 1820000);
-    expect_validation(output.at("state"), true);
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["recruitment_pool"][0]["project_fee"] = 1; },
-        [](Json& s) { s["recruitment_pool"][0]["weekly_salary"] = -1; },
-        [](Json& s) { s["recruitment_pool"][1]["weekly_salary"] = 1; },
-        [](Json& s) { s["recruitment_pool"][1]["project_fee"] = -1; },
-        [](Json& s) { s["recruitment_pool"].push_back(s["recruitment_pool"][0]); },
-        [](Json& s) { s["recruitment_pool"][0]["id"] = s["company"]["staff"][0]["id"]; }
-    });
-}
-
-TEST(ValidatorCompatibility, TemporaryAndCoreConfigurationReferencesAreGlobal) {
-    auto state = start();
-    state["company"]["staff"].push_back(dynamic_staff("core_dynamic"));
-    state["project"]["temporary_staff"] = Json::array({dynamic_staff("temp_dynamic", "temporary")});
-    state["recruitment_pool"] = Json::array({dynamic_staff("pool_core"), dynamic_staff("pool_temp", "temporary")});
-    state["project"]["stages"]["script"]["recommended_configuration"] = configuration(Json::array({
-        assignment(state.at("company").at("staff").back()), assignment(state.at("project").at("temporary_staff")[0])}));
-    expect_validation(state, true);
-    const auto active = configure(state);
-    expect_validation(active, true);
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["project"]["temporary_staff"][0]["id"] = "staff_01"; },
-        [](Json& s) { s["recruitment_pool"][0]["id"] = "temp_dynamic"; },
-        [](Json& s) { s["recruitment_pool"][1]["id"] = "core_dynamic"; },
-        [](Json& s) { s["project"]["temporary_staff"].push_back(s["project"]["temporary_staff"][0]); },
-        [](Json& s) { s["project"]["temporary_staff"][0]["employment"] = "core"; s["project"]["temporary_staff"][0]["project_fee"] = 0; },
-        [](Json& s) { s["project"]["temporary_staff"][0]["weekly_salary"] = 1; },
-        [](Json& s) { s["project"]["stages"]["script"]["recommended_configuration"]["assignments"][0]["staff_id"] = "pool_core"; },
-        [](Json& s) { s["project"]["stages"]["script"]["recommended_configuration"]["assignments"][0]["role"] = "director"; }
-    });
-    expect_invalid_mutations(active, {
-        [](Json& s) { s["project"]["stages"]["script"]["configuration"]["assignments"][1]["staff_id"] = "missing_temp"; },
-        [](Json& s) { s["project"]["stages"]["script"]["configuration"]["assignments"][1]["role"] = "animator"; },
-        [](Json& s) { auto& a = s["project"]["stages"]["script"]["configuration"]["assignments"]; a.push_back(a[0]); }
-    });
-}
-
-TEST(ValidatorCompatibility, DynamicOffersAndTheirOwnFields) {
-    auto state = initialize();
-    for (int i = 0; i < 4; ++i) state["offers"][i] = dynamic_offer("opportunity_" + std::to_string(i));
-    state["offers"][0]["allowed_modes"] = Json::array({"contract", "committee"});
-    state["offers"][1]["source"] = "original";
-    state["offers"][1]["allowed_modes"] = Json::array({"committee"});
-    state["offers"][2]["duration_weeks"] = max_i;
-    state["offers"][2]["workloads"]["script"] = max_i;
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["offers"][0]["id"] = ""; },
-        [](Json& s) { s["offers"][0]["name"] = ""; },
-        [](Json& s) { s["offers"][0]["source"] = "film"; },
-        [](Json& s) { s["offers"][0]["scale"] = "feature"; },
-        [](Json& s) { s["offers"][0]["risk"] = "extreme"; },
-        [](Json& s) { s["offers"][0]["duration_weeks"] = 0; },
-        [](Json& s) { s["offers"][0]["duration_weeks"] = 1.5; },
-        [](Json& s) { s["offers"][0]["target_quality"] = 101; },
-        [](Json& s) { s["offers"][0]["audience_base"] = -1; },
-        [](Json& s) { s["offers"][0]["commercial_potential"] = 101; },
-        [](Json& s) { s["offers"][0]["contract_budget"] = 2469136; },
-        [](Json& s) { s["offers"][0]["contract_budget"] = -1; },
-        [](Json& s) { s["offers"][0]["workloads"]["animation_check"] = 0; },
-        [](Json& s) { s["offers"][0]["workloads"].erase("postproduction"); },
-        [](Json& s) { s["offers"][0]["allowed_modes"] = Json::array(); },
-        [](Json& s) { s["offers"][0]["allowed_modes"] = Json::array({"contract", "contract"}); },
-        [](Json& s) { s["offers"][1]["allowed_modes"] = Json::array({"contract", "committee"}); },
-        [](Json& s) { s["offers"][0]["previous_work_id"] = s["offers"][0]["id"]; },
-        [](Json& s) { s["offers"][0]["previous_work_id"] = "missing_work"; },
-        [](Json& s) { s["offers"][1]["id"] = s["offers"][0]["id"]; },
-        [](Json& s) { s["offers"].push_back(dynamic_offer("fifth")); }
-    });
-    for (std::int64_t total : {std::int64_t{0}, std::int64_t{4}, std::int64_t{5}, max_i}) {
-        auto bounded = state;
-        bounded["offers"][0]["contract_budget"] = total;
-        expect_validation(bounded, true);
-    }
-}
-
-TEST(ValidatorCompatibility, OptionalOfferCompanyAndCostFields) {
-    auto state = initialize();
-    state["company"]["scout_pity"] = {{"since_sr", 0}, {"since_ssr", max_i}};
-    auto& offer = state["custom_offer"];
-    offer = dynamic_offer("customized");
-    offer["origin"] = "custom";
-    offer["style"] = "meme";
-    offer["min_reputation"] = 0;
-    offer["allowed_modes"] = Json::array({"contract", "committee"});
-    offer["committee_members"] = Json::array({committee_member("publisher_a", "publisher"), committee_member("publisher_b", "music")});
-    offer["channel_potentials"] = {{"bd", 0}, {"publisher", 100}, {"toy", 20}, {"music", 30}, {"tv_broadcast", 40}};
-    offer["required_works"] = Json::array({{{"rating", "A"}}, {{"rating", "A"}, {"source", "game"}}});
-    state["offers"][2]["min_reputation"] = 200;
-    state["offers"][3]["min_reputation"] = 300;
-    state["company"]["finance"]["costs"]["development"] = 123;
-    state["company"]["finance"]["costs"]["distribution"] = 456;
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["company"]["scout_pity"] = nullptr; },
-        [](Json& s) { s["company"]["scout_pity"]["since_sr"] = -1; },
-        [](Json& s) { s["company"]["scout_pity"].erase("since_ssr"); },
-        [](Json& s) { s["custom_offer"]["origin"] = "unknown"; },
-        [](Json& s) { s["custom_offer"]["style"] = nullptr; },
-        [](Json& s) { s["custom_offer"]["style"] = "unknown"; },
-        [](Json& s) { s["custom_offer"]["origin"] = "market"; },
-        [](Json& s) { s["custom_offer"]["scale"] = "tv"; },
-        [](Json& s) { s["custom_offer"]["min_reputation"] = -1; },
-        [](Json& s) { s["offers"][1]["min_reputation"] = 1000; },
-        [](Json& s) { s["custom_offer"]["committee_members"] = Json::array(); },
-        [](Json& s) { s["custom_offer"]["allowed_modes"] = Json::array({"contract"}); },
-        [](Json& s) { s["custom_offer"]["committee_members"][1]["id"] = "publisher_a"; },
-        [](Json& s) { s["custom_offer"]["committee_members"][0]["channel"] = "bd"; },
-        [](Json& s) { s["custom_offer"]["committee_members"][0]["share_percent"] = 50; },
-        [](Json& s) { s["custom_offer"]["channel_potentials"].erase("bd"); },
-        [](Json& s) { s["custom_offer"]["channel_potentials"]["toy"] = 101; },
-        [](Json& s) { s["custom_offer"]["required_works"] = Json::array(); },
-        [](Json& s) { s["custom_offer"]["required_works"][0]["rating"] = "SS"; },
-        [](Json& s) { s["custom_offer"]["required_works"][0]["source"] = "film"; },
-        [](Json& s) { auto& r = s["custom_offer"]["required_works"]; r.push_back(r[0]); },
-        [](Json& s) { s["company"]["finance"]["costs"]["development"] = -1; },
-        [](Json& s) { s["company"]["finance"]["costs"]["distribution"] = max_i + 1; }
-    });
-    for (auto origin : {"market", "custom", "incoming", "proposal"}) {
-        auto valid = initialize();
-        auto candidate = dynamic_offer("origin_variant");
-        candidate["origin"] = origin;
-        candidate["style"] = "normal";
-        if (std::string(origin) == "custom") valid["custom_offer"] = candidate;
-        else if (std::string(origin) == "proposal") {
-            candidate["source"] = "original";
-            candidate["allowed_modes"] = Json::array({"committee"});
-            valid["pending_proposal"] = candidate;
-        } else valid["offers"][0] = candidate;
-        expect_validation(valid, true);
-    }
-    offer["style"] = "ai";
-    offer["scale"] = "movie";
-    offer["channel_potentials"] = {{"bd", 50}};
-    expect_validation(state, true);
-}
-
-TEST(ValidatorCompatibility, SuppliersAndTasksValidateFieldsAndReferences) {
-    auto state = start();
-    state["suppliers"] = Json::array({supplier()});
-    state["project"]["outsourcing"] = Json::array({outsource_task()});
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["suppliers"][0]["id"] = ""; },
-        [](Json& s) { s["suppliers"][0]["name"] = ""; },
-        [](Json& s) { s["suppliers"].push_back(s["suppliers"][0]); },
-        [](Json& s) { s["suppliers"][0]["specialties"] = Json::array(); },
-        [](Json& s) { s["suppliers"][0]["specialties"] = Json::array({"planning", "planning"}); },
-        [](Json& s) { s["suppliers"][0]["specialties"] = Json::array({"director"}); },
-        [](Json& s) { s["suppliers"][0]["capacity"] = 0; },
-        [](Json& s) { s["suppliers"][0]["speed"] = 0; },
-        [](Json& s) { s["suppliers"][0]["quality"] = 101; },
-        [](Json& s) { s["suppliers"][0]["unit_price"] = -1; },
-        [](Json& s) { s["suppliers"][0]["reliability"] = -1; },
-        [](Json& s) { s["suppliers"][0]["unlocked"] = 1; },
-        [](Json& s) { s["suppliers"][0]["unlocked"] = false; },
-        [](Json& s) { s["project"]["outsourcing"][0]["supplier_id"] = "missing_supplier"; },
-        [](Json& s) { s["project"]["outsourcing"][0]["ability"] = "drawing"; },
-        [](Json& s) { s["project"]["outsourcing"].push_back(s["project"]["outsourcing"][0]); },
-        [](Json& s) { s["project"]["outsourcing"][0]["id"] = ""; },
-        [](Json& s) { s["project"]["outsourcing"][0]["stage"] = "editing"; },
-        [](Json& s) { s["project"]["outsourcing"][0]["ability"] = "director"; },
-        [](Json& s) { s["project"]["outsourcing"][0]["mode"] = "rush"; },
-        [](Json& s) { s["project"]["outsourcing"][0]["status"] = "pending"; },
-        [](Json& s) { s["project"]["outsourcing"][0]["work_total"] = 0; },
-        [](Json& s) { s["project"]["outsourcing"][0]["work_done"] = 11; },
-        [](Json& s) { s["project"]["outsourcing"][0]["work_done"] = -1; },
-        [](Json& s) { s["project"]["outsourcing"][0]["status"] = "delivered"; },
-        [](Json& s) { s["project"]["outsourcing"][0]["fee_paid"] = -1; },
-        [](Json& s) { s["project"]["outsourcing"][0]["due_week"] = -1; }
-    });
-    for (auto status : {"active", "delivered", "failed"}) {
-        auto valid = state;
-        valid["project"]["outsourcing"][0]["status"] = status;
-        valid["project"]["outsourcing"][0]["work_done"] = 10;
-        valid["project"]["outsourcing"][0]["mode"] = "emergency";
-        expect_validation(valid, true);
-    }
-    state["project"]["outsourcing"] = Json::array();
-    state["suppliers"][0]["unlocked"] = false;
-    state["suppliers"][0]["unit_price"] = 0;
-    state["suppliers"][0]["quality"] = 0;
-    state["suppliers"][0]["capacity"] = max_i;
-    state["suppliers"][0]["speed"] = max_i;
-    expect_validation(state, true);
-}
-
-TEST(ValidatorCompatibility, CommitteeOmissionAndMemberChannelRules) {
-    for (int investment : {10, 30, 100}) {
-        auto state = start();
-        make_committee(state, investment);
-        expect_validation(state, true);
-        state["project"]["committee"] = Json::array();
-        expect_invalid_state(state);
-    }
-    auto state = start();
-    make_committee(state);
-    state["project"]["committee"] = Json::array({committee_member("partner_a", "publisher"), committee_member("partner_b", "music")});
-    state["project"]["tv_service"] = {{"purchased_week", 0}, {"cost", 12345}};
-    state["project"]["finance"]["costs"]["distribution"] = 12345;
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["project"]["committee"] = nullptr; },
-        [](Json& s) { s["project"]["committee"][0]["channel"] = "bd"; },
-        [](Json& s) { s["project"]["committee"][0]["channels"] = Json::array({"music"}); },
-        [](Json& s) { s["project"]["committee"][1]["id"] = "partner_a"; },
-        [](Json& s) { s["project"]["investment_percent"] = 9; },
-        [](Json& s) { s["project"]["investment_percent"] = 101; },
-        [](Json& s) { s["project"]["investment_percent"] = 30.5; },
-        [](Json& s) { s["project"]["committee_pressure"] = nullptr; },
-        [](Json& s) { s["project"]["committee_pressure"] = 101; },
-        [](Json& s) { s["project"]["extension_count"] = 2; },
-        [](Json& s) { s["project"]["tv_service"]["cost"] = 0; },
-        [](Json& s) { s["project"]["tv_service"]["purchased_week"] = 521; }
-    });
-    state["project"]["extension_count"] = 1;
-    state["project"]["committee_pressure"] = 100;
-    state["project"]["tv_service"] = nullptr;
-    expect_validation(state, true);
-    for (bool explicit_null : {false, true}) {
-        auto contract = start();
-        if (explicit_null) {
-            contract["project"]["committee"] = nullptr;
-            contract["project"]["tv_service"] = nullptr;
-        } else {
-            contract["project"].erase("committee");
-            contract["project"].erase("tv_service");
-        }
-        expect_invalid_mutations(contract, {
-            [](Json& s) { s["project"]["committee"] = Json::array(); },
-            [](Json& s) { s["project"]["committee"] = Json::array({committee_member("partner", "toy")}); },
-            [](Json& s) { s["project"]["tv_service"] = {{"purchased_week", 0}, {"cost", 1}}; }
-        });
-    }
-}
-
-TEST(ValidatorCompatibility, OptionalOfferSlotsAreIdleOnlyAndGloballyUnique) {
-    auto state = initialize();
-    state["custom_offer"] = dynamic_offer("custom_slot");
-    state["custom_offer"]["origin"] = "custom";
-    state["pending_proposal"] = dynamic_offer("proposal_slot");
-    state["pending_proposal"]["origin"] = "proposal";
-    state["pending_proposal"]["source"] = "original";
-    state["pending_proposal"]["allowed_modes"] = Json::array({"committee"});
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["custom_offer"]["origin"] = "market"; },
-        [](Json& s) { s["pending_proposal"]["origin"] = "custom"; },
-        [](Json& s) { s["pending_proposal"]["source"] = "game"; },
-        [](Json& s) { s["custom_offer"]["id"] = s["offers"][0]["id"]; },
-        [](Json& s) { s["pending_proposal"]["id"] = s["offers"][0]["id"]; },
-        [](Json& s) { s["pending_proposal"]["id"] = s["custom_offer"]["id"]; }
-    });
-    for (const char* id : {"proj_ova_01", "custom_slot"}) {
-        const auto started = call(apc::start_project, {{"state", state}, {"offer_id", id}, {"mode", "contract"}, {"investment_percent", 0}}).at("state");
-        EXPECT_TRUE(started.at("custom_offer").is_null());
-        EXPECT_TRUE(started.at("pending_proposal").is_null());
-        expect_validation(started, true);
-        for (auto slot : {"custom_offer", "pending_proposal"}) {
-            auto invalid = started;
-            invalid[slot] = state.at(slot);
-            expect_invalid_state(invalid);
-        }
-    }
-    const auto closed = call(apc::apply_decision, {{"state", state}, {"decision", {{"type", "end_company"}}}}).at("state");
-    EXPECT_TRUE(closed.at("custom_offer").is_null());
-    EXPECT_TRUE(closed.at("pending_proposal").is_null());
-    expect_validation(closed, true);
-    for (auto slot : {"custom_offer", "pending_proposal"}) {
-        auto invalid = closed;
-        invalid[slot] = state.at(slot);
-        expect_invalid_state(invalid);
-    }
-    state["custom_offer"] = nullptr;
-    state["pending_proposal"] = nullptr;
-    expect_validation(state, true);
-}
-
+// ---------- M2 #7 招募行为（提案 1 + 模板库修订）----------
 namespace {
-Json snapshot_history() {
-    auto state = play_weeks(configure(start()), 3);
-    state = call(apc::apply_decision, {{"state", state}, {"decision", {{"type", "end_company"}}}}).at("state");
-    state = call(apc::calculate_result, {{"state", state}, {"scope", "project"}}).at("state");
-    state["company"]["status"] = "running";
-    state["company"]["end_reason"] = nullptr;
-    state["company"]["staff"] = Json::array();
-    auto& work = state["history"][0];
-    work["id"] = "archived_dynamic";
-    state["last_project_id"] = work.at("id");
-    const auto rename_team = [](Json& team) {
-        for (auto& member : team) {
-            member["staff_id"] = "retired_" + member.at("staff_id").get<std::string>();
-            member["employment"] = "temporary";
-        }
-    };
-    rename_team(work["team"]);
-    for (auto stage : apc::rules::stages) {
-        auto& snapshot = work["stages"][stage];
-        if (!snapshot.at("configuration").is_null()) {
-            for (auto& a : snapshot["configuration"]["assignments"]) a["staff_id"] = "retired_" + a.at("staff_id").get<std::string>();
-        }
-        if (!snapshot.at("result").is_null()) rename_team(snapshot["result"]["team"]);
-    }
-    return state;
+Json scout(const Json& state, const char* type = "scout", const Json& extra = Json::object()) {
+    Json decision{{"type", type}};
+    for (const auto& item : extra.items()) decision[item.key()] = item.value();
+    return call(apc::apply_decision, {{"state", state}, {"decision", decision}}).at("state");
+}
+Json hire(const Json& state, const std::string& id) {
+    return call(apc::apply_decision, {{"state", state}, {"decision", {{"type", "hire_core"}, {"candidate_id", id}}}}).at("state");
+}
+int sum_of(const Json& person) {
+    int total = 0;
+    for (auto ability : apc::rules::abilities) total += person.at("abilities").at(ability).get<int>();
+    return total;
+}
+int band_of_sum(int sum) { return sum < 240 ? 0 : sum < 320 ? 1 : sum < 400 ? 2 : 3; }
+Json with_pity(const Json& state, int sr, int ssr) {
+    auto copy = state;
+    copy["company"]["scout_pity"] = {{"since_sr", sr}, {"since_ssr", ssr}};
+    return copy;
 }
 }
-
-TEST(ValidatorCompatibility, HistoricalSnapshotsDoNotRequireCurrentRosterOrCatalog) {
-    auto state = snapshot_history();
-    state["history"][0]["stages"]["script"]["work_done"] = 123456;
-    state["history"][0]["stages"]["script"]["result"]["quality"] = 7;
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["history"][0]["team"].push_back(s["history"][0]["team"][0]); },
-        [](Json& s) { s["history"][0]["team"][0]["staff_id"] = ""; },
-        [](Json& s) { s["history"][0]["team"][0]["name"] = ""; },
-        [](Json& s) { s["history"][0]["team"][0]["employment"] = "freelance"; },
-        [](Json& s) { s["history"][0]["team"][0]["role"] = "producer"; },
-        [](Json& s) { s["history"][0]["team"][0]["abilities"]["planning"] = 101; },
-        [](Json& s) { s["history"][0]["team"][0]["abilities"].erase("animation"); },
-        [](Json& s) { auto& t = s["history"][0]["stages"]["script"]["result"]["team"]; t.push_back(t[0]); },
-        [](Json& s) { s["history"][0]["stages"]["script"]["result"]["team"][0]["staff_id"] = "not_in_work_team"; },
-        [](Json& s) { s["history"][0]["stages"]["script"]["configuration"]["assignments"][0]["staff_id"] = "not_in_snapshot"; },
-        [](Json& s) { s["history"][0]["stages"]["script"]["configuration"]["assignments"][0]["role"] = "animator"; },
-        [](Json& s) { s["history"][0]["stages"]["script"]["result"]["weeks_spent"] = 0; },
-        [](Json& s) { s["history"][0]["stages"]["script"]["result"]["issues"] = Json::array({1}); },
-        [](Json& s) { s["history"][0]["stages"]["script"]["result"]["costs"]["temporary"] = -1; },
-        [](Json& s) { s["history"][0]["stages"]["key_animation"]["status"] = "ready"; },
-        [](Json& s) { s["history"][0]["stages"]["storyboard"]["status"] = "pending"; },
-        [](Json& s) { s["history"][0]["end_reason"] = "completed"; },
-        [](Json& s) { s["history"][0]["stages"].erase("animation_check"); }
-    });
-    state["history"][0]["team"] = Json::array();
-    for (auto stage : apc::rules::stages) {
-        auto& snapshot = state["history"][0]["stages"][stage];
-        if (!snapshot.at("configuration").is_null()) snapshot["configuration"]["assignments"] = Json::array();
-        if (!snapshot.at("result").is_null()) snapshot["result"]["team"] = Json::array();
-    }
-    expect_validation(state, true);
-    auto current = play_weeks(configure(start()), 3);
-    current["company"]["staff"] = Json::array();
-    current["project"]["stages"]["storyboard"]["recommended_configuration"] = configuration();
-    expect_validation(current, true);
-    current["project"]["stages"]["script"]["configuration"] = configuration();
-    current["project"]["stages"]["script"]["result"]["team"] = Json::array();
-    expect_validation(current, true);
+TEST(Recruit, ReplayIdenticalAndExactly48SeedSteps) {
+    const auto base = initialize(12345);
+    const auto a = scout(base);
+    const auto b = scout(base);
+    EXPECT_EQ(a.at("recruitment_pool"), b.at("recruitment_pool"));
+    EXPECT_EQ(a.at("seed"), b.at("seed"));
+    std::uint32_t expected = 12345;
+    for (int i = 0; i < 48; ++i) expected = expected * apc::rules::rng_multiplier + apc::rules::rng_increment;
+    EXPECT_EQ(a.at("seed").get<std::uint64_t>(), expected);
+    EXPECT_EQ(a.at("recruitment_pool").size(), 3U);
 }
-
-TEST(ValidatorCompatibility, HistoryPreviousReferencesMustBeEarlierAndNonoverlapping) {
-    auto state = snapshot_history();
-    auto sequel = state.at("history")[0];
-    sequel["id"] = "sequel_dynamic";
-    sequel["previous_work_id"] = "archived_dynamic";
-    sequel["start_week"] = 3;
-    sequel["end_week"] = 6;
-    state["history"].push_back(sequel);
-    state["last_project_id"] = "sequel_dynamic";
-    state["company"]["week"] = 6;
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["history"][0]["previous_work_id"] = "sequel_dynamic"; },
-        [](Json& s) { s["history"][1]["previous_work_id"] = "sequel_dynamic"; },
-        [](Json& s) { s["history"][1]["previous_work_id"] = "missing_work"; },
-        [](Json& s) { s["history"][1]["start_week"] = 2; },
-        [](Json& s) { s["history"][1]["end_week"] = 7; },
-        [](Json& s) { s["history"][1]["end_week"] = 2; },
-        [](Json& s) { auto first = s["history"][0]; s["history"][0] = s["history"][1]; s["history"][1] = first; },
-        [](Json& s) { s["history"].push_back(s["history"][0]); }
-    });
-    auto market = initialize();
-    market["company"]["week"] = 6;
-    market["history"] = state.at("history");
-    market["offers"][0] = dynamic_offer("next_dynamic");
-    market["offers"][0]["previous_work_id"] = "sequel_dynamic";
-    update_salary_preview(market);
-    expect_invalid_mutations(market, {
-        [](Json& s) { s["offers"][0]["id"] = "archived_dynamic"; },
-        [](Json& s) { s["offers"][0]["previous_work_id"] = "future_work"; },
-        [](Json& s) { s["custom_offer"] = dynamic_offer("archived_dynamic"); s["custom_offer"]["origin"] = "custom"; },
-        [](Json& s) { s["pending_proposal"] = dynamic_offer("archived_dynamic"); s["pending_proposal"]["origin"] = "proposal"; s["pending_proposal"]["source"] = "original"; s["pending_proposal"]["allowed_modes"] = Json::array({"committee"}); }
-    });
-    const auto project = call(apc::start_project, {{"state", market}, {"offer_id", "next_dynamic"}, {"mode", "contract"}, {"investment_percent", 0}}).at("state");
-    expect_invalid_mutations(project, {
-        [](Json& s) { s["project"]["start_week"] = 5; },
-        [](Json& s) { s["project"]["offer"]["id"] = "archived_dynamic"; },
-        [](Json& s) { s["project"]["offer"]["previous_work_id"] = "future_work"; }
-    });
+TEST(Recruit, FeeLedgerAndPreviewUnchanged) {
+    const auto state = scout(initialize());
+    EXPECT_EQ(state.at("company").at("funds"), 2000000 - 150000);
+    EXPECT_EQ(state.at("company").at("finance").at("costs").at("operations"), 150000);
+    EXPECT_EQ(state.at("company").at("finance").at("costs").at("salary"), 0);
+    EXPECT_EQ(state.at("preview").at("total_cost"), 180000);
+    const auto targeted = scout(initialize(), "targeted_scout", {{"role", "animator"}});
+    EXPECT_EQ(targeted.at("company").at("funds"), 2000000 - 400000);
+    EXPECT_EQ(targeted.at("company").at("finance").at("costs").at("operations"), 400000);
 }
-
-TEST(ValidatorCompatibility, HistoricalOptionalMetadataAndChannelAccounting) {
-    auto state = snapshot_history();
-    auto& work = state["history"][0];
-    work["origin"] = "custom";
-    work["style"] = "meme";
-    work["scale"] = "short";
-    work["rating"] = "S";
-    work["finance"]["costs"]["development"] = 11;
-    work["finance"]["costs"]["distribution"] = 12;
-    work["stages"]["script"]["result"]["costs"]["development"] = 13;
-    work["stages"]["script"]["result"]["costs"]["distribution"] = 14;
-    work["channel_breakdown"] = Json::array({{{"channel", "bd"}, {"revenue", work.at("commercial_revenue").get<std::int64_t>() - 100}, {"company_received", 0}},
-        {{"channel", "publisher"}, {"revenue", 100}, {"company_received", 0}}});
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["history"][0]["origin"] = "market"; },
-        [](Json& s) { s["history"][0]["scale"] = "tv"; },
-        [](Json& s) { s["history"][0]["style"] = "experimental"; },
-        [](Json& s) { s["history"][0]["rating"] = "SS"; },
-        [](Json& s) { s["history"][0]["channel_breakdown"] = Json::array(); },
-        [](Json& s) { s["history"][0]["channel_breakdown"][0]["channel"] = "music"; },
-        [](Json& s) { s["history"][0]["channel_breakdown"][1]["channel"] = "bd"; },
-        [](Json& s) { s["history"][0]["channel_breakdown"][1]["revenue"] = 101; },
-        [](Json& s) { s["history"][0]["channel_breakdown"][1]["company_received"] = 1; },
-        [](Json& s) { s["history"][0]["channel_breakdown"][1]["company_received"] = 101; },
-        [](Json& s) { s["history"][0]["finance"]["costs"]["development"] = -1; },
-        [](Json& s) { s["history"][0]["stages"]["script"]["result"]["costs"]["distribution"] = nullptr; }
-    });
-    work["mode"] = "committee";
-    work["investment_percent"] = 30;
-    work["finance"]["commercial_share_received"] = 100;
-    work["channel_breakdown"][0]["company_received"] = 100;
-    expect_validation(state, true);
+TEST(Recruit, PhaseAndTargetedParamGuards) {
+    expect_error(apc::apply_decision(Json{{"state", start()}, {"decision", {{"type", "scout"}}}}.dump()), "INVALID_PHASE");
+    expect_error(apc::apply_decision(Json{{"state", initialize()}, {"decision", {{"type", "targeted_scout"}, {"role", "animator"}, {"focus_ability", "drawing"}}}}.dump()), "INVALID_INPUT");
+    expect_error(apc::apply_decision(Json{{"state", initialize()}, {"decision", {{"type", "targeted_scout"}}}}.dump()), "INVALID_INPUT");
+    expect_error(apc::apply_decision(Json{{"state", initialize()}, {"decision", {{"type", "targeted_scout"}, {"role", "nope"}}}}.dump()), "INVALID_INPUT");
 }
-
-TEST(ValidatorCompatibility, EventMustMatchAnActiveStageAndHasNoCustomEffects) {
-    auto state = configure(start());
-    state["phase"] = "event_pending";
-    state["pending_event"] = pending_event();
-    state["preview"] = nullptr;
-    expect_invalid_mutations(state, {
-        [](Json& s) { s["pending_event"] = nullptr; },
-        [](Json& s) { s["pending_event"]["stage"] = "storyboard"; },
-        [](Json& s) { s["project"]["stages"]["script"]["status"] = "ready"; s["project"]["stages"]["script"]["configuration"] = nullptr; },
-        [](Json& s) { s["pending_event"]["id"] = ""; },
-        [](Json& s) { s["pending_event"]["title"] = ""; },
-        [](Json& s) { s["pending_event"]["description"] = ""; },
-        [](Json& s) { s["pending_event"]["category"] = "random"; },
-        [](Json& s) { s["pending_event"]["trigger"]["metric"] = ""; },
-        [](Json& s) { s["pending_event"]["trigger"]["value"] = -max_i - 1; },
-        [](Json& s) { s["pending_event"]["trigger"]["threshold"] = max_i + 1; },
-        [](Json& s) { s["pending_event"]["trigger"]["value"] = 0.5; },
-        [](Json& s) { s["pending_event"]["trigger"].erase("threshold"); },
-        [](Json& s) { s["pending_event"]["options"] = Json::array(); },
-        [](Json& s) { auto& o = s["pending_event"]["options"]; o.push_back(o[0]); },
-        [](Json& s) { s["pending_event"]["options"][0]["label"] = ""; },
-        [](Json& s) { s["pending_event"]["options"][0]["cost"] = -1; },
-        [](Json& s) { s["pending_event"]["options"][0]["allows_reconfigure"] = 1; },
-        [](Json& s) { s["pending_event"]["options"][0]["disabled_reason"] = ""; },
-        [](Json& s) { s["pending_event"]["effect"] = {{"funds", 1000000}}; },
-        [](Json& s) { s["pending_event"]["options"][0]["effect"] = {{"quality", 100}}; },
-        [](Json& s) { s["pending_event"]["options"][0]["effects"] = Json::array({{{"funds", 1000000}}}); }
-    });
-    for (auto category : {"personnel", "quality", "budget", "schedule"}) {
-        state["pending_event"]["category"] = category;
-        state["pending_event"]["trigger"]["value"] = -max_i;
-        state["pending_event"]["trigger"]["threshold"] = max_i;
-        expect_validation(state, true);
-    }
-    state["pending_event"]["trigger"]["value"] = max_i;
-    state["pending_event"]["trigger"]["threshold"] = -max_i;
-    expect_validation(state, true);
+TEST(Recruit, InsufficientFundsKeepsStateAndSeed) {
+    auto poor = initialize();
+    poor["company"]["funds"] = 100000;
+    expect_error(apc::apply_decision(Json{{"state", poor}, {"decision", {{"type", "scout"}}}}.dump()), "INSUFFICIENT_BUDGET");
+    EXPECT_EQ(poor.at("seed"), 12345);
+    EXPECT_TRUE(poor.at("recruitment_pool").empty());
 }
-
-TEST(ValidatorCompatibility, ClosingAndEndedPhaseProjectOfferMatrix) {
-    const auto initial = initialize();
-    const auto history = settledBase().at("history");
-    auto project = start().at("project");
-    project["offer"]["id"] = "matrix_project";
-    project["delivery_reason"] = "company_closed";
-    for (const char* status : {"closing", "ended"}) {
-        for (const char* phase : {"idle", "producing", "event_pending", "project_ready", "project_settled", "company_ended"}) {
-            for (bool has_project : {false, true}) {
-                for (bool has_offers : {false, true}) {
-                    SCOPED_TRACE(std::string(status) + "/" + phase + "/project=" + std::to_string(has_project) + "/offers=" + std::to_string(has_offers));
-                    auto state = initial;
-                    state["company"]["week"] = 2;
-                    state["company"]["status"] = status;
-                    state["company"]["end_reason"] = "voluntary";
-                    state["phase"] = phase;
-                    state["project"] = has_project ? project : Json(nullptr);
-                    state["offers"] = has_offers ? initial.at("offers") : Json::array();
-                    state["preview"] = nullptr;
-                    state["history"] = history;
-                    if (std::string(phase) == "project_settled" || std::string(phase) == "company_ended") state["last_project_id"] = history[0].at("id");
-                    if (std::string(status) == "ended") state["company_result"] = {{"reason", "voluntary"}, {"weeks", 2},
-                        {"final_funds", 2000000}, {"net_cash_change", 0}, {"total_projects", 1}, {"best_work_id", history[0].at("id")}, {"rating", "small"}};
-                    const bool closing = std::string(status) == "closing";
-                    const bool valid = !has_offers && (closing
-                        ? (std::string(phase) == "project_ready" ? has_project : !has_project && (std::string(phase) == "idle" || std::string(phase) == "project_settled"))
-                        : std::string(phase) == "company_ended" && !has_project);
-                    if (valid) expect_validation(state, true);
-                    else expect_invalid_state(state);
-                }
+TEST(Recruit, PityTenthForcesSrAndResets) {
+    const auto state = scout(with_pity(initialize(), 9, 0));
+    EXPECT_GE(sum_of(state.at("recruitment_pool").at(2)), 320);
+    EXPECT_EQ(state.at("company").at("scout_pity").at("since_sr"), 0);
+    const auto ninth = scout(with_pity(initialize(), 8, 0));
+    const auto& pity = ninth.at("company").at("scout_pity");
+    bool any_sr = false;
+    for (const auto& person : ninth.at("recruitment_pool")) any_sr = any_sr || sum_of(person) >= 320;
+    EXPECT_EQ(pity.at("since_sr"), any_sr ? 0 : 9);
+}
+TEST(Recruit, PityFiftiethForcesSsr) {
+    const auto state = scout(with_pity(initialize(), 0, 49));
+    EXPECT_GE(sum_of(state.at("recruitment_pool").at(2)), 400);
+    EXPECT_EQ(state.at("company").at("scout_pity").at("since_ssr"), 0);
+}
+TEST(Recruit, HireMovesCandidateAndSalaryEntersPreview) {
+    const auto scouted = scout(initialize());
+    const auto& candidate = scouted.at("recruitment_pool").at(0);
+    const auto salary = candidate.at("weekly_salary").get<std::int64_t>();
+    EXPECT_GE(salary, 15000 + sum_of(candidate) * 90);
+    const auto hired = hire(scouted, candidate.at("id").get<std::string>());
+    EXPECT_EQ(hired.at("company").at("staff").size(), 5U);
+    EXPECT_EQ(hired.at("recruitment_pool").size(), 2U);
+    EXPECT_EQ(hired.at("company").at("staff").at(4).at("id"), candidate.at("id"));
+    EXPECT_EQ(hired.at("preview").at("total_cost"), 180000 + salary);
+}
+TEST(Recruit, CoreCapEightRejectsNinth) {
+    auto state = initialize();
+    state = scout(state);
+    std::vector<std::string> ids;
+    for (const auto& person : state.at("recruitment_pool")) ids.push_back(person.at("id").get<std::string>());
+    for (const auto& id : ids) state = hire(state, id);
+    state = scout(state);
+    state = hire(state, state.at("recruitment_pool").at(0).at("id").get<std::string>());
+    EXPECT_EQ(state.at("company").at("staff").size(), 8U);
+    state = scout(state);
+    expect_error(apc::apply_decision(Json{{"state", state}, {"decision", {{"type", "hire_core"}, {"candidate_id", state.at("recruitment_pool").at(0).at("id")}}}}.dump()), "CAPACITY_EXCEEDED");
+}
+TEST(Recruit, TargetedPoolMatchesRoleOrFocus) {
+    const auto by_role = scout(initialize(), "targeted_scout", {{"role", "animator"}});
+    for (const auto& person : by_role.at("recruitment_pool")) EXPECT_EQ(person.at("role"), "animator");
+    const auto by_focus = scout(initialize(), "targeted_scout", {{"focus_ability", "postproduction"}});
+    for (const auto& person : by_focus.at("recruitment_pool")) EXPECT_EQ(person.at("role"), "postproduction");
+}
+TEST(Recruit, NamesUniqueAndPoolReplaces) {
+    auto state = scout(initialize());
+    const auto first_ids = state.at("recruitment_pool");
+    for (const auto& person : first_ids) state = hire(state, person.at("id").get<std::string>());
+    state = scout(state);
+    EXPECT_EQ(state.at("recruitment_pool").size(), 3U);
+    std::set<std::string> names;
+    for (const auto& person : state.at("company").at("staff")) EXPECT_TRUE(names.insert(person.at("name").get<std::string>()).second);
+    for (const auto& person : state.at("recruitment_pool")) EXPECT_TRUE(names.insert(person.at("name").get<std::string>()).second);
+    for (const auto& person : state.at("recruitment_pool"))
+        for (const auto& old : first_ids) EXPECT_NE(person.at("id"), old.at("id"));
+}
+TEST(Recruit, BandsTemplatesAndPotentialInvariants) {
+    for (auto seed : {1U, 2U, 42U, 12345U, 99999U, 0xffffffffU}) {
+        const auto state = scout(initialize(seed));
+        for (const auto& person : state.at("recruitment_pool")) {
+            const auto band = band_of_sum(sum_of(person));
+            for (auto ability : apc::rules::abilities) {
+                EXPECT_LE(person.at("abilities").at(ability).get<int>(), 100);
+                EXPECT_GE(person.at("potential").at(ability).get<int>(), person.at("abilities").at(ability).get<int>());
             }
+            if (band == 0) EXPECT_EQ(person.at("talent_type"), "ordinary");
+            if (band == 3) EXPECT_NE(person.at("talent_type"), "ordinary");
+            EXPECT_EQ(person.at("clues").size(), 2U);
         }
     }
 }
-
-TEST(ValidatorCompatibility, ClosingAndEndedRejectEventsPreviewsAndInconsistentSummaries) {
-    const auto idle = call(apc::apply_decision, {{"state", initialize()}, {"decision", {{"type", "end_company"}}}}).at("state");
-    const auto ready = call(apc::apply_decision, {{"state", configure(start())}, {"decision", {{"type", "end_company"}}}}).at("state");
-    const auto settled = call(apc::calculate_result, {{"state", ready}, {"scope", "project"}}).at("state");
-    const auto ended = call(apc::calculate_result, {{"state", settled}, {"scope", "company"}}).at("state");
-    for (const auto& base : {idle, ready, settled, ended}) {
-        for (bool event : {false, true}) {
-            for (bool preview : {false, true}) {
-                for (bool offers : {false, true}) {
-                    auto state = base;
-                    if (event) state["pending_event"] = pending_event();
-                    if (preview) state["preview"] = initialize().at("preview");
-                    if (offers) state["offers"] = initialize().at("offers");
-                    if (!event && !preview && !offers) expect_validation(state, true);
-                    else expect_invalid_state(state);
-                }
-            }
-        }
-    }
-    expect_invalid_mutations(ended, {
-        [](Json& s) { s["company_result"] = nullptr; },
-        [](Json& s) { s["company_result"]["reason"] = "bankrupt"; },
-        [](Json& s) { s["company_result"]["weeks"] = 1; },
-        [](Json& s) { s["company_result"]["final_funds"] = 1; },
-        [](Json& s) { s["company_result"]["total_projects"] = 0; },
-        [](Json& s) { s["company_result"]["best_work_id"] = "missing_work"; },
-        [](Json& s) { s["company"]["funds"] = -1; s["company_result"]["final_funds"] = -1; }
-    });
-    for (auto base : {idle, settled, ended}) {
-        base["company"]["end_reason"] = "bankrupt";
-        base["company"]["funds"] = -1;
-        if (!base.at("company_result").is_null()) {
-            base["company_result"]["reason"] = "bankrupt";
-            base["company_result"]["final_funds"] = -1;
-            base["company_result"]["net_cash_change"] = -2000001;
-            base["company_result"]["rating"] = "failed";
-        }
-        expect_validation(base, true);
-    }
-}
-
-TEST(DynamicExecution, ConfigureAcceptsDynamicStaffButAdvanceRequiresSpecialtyRules) {
-    auto state = start();
-    state["company"]["staff"] = Json::array({dynamic_staff("nonstatic_creator")});
-    state["project"]["stages"]["script"]["recommended_configuration"] = configuration(Json::array({assignment(state.at("company").at("staff")[0])}));
-    expect_validation(state, true);
-    const auto configured = configure(state);
-    expect_validation(configured, true);
-    EXPECT_EQ(configured.at("company").at("funds"), state.at("company").at("funds"));
-    expect_mode_blocked(apc::advance_week, {{"state", configured}}, true);
-    for (const char* id : {"temp_nonstatic", "staff_01"}) {
-        auto temporary = start();
-        if (std::string(id) == "staff_01") temporary["company"]["staff"].erase(0);
-        temporary["project"]["temporary_staff"] = Json::array({dynamic_staff(id, "temporary")});
-        const auto config = configuration(Json::array({assignment(temporary.at("project").at("temporary_staff")[0])}));
-        temporary["project"]["stages"]["script"]["recommended_configuration"] = config;
-        expect_validation(temporary, true);
-        temporary = configure_with(temporary, config);
-        expect_validation(temporary, true);
-        expect_mode_blocked(apc::advance_week, {{"state", temporary}}, true);
-    }
-}
-
-TEST(DynamicExecution, UnassignedDynamicStaffRestAndStaticStaffBeyondIndexFourWork) {
-    auto state = start();
-    const auto known = state.at("company").at("staff")[0];
-    state["company"]["staff"] = Json::array();
-    for (int i = 0; i < 5; ++i) state["company"]["staff"].push_back(dynamic_staff("resting_" + std::to_string(i)));
-    state["company"]["staff"].push_back(known);
-    state["project"]["temporary_staff"] = Json::array({dynamic_staff("unassigned_temp", "temporary")});
-    state["project"]["finance"]["costs"]["temporary"] = 7500;
-    state["company"]["finance"]["costs"]["temporary"] = 7500;
-    state["company"]["funds"] = 6000000 - 7500;
-    state["project"]["stages"]["script"]["recommended_configuration"] = configuration(Json::array({assignment(known)}));
+TEST(Recruit, HiredStaffProduceAndRaiseSalary) {
+    auto state = scout(initialize());
+    state = hire(state, state.at("recruitment_pool").at(0).at("id").get<std::string>());
+    const auto hired_id = state.at("company").at("staff").at(4).at("id").get<std::string>();
+    const auto old_salary = state.at("company").at("staff").at(4).at("weekly_salary").get<std::int64_t>();
+    state = call(apc::apply_decision, {{"state", state}, {"decision", {{"type", "raise_salary"}, {"staff_id", hired_id}, {"weekly_salary", old_salary + 1000}}}}).at("state");
+    EXPECT_EQ(state.at("company").at("staff").at(4).at("weekly_salary"), old_salary + 1000);
+    state = call(apc::start_project, {{"state", state}, {"offer_id", "proj_ova_01"}, {"mode", "contract"}, {"investment_percent", 0}}).at("state");
     state = configure(state);
-    expect_validation(state, true);
-    const auto output = advance(state);
-    const auto& next = output.at("state");
-    EXPECT_GT(next.at("project").at("stages").at("script").at("work_done").get<int>(), 0);
-    EXPECT_EQ(output.at("report").at("costs").at("salary"), 50000);
-    EXPECT_EQ(output.at("report").at("costs").at("temporary"), 0);
-    EXPECT_EQ(output.at("report").at("funds_delta"), -110000);
-    EXPECT_EQ(next.at("company").at("funds"), 6000000 - 7500 - 110000);
-    EXPECT_EQ(next.at("project").at("finance").at("costs").at("temporary"), 7500);
-    for (int i = 0; i < 5; ++i) {
-        const auto& person = next.at("company").at("staff")[i];
-        EXPECT_EQ(person.at("fatigue"), 8);
-        EXPECT_EQ(person.at("morale"), 60);
-        EXPECT_EQ(person.at("experience"), state.at("company").at("staff")[i].at("experience"));
-    }
-    EXPECT_EQ(next.at("project").at("temporary_staff")[0].at("experience"), state.at("project").at("temporary_staff")[0].at("experience"));
-    expect_validation(next, true);
+    const auto report = advance(state);
+    EXPECT_EQ(report.at("report").at("staff_deltas").size(), 5U);
 }
-
-TEST(DynamicExecution, ActiveOutsourcingAndCommitteeGameplayAreExplicitlyBlocked) {
-    auto outsourced = configure(start());
-    outsourced["suppliers"] = Json::array({supplier()});
-    outsourced["project"]["outsourcing"] = Json::array({outsource_task()});
-    expect_validation(outsourced, true);
-    expect_mode_blocked(apc::advance_week, {{"state", outsourced}});
-    for (auto status : {"delivered", "failed"}) {
-        auto inactive = outsourced;
-        inactive["project"]["outsourcing"][0]["status"] = status;
-        inactive["project"]["outsourcing"][0]["work_done"] = 10;
-        inactive["project"]["finance"]["costs"]["outsourcing"] = 1230;
-        inactive["company"]["finance"]["costs"]["outsourcing"] = 1230;
-        inactive["company"]["funds"] = 6000000 - 1230;
-        expect_validation(inactive, true);
-        const auto output = advance(inactive);
-        EXPECT_EQ(output.at("report").at("costs").at("outsourcing"), 0);
-        EXPECT_EQ(output.at("report").at("funds_delta"), -210000);
-        EXPECT_EQ(output.at("state").at("company").at("funds"), 6000000 - 1230 - 210000);
-        EXPECT_EQ(output.at("state").at("project").at("outsourcing"), inactive.at("project").at("outsourcing"));
-        expect_validation(output.at("state"), true);
-    }
-    auto committee = configure(start());
-    make_committee(committee);
-    expect_validation(committee, true);
-    expect_mode_blocked(apc::advance_week, {{"state", committee}});
-    committee["phase"] = "project_ready";
-    committee["project"]["delivery_reason"] = "company_closed";
-    committee["company"]["status"] = "closing";
-    committee["company"]["end_reason"] = "voluntary";
-    committee["preview"] = nullptr;
-    expect_validation(committee, true);
-    expect_mode_blocked(apc::calculate_result, {{"state", committee}, {"scope", "project"}});
-}
-
-TEST(DynamicExecution, TemporarySnapshotsSurviveSettlementWithoutExperienceGain) {
-    auto state = start();
-    state["project"]["temporary_staff"] = Json::array({dynamic_staff("snapshot_temp", "temporary")});
-    const auto experience = state.at("project").at("temporary_staff")[0].at("experience");
-    const auto team = roster_snapshots(state);
-    auto assignments = state.at("project").at("stages").at("script").at("recommended_configuration").at("assignments");
-    assignments.push_back(assignment(state.at("project").at("temporary_staff")[0]));
-    state = configure_with(state, configuration(assignments));
-    state = call(apc::apply_decision, {{"state", state}, {"decision", {{"type", "end_company"}}}}).at("state");
-    EXPECT_EQ(state.at("project").at("temporary_staff")[0].at("experience"), experience);
-    const auto settled = call(apc::calculate_result, {{"state", state}, {"scope", "project"}});
-    EXPECT_EQ(settled.at("result").at("team"), team);
-    EXPECT_TRUE(settled.at("state").at("project").is_null());
-    expect_validation(settled.at("state"), true);
-
-    auto completed = play_weeks(configure(start()), 3);
-    completed["project"]["temporary_staff"] = Json::array({dynamic_staff("completed_temp", "temporary")});
-    auto& script = completed["project"]["stages"]["script"];
-    script["configuration"]["assignments"].push_back(assignment(completed.at("project").at("temporary_staff")[0]));
-    script["result"]["team"] = roster_snapshots(completed);
-    const auto completed_team = script.at("result").at("team");
-    expect_validation(completed, true);
-    completed = call(apc::apply_decision, {{"state", completed}, {"decision", {{"type", "end_company"}}}}).at("state");
-    const auto receipt = call(apc::calculate_result, {{"state", completed}, {"scope", "project"}});
-    EXPECT_EQ(receipt.at("result").at("team"), completed_team);
-    expect_validation(receipt.at("state"), true);
-}
-
-TEST(DynamicExecution, ContractUsesOfferDurationWorkloadsAndCopiesMetadata) {
-    for (const char* id : {"dynamic_contract", "proj_ova_01"}) {
-        for (int duration : {2, 19}) {
-            SCOPED_TRACE(std::string(id) + "/" + std::to_string(duration));
-            auto state = initialize();
-            auto offer = dynamic_offer(id);
-            offer["duration_weeks"] = duration;
-            offer["origin"] = "incoming";
-            offer["style"] = "normal";
-            state["offers"][0] = offer;
-            expect_validation(state, true);
-            state = call(apc::start_project, {{"state", state}, {"offer_id", id}, {"mode", "contract"}, {"investment_percent", 0}}).at("state");
-            EXPECT_EQ(state.at("project").at("offer"), offer);
-            EXPECT_EQ(state.at("project").at("deadline_week"), duration);
-            EXPECT_EQ(state.at("company").at("funds"), 4469135);
-            state = play_until_ready(state);
-            EXPECT_EQ(state.at("company").at("week"), duration == 2 ? 2 : 5);
-            EXPECT_EQ(state.at("project").at("delivery_reason"), duration == 2 ? "deadline" : "completed");
-            if (duration == 19) for (auto stage : apc::rules::stages) EXPECT_EQ(state.at("project").at("stages").at(stage).at("work_done"), 1);
-            expect_validation(state, true);
-            const auto output = call(apc::calculate_result, {{"state", state}, {"scope", "project"}});
-            EXPECT_EQ(output.at("result").at("id"), id);
-            EXPECT_EQ(output.at("result").at("origin"), "incoming");
-            EXPECT_EQ(output.at("result").at("style"), offer.at("style"));
-            EXPECT_EQ(output.at("result").at("profit").get<std::int64_t>(), 2469135 - costs_total(output.at("result").at("finance")));
-            expect_validation(output.at("state"), true);
-        }
-    }
-}
-
-TEST(DynamicExecution, RecordedCostsAffectProfitWithoutBeingChargedTwice) {
-    auto market = initialize();
-    market["offers"][0] = dynamic_offer("costed_contract");
-    auto ready = call(apc::start_project, {{"state", market}, {"offer_id", "costed_contract"}, {"mode", "contract"}, {"investment_percent", 0}}).at("state");
-    ready = play_until_ready(ready);
-    const auto baseline = call(apc::calculate_result, {{"state", ready}, {"scope", "project"}});
-    for (auto owner : {"company", "project"}) {
-        auto& costs = ready[owner]["finance"]["costs"];
-        costs["temporary"] = 7500;
-        costs["outsourcing"] = 1230;
-        costs["development"] = 777;
-        costs["distribution"] = 888;
-    }
-    const std::int64_t recorded = 7500 + 1230 + 777 + 888;
-    ready["company"]["funds"] = ready.at("company").at("funds").get<std::int64_t>() - recorded;
-    const auto funds = ready.at("company").at("funds");
-    expect_validation(ready, true);
-    const auto output = call(apc::calculate_result, {{"state", ready}, {"scope", "project"}});
-    EXPECT_EQ(output.at("state").at("company").at("funds"), funds);
-    EXPECT_EQ(output.at("result").at("profit").get<std::int64_t>(), baseline.at("result").at("profit").get<std::int64_t>() - recorded);
-    for (auto key : {"temporary", "outsourcing", "development", "distribution"}) {
-        EXPECT_EQ(output.at("result").at("finance").at("costs").at(key), ready.at("project").at("finance").at("costs").at(key));
-        EXPECT_EQ(output.at("state").at("company").at("finance").at("costs").at(key), ready.at("company").at("finance").at("costs").at(key));
-    }
-    expect_validation(output.at("state"), true);
-    expect_invalid_mutations(ready, {
-        [](Json& s) { s["project"]["finance"]["costs"]["development"] = -1; },
-        [](Json& s) { s["project"]["finance"]["costs"]["distribution"] = 1.5; }
-    });
-}
-
-TEST(DynamicExecution, AlreadyNegativeBankruptBalanceSettlesSafelyAndRemainsClosed) {
-    auto state = configure(start());
-    state["company"]["funds"] = 209999;
-    state = advance(state).at("state");
-    state["company"]["funds"] = -1;
-    expect_validation(state, true);
-    const auto output = call(apc::calculate_result, {{"state", state}, {"scope", "project"}});
-    const auto& settled = output.at("state");
-    EXPECT_EQ(settled.at("company").at("funds"), -400001);
-    EXPECT_EQ(settled.at("company").at("status"), "closing");
-    EXPECT_EQ(settled.at("company").at("end_reason"), "bankrupt");
-    EXPECT_EQ(settled.at("company").at("week"), state.at("company").at("week"));
-    EXPECT_EQ(settled.at("seed"), state.at("seed"));
-    expect_validation(settled, true);
-    const auto ended = call(apc::calculate_result, {{"state", settled}, {"scope", "company"}}).at("state");
-    EXPECT_EQ(ended.at("company_result").at("final_funds"), -400001);
-    EXPECT_EQ(ended.at("company_result").at("rating"), "failed");
-    expect_validation(ended, true);
-    state["company"]["funds"] = -max_i;
-    expect_validation(state, true);
-    const auto before = state.dump();
-    expect_error(apc::calculate_result(Json{{"state", state}, {"scope", "project"}}.dump()), "INVALID_INPUT");
-    EXPECT_EQ(state.dump(), before);
-}
-
-TEST(DynamicExecution, AccumulatedCostOverflowIsAtomic) {
-    for (const char* owner : {"company", "project"}) {
-        auto state = configure(start());
-        state[owner]["finance"]["costs"]["events"] = max_i;
-        expect_validation(state, true);
-        const auto before = state.dump();
-        expect_error(apc::advance_week(Json{{"state", state}}.dump()), "INVALID_INPUT");
-        EXPECT_EQ(state.dump(), before);
-    }
-    auto idle = initialize();
-    idle["company"]["finance"]["costs"]["events"] = max_i;
-    expect_validation(idle, true);
-    const auto before = idle.dump();
-    expect_error(apc::advance_week(Json{{"state", idle}}.dump()), "INVALID_INPUT");
-    EXPECT_EQ(idle.dump(), before);
-}
-
-TEST(DynamicExecution, SpecialStylesCannotBypassExecutionGatesThroughLoadedState) {
-    for (auto style : {"meme", "ai"}) {
-        auto idle = initialize();
-        idle["custom_offer"] = dynamic_offer("styled");
-        idle["custom_offer"]["origin"] = "custom";
-        idle["custom_offer"]["style"] = style;
-        expect_validation(idle, true);
-        expect_mode_blocked(apc::start_project, {{"state", idle}, {"offer_id", "styled"}, {"mode", "contract"}, {"investment_percent", 0}});
-        auto loaded = start();
-        loaded["project"]["offer"]["origin"] = "custom";
-        loaded["project"]["offer"]["style"] = style;
-        loaded["project"]["offer"]["scale"] = "short";
-        expect_validation(loaded, true);
-        loaded = configure(loaded);
-        expect_mode_blocked(apc::advance_week, {{"state", loaded}});
-        loaded = call(apc::apply_decision, {{"state", loaded}, {"decision", {{"type", "end_company"}}}}).at("state");
-        expect_validation(loaded, true);
-        expect_mode_blocked(apc::calculate_result, {{"state", loaded}, {"scope", "project"}});
-    }
-}
-
-TEST(DynamicExecution, ChangedRolesRemainConsistentWithEachStageSnapshot) {
-    auto idle = initialize();
-    for (auto stage : apc::rules::stages) idle["offers"][0]["workloads"][stage] = 1;
-    auto state = call(apc::start_project, {{"state", idle}, {"offer_id", idle.at("offers")[0].at("id")}, {"mode", "contract"}, {"investment_percent", 0}}).at("state");
-    state = advance(configure(state)).at("state");
-    state["company"]["staff"][0]["role"] = "scriptwriter";
-    state["project"]["stages"]["storyboard"]["recommended_configuration"]["assignments"][0]["role"] = "scriptwriter";
-    expect_validation(state, true);
-    state = play_until_ready(state);
-    const auto settled = call(apc::calculate_result, {{"state", state}, {"scope", "project"}}).at("state");
-    EXPECT_EQ(settled.at("history")[0].at("stages").at("script").at("result").at("team")[0].at("role"), "director");
-    EXPECT_EQ(settled.at("history")[0].at("stages").at("storyboard").at("result").at("team")[0].at("role"), "scriptwriter");
-    expect_validation(settled, true);
-}
-
-TEST(ValidatorCompatibility, ContractDeadlineMatchesItsOfferDuration) {
-    expect_invalid_mutations(start(), {
-        [](Json& s) { s["project"]["deadline_week"] = 2; },
-        [](Json& s) { s["project"]["offer"]["duration_weeks"] = 1; }
-    });
-    auto short_project = start();
-    short_project["project"]["deadline_week"] = 2;
-    short_project["project"]["offer"]["duration_weeks"] = 2;
-    expect_validation(short_project, true);
+TEST(Recruit, SaveRoundtripKeepsPoolAndPity) {
+    auto state = scout(with_pity(initialize(), 3, 7));
+    state = hire(state, state.at("recruitment_pool").at(0).at("id").get<std::string>());
+    const auto restored = Json::parse(state.dump());
+    EXPECT_EQ(restored, state);
+    const auto again = scout(restored);
+    EXPECT_EQ(again.at("recruitment_pool").size(), 3U);
+    EXPECT_EQ(restored.at("company").at("scout_pity"), state.at("company").at("scout_pity"));
 }

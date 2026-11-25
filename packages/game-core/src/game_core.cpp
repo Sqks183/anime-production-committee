@@ -1,6 +1,5 @@
 #include "game_core.hpp"
 #include "game_rules.hpp"
-#include "game_validation.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -19,6 +18,8 @@ struct ApiError { const char* code; const char* message; };
 [[noreturn]] void locked() { throw ApiError{"STAGE_LOCKED", u8"阶段方案已锁定，阶段进行期间不能修改常规配置。"}; }
 [[noreturn]] void not_allowed(const char* message) { throw ApiError{"MODE_NOT_ALLOWED", message}; }
 [[noreturn]] void ended_company() { throw ApiError{"COMPANY_ENDED", u8"公司已进入结束流程，只能结清待交付项目或生成经营总结。"}; }
+[[noreturn]] void insufficient() { throw ApiError{"INSUFFICIENT_BUDGET", u8"资金不足以支付本次可选动作，状态保持不变。"}; }
+[[noreturn]] void capacity() { throw ApiError{"CAPACITY_EXCEEDED", u8"核心名册已达上限，不能再录用核心员工。"}; }
 void require(bool condition) { if (!condition) invalid(); }
 Integer number(const Json& value, Integer max = rules::max_integer, Integer min = 0) {
     require(value.is_number_integer());
@@ -52,62 +53,26 @@ int stage_index(const std::string& stage) {
     invalid();
 }
 
-std::string nonempty_text(const Json& value) {
-    const auto result = text(value);
-    require(result.find_first_not_of(" \t\r\n") != std::string::npos);
-    return result;
+const rules::StaffSpec& staff_spec(const std::string& id) {
+    for (const auto& item : rules::staff) if (id == item.id) return item;
+    invalid();
 }
-void check_role(const Json& value) {
-    require(one_of(value, {"director", "scriptwriter", "animation_director", "key_animator", "animator", "production_manager", "postproduction"}));
+std::string offer_base(const std::string& id) {
+    const auto pos = id.find("_r");
+    if (pos == std::string::npos) return id;
+    const auto suffix = id.substr(pos + 2);
+    require(suffix.size() == 1 && suffix >= "2" && suffix <= "9");
+    return id.substr(0, pos);
 }
-void check_ability(const Json& value) {
-    require(one_of(value, {"planning", "direction", "drawing", "animation", "management", "postproduction"}));
-}
-void check_source(const Json& value) { require(one_of(value, {"manga", "light_novel", "game", "original"})); }
-void check_rating(const Json& value) { require(one_of(value, {"S", "A", "B", "C", "D"})); }
-void check_texts(const Json& values) {
-    require(values.is_array());
-    for (const auto& value : values) nonempty_text(value);
-}
-void check_abilities(const Json& values, Integer maximum = 100) {
-    require(values.is_object() && values.size() == rules::abilities.size());
-    for (auto ability : rules::abilities) number(values.at(ability), maximum);
-}
-const Json& optional_slot(const Json& object, const char* key) {
-    static const Json empty = nullptr;
-    return object.contains(key) ? object.at(key) : empty;
-}
-Integer optional_amount(const Json& object, const char* key) { return object.contains(key) ? num(object, key) : 0; }
-std::string offer_origin(const Json& offer) { return offer.contains("origin") ? text(offer.at("origin")) : "market"; }
-void check_style_origin(const Json& item) {
-    if (item.contains("origin")) require(one_of(item.at("origin"), {"market", "custom", "incoming", "proposal"}));
-    if (item.contains("style")) require(one_of(item.at("style"), {"normal", "meme", "ai"}));
-    const auto style = item.contains("style") ? text(item.at("style")) : "normal";
-    if (style != "normal") require(offer_origin(item) == "custom");
-    if (style == "meme") require(item.at("scale") == "short");
-}
-void check_committee(const Json& members) {
-    require(members.is_array() && !members.empty());
-    std::set<std::string> ids;
-    for (const auto& member : members) {
-        require(member.is_object());
-        require(ids.insert(nonempty_text(member.at("id"))).second);
-        nonempty_text(member.at("name"));
-        require(!member.contains("share_percent") && !member.contains("channels"));
-        require(one_of(member.at("channel"), {"publisher", "toy", "music", "tv_broadcast"}));
-    }
-}
-template<class State> auto find_current_staff(State& state, const std::string& id)
-    -> decltype(&state.at("company").at("staff").at(0)) {
-    for (auto& person : state.at("company").at("staff")) if (person.at("id") == id) return &person;
-    if (state.at("project").is_object())
-        for (auto& person : state.at("project").at("temporary_staff")) if (person.at("id") == id) return &person;
+const rules::OfferSpec* find_offer_spec(const std::string& id) {
+    const auto base = offer_base(id);
+    for (const auto& item : rules::offers) if (base == item.id) return &item;
     return nullptr;
 }
-const rules::StaffSpec& execution_staff_spec(const Json& person) {
-    if (person.at("employment") == "core")
-        for (const auto& spec : rules::staff) if (person.at("id") == spec.id) return spec;
-    not_allowed(u8"该员工尚无已定义的专业匹配来源，暂不能执行制作周；请等待动态员工专业契约接入。");
+const rules::OfferSpec& offer_catalog_item(const std::string& id) {
+    const auto* spec = find_offer_spec(id);
+    require(spec != nullptr);
+    return *spec;
 }
 const rules::Policy& policy_of(const std::string& id) {
     for (const auto& item : rules::policies) if (id == item.id) return item;
@@ -117,6 +82,19 @@ const rules::ScaleRule& scale_of(const std::string& id) {
     for (const auto& item : rules::scales) if (id == item.scale) return item;
     invalid();
 }
+int role_index(const std::string& role) {
+    for (std::size_t i = 0; i < rules::roles.size(); ++i) if (role == rules::roles[i]) return static_cast<int>(i);
+    invalid();
+}
+const char* role_for_ability(int ability) {
+    for (std::size_t i = 0; i < rules::roles.size(); ++i) if (rules::role_ability[i] == ability) return rules::roles[i];
+    invalid();
+}
+const char* specialty_of(const Json& person) {
+    const auto id = person.at("id").get<std::string>();
+    for (const auto& spec : rules::staff) if (id == spec.id) return spec.specialty;
+    return rules::abilities[rules::role_ability[role_index(person.at("role").get<std::string>())]];
+}
 
 Json zero_costs() {
     return {{"salary", 0}, {"operations", 0}, {"production", 0}, {"temporary", 0}, {"outsourcing", 0}, {"events", 0}, {"extension", 0}, {"penalty", 0}};
@@ -124,38 +102,21 @@ Json zero_costs() {
 Json empty_finance(std::int64_t contract_received = 0) {
     return {{"contract_received", contract_received}, {"investment_paid", 0}, {"commercial_share_received", 0}, {"costs", zero_costs()}};
 }
-Integer costs_total(const Json& costs) {
-    require(costs.is_object());
-    Integer total = 0;
-    for (auto key : {"salary", "operations", "production", "temporary", "outsourcing", "events", "extension", "penalty"}) total = add(total, number(costs.at(key)));
-    for (auto key : {"development", "distribution"}) total = add(total, optional_amount(costs, key));
-    return total;
+void check_costs(const Json& costs) {
+    for (auto key : {"salary", "operations", "production", "temporary", "outsourcing", "events", "extension", "penalty"}) number(costs.at(key));
 }
-void check_costs(const Json& costs) { costs_total(costs); }
 void check_finance(const Json& finance) {
-    require(finance.is_object());
     number(finance.at("contract_received")); number(finance.at("investment_paid")); number(finance.at("commercial_share_received"));
     check_costs(finance.at("costs"));
+}
+Integer costs_total(const Json& costs) {
+    Integer total = 0;
+    for (auto key : {"salary", "operations", "production", "temporary", "outsourcing", "events", "extension", "penalty"}) total += number(costs.at(key));
+    return total;
 }
 void add_cost(Json& finance, const char* category, Integer amount) {
     if (amount <= 0) return;
     finance["costs"][category] = add(number(finance.at("costs").at(category)), amount);
-    check_costs(finance.at("costs"));
-}
-
-// 公司声望的唯一写入点：向下钳到 0、不设数值上限，实际生效的变化连同原因与结果值追加进 company.reputation_log。
-// 钳制后没有实际变化时不写记录；声望不随时间衰减，只有经营行为与结算节点调用本函数。
-void change_reputation(Json& state, Integer delta, const std::string& reason) {
-    require(!reason.empty());
-    auto& company = state["company"];
-    const auto before = num(company.at("reputation"));
-    const auto after = delta >= 0 ? add(before, delta) : std::max<Integer>(0, before + delta);
-    if (after == before) return;
-    company["reputation"] = after;
-    if (!company.contains("reputation_log")) company["reputation_log"] = Json::array();
-    company["reputation_log"].push_back({
-        {"week", num(company, "week")}, {"reason", reason}, {"delta", after - before}, {"reputation_after", after}
-    });
 }
 
 Json make_staff(const rules::StaffSpec& spec) {
@@ -179,7 +140,7 @@ Json make_offer(const rules::OfferSpec& spec) {
     for (std::size_t i = 0; i < rules::stages.size(); ++i) workloads[rules::stages[i]] = spec.workloads[i];
     return {
         {"id", spec.id}, {"name", spec.name}, {"source", spec.source}, {"scale", spec.scale},
-        {"contract_budget", spec.contract_budget},
+        {"total_investment", spec.total_investment}, {"contract_budget", rules::contract_budget(spec.total_investment)},
         {"duration_weeks", spec.duration_weeks}, {"target_quality", spec.target_quality},
         {"audience_base", spec.audience_base}, {"commercial_potential", spec.commercial_potential},
         {"risk", spec.risk}, {"allowed_modes", Json::array({"contract"})}, {"workloads", workloads}, {"previous_work_id", nullptr}
@@ -192,59 +153,24 @@ Json make_offer_variant(const rules::OfferSpec& spec, int round) {
     return item;
 }
 void check_offer(const Json& item) {
-    require(item.is_object());
-    const auto id = nonempty_text(item.at("id"));
-    nonempty_text(item.at("name"));
-    check_source(item.at("source"));
-    require(one_of(item.at("scale"), {"ova", "short", "tv", "movie"}));
-    require(!item.contains("total_investment"));
-    number(item.at("contract_budget"));
-    number(item.at("duration_weeks"), rules::max_integer, 1);
-    number(item.at("target_quality"), 100); number(item.at("audience_base"), 100); number(item.at("commercial_potential"), 100);
-    require(one_of(item.at("risk"), {"low", "medium", "high"}));
-    const auto& workloads = item.at("workloads");
-    require(workloads.is_object() && workloads.size() == rules::stages.size());
-    for (auto stage : rules::stages) number(workloads.at(stage), rules::max_integer, 1);
-    const auto& allowed = item.at("allowed_modes");
-    require(allowed.is_array() && !allowed.empty());
-    std::set<std::string> modes;
-    for (const auto& mode : allowed) {
-        require(one_of(mode, {"contract", "committee"}));
-        require(modes.insert(text(mode)).second);
-    }
-    if (item.at("source") == "original") require(modes.size() == 1 && modes.count("committee"));
-    if (!item.at("previous_work_id").is_null()) require(nonempty_text(item.at("previous_work_id")) != id);
-    check_style_origin(item);
-    optional_amount(item, "min_reputation");
-    if (item.contains("committee_members")) {
-        require(modes.count("committee") && !item.at("committee_members").empty());
-        check_committee(item.at("committee_members"));
-    }
-    if (item.contains("channel_potentials")) {
-        const auto& potentials = item.at("channel_potentials");
-        require(potentials.is_object());
-        number(potentials.at("bd"), 100);
-        for (auto it = potentials.begin(); it != potentials.end(); ++it) {
-            require(one_of(Json(it.key()), {"bd", "publisher", "toy", "music", "tv_broadcast"}));
-            number(it.value(), 100);
-        }
-    }
-    if (item.contains("required_works")) {
-        const auto& requirements = item.at("required_works");
-        require(requirements.is_array() && !requirements.empty());
-        std::set<std::pair<std::string, std::string>> seen;
-        for (const auto& requirement : requirements) {
-            require(requirement.is_object());
-            check_rating(requirement.at("rating"));
-            if (requirement.contains("source")) check_source(requirement.at("source"));
-            require(seen.emplace(text(requirement.at("rating")), requirement.contains("source") ? text(requirement.at("source")) : "").second);
-        }
-    }
+    const auto id = text(item.at("id"));
+    const auto& spec = offer_catalog_item(id);
+    const auto name = text(item.at("name"));
+    require(name == spec.name || (id != std::string(spec.id) && name.rfind(spec.name, 0) == 0));
+    require(item.at("source") == Json(spec.source) && item.at("scale") == Json(spec.scale));
+    require(num(item, "total_investment") == spec.total_investment);
+    require(num(item, "contract_budget") == rules::contract_budget(spec.total_investment));
+    require(num(item, "duration_weeks") == spec.duration_weeks && num(item, "target_quality") == spec.target_quality);
+    require(num(item, "audience_base") == spec.audience_base && num(item, "commercial_potential") == spec.commercial_potential);
+    require(item.at("risk") == Json(spec.risk));
+    for (std::size_t i = 0; i < rules::stages.size(); ++i) require(num(item.at("workloads"), rules::stages[i]) == spec.workloads[i]);
+    require(item.at("allowed_modes").is_array() && item.at("allowed_modes").size() == 1 && item.at("allowed_modes")[0] == "contract");
+    require(item.at("previous_work_id").is_null());
 }
 
 Integer salary_total(const Json& state) {
     Integer total = rules::operations_weekly;
-    for (const auto& person : state.at("company").at("staff")) total = add(total, num(person, "weekly_salary"));
+    for (const auto& person : state.at("company").at("staff")) total += num(person, "weekly_salary");
     return total;
 }
 Json recommended_configuration(const Json& state, const std::string& stage) {
@@ -279,7 +205,7 @@ Json active_preview(const Json& state) {
     const auto production = weekly_production_cost(state);
     auto costs = zero_costs();
     costs["salary"] = salaries; costs["operations"] = rules::operations_weekly; costs["production"] = production;
-    return {{"next_week", num(state.at("company"), "week") + 1}, {"costs", costs}, {"total_cost", add(add(salaries, rules::operations_weekly), production)}, {"event_probability_per_mille", 0}};
+    return {{"next_week", num(state.at("company"), "week") + 1}, {"costs", costs}, {"total_cost", salaries + rules::operations_weekly + production}, {"event_probability_per_mille", 0}};
 }
 void refresh_preview(Json& state) {
     const auto& phase = state.at("phase");
@@ -292,8 +218,6 @@ Json generate_offers(const Json& state) {
     const auto seed = static_cast<std::uint32_t>(number(state.at("seed"), rules::max_seed));
     std::set<std::string> used;
     for (const auto& work : state.at("history")) used.insert(work.at("id").get<std::string>());
-    for (auto key : {"custom_offer", "pending_proposal"})
-        if (!optional_slot(state, key).is_null()) used.insert(text(state.at(key).at("id")));
     Json result = Json::array();
     const auto start = seed % rules::offers.size();
     for (std::size_t offset = 0; offset < rules::offers.size() && result.size() < 4; ++offset) {
@@ -307,6 +231,100 @@ Json generate_offers(const Json& state) {
     }
     require(result.size() == 4);
     return result;
+}
+// 招募池生成：每次成功 scout 恰消耗 48 步 LCG（3 候选×16 步），失败 0 步。
+// 顺序：档→模板→六能力→六潜力→姓→名；形状修正/带修正/重名回绕不消耗种子。
+Json generate_pool(const Json& state, const Json& decision, std::uint32_t& seed_out, Json& pity_out) {
+    const bool targeted = decision.at("type") == "targeted_scout";
+    int focus = -1;
+    std::string fixed_role;
+    if (targeted) {
+        const bool has_role = decision.contains("role");
+        const bool has_focus = decision.contains("focus_ability");
+        require(has_role != has_focus);
+        if (has_role) {
+            fixed_role = text(decision.at("role"));
+            focus = rules::role_ability[role_index(fixed_role)];
+        } else {
+            const auto name = text(decision.at("focus_ability"));
+            for (std::size_t i = 0; i < rules::abilities.size(); ++i) if (name == rules::abilities[i]) focus = static_cast<int>(i);
+            require(focus >= 0);
+        }
+    }
+    auto seed = static_cast<std::uint32_t>(number(state.at("seed"), rules::max_seed));
+    auto draw = [&](std::uint32_t mod) { seed = next_seed(seed); return static_cast<int>(seed % mod); };
+    const auto shift = static_cast<int>(std::min<Integer>(num(state.at("company"), "reputation") / rules::reputation_shift_step, 10)) * rules::reputation_shift_permille;
+    auto chance = rules::band_chance;
+    chance[0] -= 2 * shift; chance[2] += shift; chance[3] += shift;
+    require(chance[0] >= 100);
+    const auto pity = state.at("company").contains("scout_pity") ? state.at("company").at("scout_pity") : Json{{"since_sr", 0}, {"since_ssr", 0}};
+    const auto since_sr = num(pity, "since_sr");
+    const auto since_ssr = num(pity, "since_ssr");
+    std::set<std::string> names;
+    for (const auto& person : state.at("company").at("staff")) names.insert(person.at("name").get<std::string>());
+    for (const auto& person : state.at("recruitment_pool")) names.insert(person.at("name").get<std::string>());
+    Json pool = Json::array();
+    int best_band = 0;
+    for (int c = 0; c < rules::scout_candidates; ++c) {
+        const auto roll = draw(1000);
+        int band = 0, cumulative = 0;
+        for (std::size_t i = 0; i < chance.size(); ++i) { cumulative += chance[i]; if (roll < cumulative) { band = static_cast<int>(i); break; } }
+        if (c == rules::scout_candidates - 1) {
+            if (since_ssr + 1 >= rules::pity_ssr) band = 3;
+            else if (since_sr + 1 >= rules::pity_sr && band < 2) band = 2;
+        }
+        std::vector<int> compat;
+        for (std::size_t i = 0; i < rules::templates.size(); ++i) if (rules::templates[i].bands & (1 << band)) compat.push_back(static_cast<int>(i));
+        const auto& tpl = rules::templates[compat[draw(static_cast<std::uint32_t>(compat.size()))]];
+        const auto range = rules::band_range[band];
+        std::array<int, 6> ability{};
+        for (std::size_t i = 0; i < ability.size(); ++i) ability[i] = range.lo + draw(static_cast<std::uint32_t>(range.hi - range.lo + 1));
+        int spike = tpl.spike;
+        if (spike == -2) spike = static_cast<int>(std::max_element(ability.begin(), ability.end()) - ability.begin());
+        if (spike >= 0) ability[spike] = std::min(100, ability[spike] + tpl.boost);
+        if (tpl.penalty > 0) for (std::size_t i = 0; i < ability.size(); ++i) if (static_cast<int>(i) != spike) ability[i] = std::max(0, ability[i] - tpl.penalty);
+        if (targeted) ability[focus] = std::min(100, ability[focus] + 15);
+        int sum = 0;
+        for (auto value : ability) sum += value;
+        while (sum < range.lo) {
+            const auto it = std::max_element(ability.begin(), ability.end());
+            if (*it >= 100) break;
+            ++*it; ++sum;
+        }
+        while (sum > range.hi) {
+            const auto it = std::min_element(ability.begin(), ability.end());
+            if (*it <= 0) break;
+            --*it; --sum;
+        }
+        const auto role = targeted && !fixed_role.empty() ? fixed_role : std::string(role_for_ability(spike >= 0 ? spike : static_cast<int>(std::max_element(ability.begin(), ability.end()) - ability.begin())));
+        Json abilities = Json::object(), potential = Json::object(), revealed = Json::object(), experience = Json::object();
+        for (std::size_t i = 0; i < ability.size(); ++i) {
+            abilities[rules::abilities[i]] = ability[i];
+            potential[rules::abilities[i]] = std::min(100, ability[i] + tpl.potential_lo + draw(static_cast<std::uint32_t>(tpl.potential_hi - tpl.potential_lo + 1)));
+            revealed[rules::abilities[i]] = false;
+            experience[rules::abilities[i]] = 0;
+        }
+        auto surname = draw(static_cast<std::uint32_t>(rules::surnames.size()));
+        const auto given = draw(static_cast<std::uint32_t>(rules::given_names.size()));
+        std::string name = std::string(rules::surnames[surname]) + rules::given_names[given];
+        while (names.count(name)) {
+            surname = (surname + 1) % static_cast<int>(rules::surnames.size());
+            name = std::string(rules::surnames[surname]) + rules::given_names[given];
+        }
+        names.insert(name);
+        const auto salary = (rules::salary_base + sum * rules::salary_per_point) * tpl.salary_permille / 1000;
+        pool.push_back({
+            {"id", "cand_" + std::to_string(seed)}, {"name", name}, {"role", role}, {"employment", "core"},
+            {"abilities", abilities}, {"experience", experience}, {"potential", potential}, {"revealed_potential", revealed},
+            {"talent_type", tpl.talent}, {"clues", Json::array({tpl.clue1, tpl.clue2})}, {"traits", Json::array()},
+            {"weekly_salary", salary}, {"project_fee", 0}, {"fatigue", rules::initial_fatigue},
+            {"morale", rules::initial_morale}, {"departure_warning", false}
+        });
+        best_band = std::max(best_band, band);
+    }
+    seed_out = seed;
+    pity_out = {{"since_sr", best_band >= 2 ? 0 : since_sr + 1}, {"since_ssr", best_band >= 3 ? 0 : since_ssr + 1}};
+    return pool;
 }
 Json team_snapshot(const Json& person) {
     return {{"staff_id", person.at("id")}, {"name", person.at("name")}, {"role", person.at("role")}, {"employment", person.at("employment")}, {"abilities", person.at("abilities")}};
@@ -328,431 +346,245 @@ Json build_summary(const Json& state) {
     };
 }
 
-enum class StaffPlacement { core, candidate, temporary };
-void check_staff_fields(const Json& person) {
-    require(person.is_object());
-    nonempty_text(person.at("id")); nonempty_text(person.at("name")); check_role(person.at("role"));
-    require(one_of(person.at("employment"), {"core", "temporary"}));
-    require(one_of(person.at("talent_type"), {"specialist", "uneven", "generalist", "ordinary"}));
-    check_abilities(person.at("abilities")); check_abilities(person.at("potential"));
-    check_abilities(person.at("experience"), rules::max_integer);
-    const auto& revealed = person.at("revealed_potential");
-    require(revealed.is_object() && revealed.size() == rules::abilities.size());
+// ---------- 完整状态校验 ----------
+void check_staff_generated(const Json& person) {
+    const auto id = text(person.at("id"));
+    require(id.rfind("cand_", 0) == 0 && id.size() > 5);
+    require(!text(person.at("name")).empty());
+    role_index(text(person.at("role")));
+    require(person.at("employment") == "core");
+    int sum = 0;
     for (auto ability : rules::abilities) {
-        require(num(person.at("potential"), ability) >= num(person.at("abilities"), ability));
-        require(revealed.at(ability).is_boolean());
+        const auto value = number(person.at("abilities").at(ability), 100);
+        const auto potential = number(person.at("potential").at(ability), 100);
+        require(potential >= value);
+        require(person.at("revealed_potential").at(ability).is_boolean());
+        number(person.at("experience").at(ability));
+        sum += static_cast<int>(value);
     }
-    check_texts(person.at("clues"));
-    require(person.at("clues").size() >= 1 && person.at("clues").size() <= 2);
-    check_texts(person.at("traits"));
-    number(person.at("weekly_salary")); number(person.at("project_fee"));
-    require(person.at("employment") == "core" ? num(person, "project_fee") == 0 : num(person, "weekly_salary") == 0);
+    require(one_of(person.at("talent_type"), {"specialist", "uneven", "generalist", "ordinary"}));
+    require(person.at("clues").is_array() && person.at("clues").size() >= 1 && person.at("clues").size() <= 2);
+    for (const auto& clue : person.at("clues")) {
+        const auto value = text(clue);
+        bool found = false;
+        for (const auto& tpl : rules::templates) if (value == tpl.clue1 || value == tpl.clue2) found = true;
+        require(found);
+    }
+    require(person.at("traits").is_array());
+    require(num(person, "weekly_salary") >= rules::salary_base + sum * rules::salary_per_point);
+    require(num(person, "project_fee") == 0);
     number(person.at("morale"), 100); number(person.at("fatigue"), 100);
     require(person.at("departure_warning").is_boolean());
 }
-void check_staff_placement(const Json& people, StaffPlacement placement) {
-    require(people.is_array());
-    for (const auto& person : people) {
-        check_staff_fields(person);
-        if (placement == StaffPlacement::core) require(person.at("employment") == "core");
-        if (placement == StaffPlacement::temporary) require(person.at("employment") == "temporary");
+void check_staff(const Json& person) {
+    const auto id = text(person.at("id"));
+    const auto& spec = staff_spec(id);
+    require(person.at("name") == Json(spec.name) && person.at("role") == Json(spec.role) && person.at("employment") == "core");
+    require(person.at("talent_type") == Json(spec.talent_type));
+    for (std::size_t i = 0; i < rules::abilities.size(); ++i) {
+        const auto ability = rules::abilities[i];
+        require(number(person.at("abilities").at(ability), 100) == spec.abilities[i]);
+        require(number(person.at("potential").at(ability), 100) == spec.potential[i]);
+        require(person.at("revealed_potential").at(ability).is_boolean());
+        number(person.at("experience").at(ability));
     }
+    require(person.at("clues").is_array() && person.at("clues").size() == 1 && person.at("clues")[0] == Json(spec.clue));
+    require(person.at("traits").is_array());
+    require(num(person, "weekly_salary") >= spec.weekly_salary && num(person, "project_fee") == 0);
+    number(person.at("morale"), 100); number(person.at("fatigue"), 100);
+    require(person.at("departure_warning").is_boolean());
 }
-void check_configuration_fields(const Json& config) {
+void check_configuration(const Json& config, const Json& state, bool references_current) {
     require(config.is_object() && one_of(config.at("policy"), {"quality", "balanced", "deadline"}) && config.at("overtime").is_boolean());
     require(config.at("assignments").is_array());
     std::set<std::string> seen;
     for (const auto& item : config.at("assignments")) {
-        require(item.is_object() && seen.insert(nonempty_text(item.at("staff_id"))).second);
-        check_role(item.at("role")); check_ability(item.at("focus"));
-    }
-}
-void check_configuration_references(const Json& config, const Json& state) {
-    if (config.is_null()) return;
-    for (const auto& assignment : config.at("assignments")) {
-        const auto* person = find_current_staff(state, text(assignment.at("staff_id")));
-        require(person != nullptr && assignment.at("role") == person->at("role"));
-    }
-}
-void check_configuration(const Json& config, const Json& state) {
-    check_configuration_fields(config);
-    check_configuration_references(config, state);
-}
-void check_team_snapshot(const Json& team) {
-    require(team.is_array());
-    std::set<std::string> ids;
-    for (const auto& member : team) {
-        require(member.is_object() && ids.insert(nonempty_text(member.at("staff_id"))).second);
-        nonempty_text(member.at("name")); check_role(member.at("role"));
-        require(one_of(member.at("employment"), {"core", "temporary"}));
-        check_abilities(member.at("abilities"));
-    }
-}
-void check_snapshot_references(const Json& config, const Json& team, bool match_role = true) {
-    if (config.is_null()) return;
-    for (const auto& assignment : config.at("assignments")) {
-        const auto found = std::find_if(team.begin(), team.end(), [&](const Json& member) { return member.at("staff_id") == assignment.at("staff_id"); });
-        require(found != team.end() && (!match_role || found->at("role") == assignment.at("role")));
+        const auto id = text(item.at("staff_id"));
+        require(seen.insert(id).second);
+        bool focus_ok = false;
+        for (auto ability : rules::abilities) if (item.at("focus") == Json(ability)) focus_ok = true;
+        require(focus_ok);
+        if (references_current) {
+            bool found = false;
+            for (const auto& person : state.at("company").at("staff")) if (person.at("id") == id) { require(item.at("role") == person.at("role")); found = true; }
+            require(found);
+        } else text(item.at("role"));
     }
 }
 void check_stage_result(const Json& result) {
     require(result.is_object());
-    number(result.at("weeks_spent"), rules::max_integer, 1);
+    number(result.at("weeks_spent"), rules::max_weeks, 1);
     number(result.at("quality"), 100);
-    check_costs(result.at("costs")); check_texts(result.at("issues")); check_team_snapshot(result.at("team"));
-}
-void check_supplier(const Json& supplier) {
-    require(supplier.is_object());
-    nonempty_text(supplier.at("id")); nonempty_text(supplier.at("name"));
-    const auto& specialties = supplier.at("specialties");
-    require(specialties.is_array() && !specialties.empty());
-    std::set<std::string> seen;
-    for (const auto& ability : specialties) { check_ability(ability); require(seen.insert(text(ability)).second); }
-    number(supplier.at("capacity"), rules::max_integer, 1); number(supplier.at("speed"), rules::max_integer, 1);
-    number(supplier.at("quality"), 100); number(supplier.at("reliability"), 100); number(supplier.at("unit_price"));
-    require(supplier.at("unlocked").is_boolean());
-}
-void check_outsource_task(const Json& task) {
-    require(task.is_object());
-    nonempty_text(task.at("id")); nonempty_text(task.at("supplier_id"));
-    stage_index(text(task.at("stage"))); check_ability(task.at("ability"));
-    const auto total = number(task.at("work_total"), rules::max_integer, 1);
-    const auto done = number(task.at("work_done"), total);
-    number(task.at("fee_paid")); number(task.at("due_week"));
-    require(one_of(task.at("mode"), {"normal", "emergency"}));
-    require(one_of(task.at("status"), {"active", "delivered", "failed"}));
-    if (task.at("status") == "delivered") require(done == total);
-}
-void check_event(const Json& event) {
-    require(event.is_object() && !event.contains("effect") && !event.contains("effects"));
-    nonempty_text(event.at("id")); nonempty_text(event.at("title")); nonempty_text(event.at("description"));
-    require(one_of(event.at("category"), {"personnel", "quality", "budget", "schedule"}));
-    stage_index(text(event.at("stage")));
-    const auto& trigger = event.at("trigger");
-    require(trigger.is_object()); nonempty_text(trigger.at("metric"));
-    signed_number(trigger.at("value")); signed_number(trigger.at("threshold"));
-    const auto& options = event.at("options");
-    require(options.is_array() && !options.empty());
+    check_costs(result.at("costs"));
+    require(result.at("issues").is_array());
+    require(result.at("team").is_array() && !result.at("team").empty());
     std::set<std::string> ids;
-    for (const auto& option : options) {
-        require(option.is_object() && !option.contains("effect") && !option.contains("effects"));
-        require(ids.insert(nonempty_text(option.at("id"))).second);
-        nonempty_text(option.at("label")); number(option.at("cost"));
-        require(option.at("allows_reconfigure").is_boolean());
-        if (!option.at("disabled_reason").is_null()) nonempty_text(option.at("disabled_reason"));
+    for (const auto& member : result.at("team")) {
+        require(ids.insert(text(member.at("staff_id"))).second);
+        require(one_of(member.at("employment"), {"core", "temporary"}));
+        for (auto ability : rules::abilities) number(member.at("abilities").at(ability), 100);
     }
 }
-int check_stages(const Json& stages, const Json* workloads = nullptr) {
-    require(stages.is_object() && stages.size() == rules::stages.size());
-    int first = -1;
-    for (std::size_t i = 0; i < rules::stages.size(); ++i) {
-        const auto name = rules::stages[i];
-        const auto& stage = stages.at(name);
-        require(stage.is_object() && one_of(stage.at("status"), {"pending", "ready", "active", "completed"}));
-        const auto& status = stage.at("status");
-        const auto done = number(stage.at("work_done")); number(stage.at("quality"), 100);
-        const auto& config = stage.at("configuration");
-        const auto& recommended = stage.at("recommended_configuration");
-        const auto& result = stage.at("result");
-        if (!config.is_null()) check_configuration_fields(config);
-        if (!recommended.is_null()) check_configuration_fields(recommended);
-        if (!result.is_null()) check_stage_result(result);
-        if (status == "completed") {
-            require(first == -1 && !config.is_null() && !result.is_null() && done > 0);
-            if (workloads) require(done == num(*workloads, name));
-        } else {
-            if (workloads) require(done < num(*workloads, name));
-            require(result.is_null());
-            if (first == -1) { first = static_cast<int>(i); require(status == "ready" || status == "active"); }
-            else require(status == "pending");
-            if (status == "active") require(!config.is_null());
-            else require(config.is_null() && done == 0);
-            if (status == "pending") require(recommended.is_null());
-        }
-    }
-    return first;
-}
-void check_mode_finance(const Json& object) {
-    require(one_of(object.at("mode"), {"contract", "committee"}));
-    check_finance(object.at("finance"));
-    if (object.at("mode") == "contract") {
-        require(num(object, "investment_percent") == 0);
-        require(num(object.at("finance"), "investment_paid") == 0 && num(object.at("finance"), "commercial_share_received") == 0);
-    } else number(object.at("investment_percent"), 100, 10);
-}
-void check_project(const Json& project) {
-    require(project.is_object());
-    check_offer(project.at("offer")); check_mode_finance(project);
-    const auto& modes = project.at("offer").at("allowed_modes");
-    require(std::find(modes.begin(), modes.end(), project.at("mode")) != modes.end());
+void check_project(const Json& project, const Json& state) {
+    require(project.is_object() && project.at("mode") == "contract" && num(project, "investment_percent") == 0);
+    check_offer(project.at("offer"));
+    const auto& spec = offer_catalog_item(project.at("offer").at("id").get<std::string>());
     number(project.at("opening_funds"));
+    const auto week = num(state.at("company"), "week");
     const auto start = number(project.at("start_week"), rules::max_weeks);
-    number(project.at("deadline_week"), rules::max_integer, start + 1);
-    number(project.at("extension_count"), 1);
-    if (project.at("mode") == "contract") {
-        require(!project.contains("total_investment"));
-        require(num(project, "deadline_week") == add(start, num(project.at("offer"), "duration_weeks")));
-        require(num(project, "extension_count") == 0 && project.at("committee_pressure").is_null());
-        require(optional_slot(project, "committee").is_null() && optional_slot(project, "tv_service").is_null());
-    } else {
-        number(project.at("committee_pressure"), 100);
-        require(project.contains("total_investment") && num(project, "total_investment") == add(num(project.at("offer"), "contract_budget"), num(project.at("offer"), "contract_budget")));
-        if (project.contains("committee")) check_committee(project.at("committee"));
-    }
-    const auto& tv = optional_slot(project, "tv_service");
-    if (!tv.is_null()) {
-        require(tv.is_object());
-        number(tv.at("purchased_week"), rules::max_weeks, start);
-        number(tv.at("cost"), rules::max_integer, 1);
-    }
-    check_staff_placement(project.at("temporary_staff"), StaffPlacement::temporary);
-    require(project.at("outsourcing").is_array());
-    for (const auto& task : project.at("outsourcing")) check_outsource_task(task);
+    const auto deadline = number(project.at("deadline_week"), rules::max_integer, start + 1);
+    require(start <= week);
+    require(num(project, "extension_count") == 0 && project.at("committee_pressure").is_null());
+    check_finance(project.at("finance"));
+    require(num(project.at("finance"), "investment_paid") == 0 && num(project.at("finance"), "commercial_share_received") == 0 && num(project.at("finance").at("costs"), "events") == 0);
+    require(project.at("temporary_staff").is_array() && project.at("temporary_staff").empty());
+    require(project.at("outsourcing").is_array() && project.at("outsourcing").empty());
     const auto& delivery = project.at("delivery_reason");
     require(delivery.is_null() || one_of(delivery, {"completed", "deadline", "company_closed"}));
-    const auto current = project.at("current_stage").is_null() ? -1 : stage_index(text(project.at("current_stage")));
-    require(current == check_stages(project.at("stages"), &project.at("offer").at("workloads")));
-    require((current == -1) == (delivery == "completed"));
+    int current = -1;
+    if (!project.at("current_stage").is_null()) current = stage_index(text(project.at("current_stage")));
+    const auto all_done = current == -1;
+    for (std::size_t i = 0; i < rules::stages.size(); ++i) {
+        const auto& stage = project.at("stages").at(rules::stages[i]);
+        const auto& status = stage.at("status");
+        require(one_of(status, {"pending", "ready", "active", "completed"}));
+        require(number(stage.at("work_done"), spec.workloads[i]) >= 0);
+        number(stage.at("quality"), 100);
+        if (status == "pending") {
+            require(stage.at("configuration").is_null() && stage.at("result").is_null() && stage.at("recommended_configuration").is_null() && num(stage, "work_done") == 0 && static_cast<int>(i) > current);
+        } else if (status == "ready") {
+            require(stage.at("configuration").is_null() && stage.at("result").is_null() && num(stage, "work_done") == 0 && static_cast<int>(i) == current);
+            if (!stage.at("recommended_configuration").is_null()) check_configuration(stage.at("recommended_configuration"), state, true);
+        } else if (status == "active") {
+            require(!stage.at("configuration").is_null() && stage.at("result").is_null() && static_cast<int>(i) == current && num(stage, "work_done") < spec.workloads[i]);
+            check_configuration(stage.at("configuration"), state, true);
+        } else {
+            require(!stage.at("configuration").is_null() && !stage.at("result").is_null() && num(stage, "work_done") == spec.workloads[i] && (static_cast<int>(i) < current || all_done));
+            check_configuration(stage.at("configuration"), state, false);
+            check_stage_result(stage.at("result"));
+        }
+    }
+    if (state.at("phase") == "producing") {
+        require(delivery.is_null() && !all_done && week < deadline);
+    } else {
+        require(!delivery.is_null());
+        if (delivery == "completed") require(all_done);
+        if (delivery == "deadline") require(!all_done && week >= deadline);
+        if (delivery == "company_closed") require(state.at("company").at("status") != "running" && !all_done);
+    }
 }
-void check_work_record(const Json& work) {
-    require(work.is_object());
-    const auto id = nonempty_text(work.at("id")); nonempty_text(work.at("name"));
-    check_source(work.at("source")); require(one_of(work.at("scale"), {"ova", "short", "tv", "movie"}));
+void check_work_record(const Json& work, const Json& state, std::set<std::string>& history_ids) {
+    const auto id = text(work.at("id"));
+    require(history_ids.insert(id).second);
+    const auto& spec = offer_catalog_item(id);
+    require(text(work.at("name")).rfind(spec.name, 0) == 0);
+    require(work.at("source") == Json(spec.source) && work.at("scale") == Json(spec.scale));
     const auto start = number(work.at("start_week"), rules::max_weeks);
     number(work.at("end_week"), rules::max_weeks, start);
-    if (!work.at("previous_work_id").is_null()) require(nonempty_text(work.at("previous_work_id")) != id);
+    require(number(work.at("end_week"), rules::max_weeks) <= num(state.at("company"), "week"));
+    require(work.at("previous_work_id").is_null());
     require(one_of(work.at("end_reason"), {"completed", "deadline", "company_closed"}));
-    check_mode_finance(work);
-    if (work.at("source") == "original") require(work.at("mode") == "committee");
-    number(work.at("quality_score"), 100); number(work.at("commercial_score"), 100); number(work.at("commercial_revenue"));
-    signed_number(work.at("profit")); check_team_snapshot(work.at("team"));
-    require((check_stages(work.at("stages")) == -1) == (work.at("end_reason") == "completed"));
-    check_style_origin(work);
-    if (work.contains("rating")) check_rating(work.at("rating"));
-    if (work.contains("channel_breakdown")) {
-        const auto& breakdown = work.at("channel_breakdown");
-        require(breakdown.is_array());
-        std::set<std::string> channels;
-        Integer revenue = 0, received = 0;
-        for (const auto& entry : breakdown) {
-            require(entry.is_object() && one_of(entry.at("channel"), {"bd", "publisher", "toy", "music", "tv_broadcast"}));
-            require(channels.insert(text(entry.at("channel"))).second);
-            const auto amount = num(entry, "revenue"), share = number(entry.at("company_received"), amount);
-            revenue = add(revenue, amount); received = add(received, share);
-        }
-        require(channels.count("bd") && revenue == num(work, "commercial_revenue") && received == num(work.at("finance"), "commercial_share_received"));
+    require(work.at("mode") == "contract" && num(work, "investment_percent") == 0);
+    number(work.at("quality_score"), 100); number(work.at("commercial_score"), 100);
+    number(work.at("commercial_revenue"));
+    check_finance(work.at("finance"));
+    require(num(work.at("finance"), "investment_paid") == 0 && num(work.at("finance"), "commercial_share_received") == 0);
+    signed_number(work.at("profit"));
+    require(work.at("team").is_array());
+    for (const auto& member : work.at("team")) require(one_of(member.at("employment"), {"core", "temporary"}));
+    for (std::size_t i = 0; i < rules::stages.size(); ++i) {
+        const auto& stage = work.at("stages").at(rules::stages[i]);
+        require(one_of(stage.at("status"), {"pending", "ready", "active", "completed"}));
+        require(number(stage.at("work_done"), spec.workloads[i]) >= 0);
+        number(stage.at("quality"), 100);
+        if (stage.at("status") == "completed") check_stage_result(stage.at("result"));
     }
 }
-// 声望历史是追加式账本：周次不回退，逐笔前后值衔接，末笔结果必须等于当前声望。
-// 字段缺席表示本特性之前写出的 v3 存档，按空历史解释；存在即整体校验，不做迁移。
-void check_reputation_log(const Json& entries, Integer reputation) {
-    require(entries.is_array());
-    auto expected = reputation;
-    auto next_week = static_cast<Integer>(rules::max_weeks);
-    for (auto entry = entries.rbegin(); entry != entries.rend(); ++entry) {
-        require(entry->is_object());
-        const auto week = number(entry->at("week"), rules::max_weeks);
-        require(week <= next_week);
-        next_week = week;
-        require(!nonempty_text(entry->at("reason")).empty());
-        const auto delta = signed_number(entry->at("delta"));
-        require(delta != 0);
-        require(number(entry->at("reputation_after")) == expected);
-        require(delta > 0 ? expected >= delta : expected <= rules::max_integer + delta);
-        expected -= delta;
-    }
-}
-void check_state_entities(const Json& state) {
+void validate(const Json& state) {
     require(state.is_object() && num(state, "version") == rules::version);
     number(state.at("seed"), rules::max_seed);
-    require(one_of(state.at("phase"), {"idle", "producing", "event_pending", "project_ready", "project_settled", "company_ended"}));
-    const auto& company = state.at("company");
-    require(company.is_object() && one_of(company.at("status"), {"running", "closing", "ended"}));
-    number(company.at("week"), rules::max_weeks); number(company.at("initial_funds"));
-    signed_number(company.at("funds")); number(company.at("reputation")); check_finance(company.at("finance"));
-    if (company.contains("reputation_log")) check_reputation_log(company.at("reputation_log"), num(company, "reputation"));
-    require(company.at("end_reason").is_null() || one_of(company.at("end_reason"), {"time_limit", "bankrupt", "voluntary"}));
-    if (company.contains("scout_pity")) {
-        const auto& pity = company.at("scout_pity");
-        require(pity.is_object()); number(pity.at("since_sr")); number(pity.at("since_ssr"));
-    }
-    check_staff_placement(company.at("staff"), StaffPlacement::core);
-    check_staff_placement(state.at("recruitment_pool"), StaffPlacement::candidate);
-    require(state.at("suppliers").is_array());
-    for (const auto& supplier : state.at("suppliers")) check_supplier(supplier);
-    require(state.at("offers").is_array());
-    for (const auto& offer : state.at("offers")) check_offer(offer);
-    for (auto slot : {"custom_offer", "pending_proposal"}) if (!optional_slot(state, slot).is_null()) check_offer(state.at(slot));
-    if (!state.at("project").is_null()) check_project(state.at("project"));
-    if (!state.at("pending_event").is_null()) check_event(state.at("pending_event"));
-    require(state.at("history").is_array());
-    for (const auto& work : state.at("history")) check_work_record(work);
-    if (!state.at("last_project_id").is_null()) nonempty_text(state.at("last_project_id"));
-    const auto& summary = state.at("company_result");
-    if (!summary.is_null()) {
-        require(summary.is_object() && one_of(summary.at("reason"), {"time_limit", "bankrupt", "voluntary"}));
-        number(summary.at("weeks"), rules::max_weeks); signed_number(summary.at("final_funds"));
-        signed_number(summary.at("net_cash_change")); number(summary.at("total_projects"));
-        require(one_of(summary.at("rating"), {"renowned", "stable", "small", "failed"}));
-        if (!summary.at("best_work_id").is_null()) nonempty_text(summary.at("best_work_id"));
-    }
-    const auto& preview = state.at("preview");
-    if (!preview.is_null()) {
-        require(preview.is_object()); number(preview.at("next_week"), rules::max_weeks, 1);
-        require(number(preview.at("total_cost")) == costs_total(preview.at("costs")));
-        number(preview.at("event_probability_per_mille"), 1000);
-    }
-}
-void check_global_ids_and_references(const Json& state) {
-    std::set<std::string> staff_ids, offer_ids, supplier_ids, task_ids;
-    auto collect_staff = [&](const Json& people) {
-        for (const auto& person : people) require(staff_ids.insert(text(person.at("id"))).second);
-    };
-    collect_staff(state.at("company").at("staff")); collect_staff(state.at("recruitment_pool"));
-    const auto& project = state.at("project");
-    if (!project.is_null()) collect_staff(project.at("temporary_staff"));
-    for (const auto& supplier : state.at("suppliers")) require(supplier_ids.insert(text(supplier.at("id"))).second);
-    const auto week = num(state.at("company"), "week");
-    std::map<std::string, Integer> history_end;
-    auto check_previous = [&](const Json& item, Integer latest) {
-        const auto& previous = item.at("previous_work_id");
-        if (previous.is_null()) return;
-        const auto found = history_end.find(text(previous));
-        require(found != history_end.end() && found->second <= latest);
-    };
-    for (const auto& work : state.at("history")) {
-        const auto id = text(work.at("id"));
-        require(offer_ids.insert(id).second && num(work, "end_week") <= week);
-        check_previous(work, num(work, "start_week"));
-        history_end.emplace(id, num(work, "end_week"));
-        for (auto name : rules::stages) {
-            const auto& stage = work.at("stages").at(name);
-            check_snapshot_references(stage.at("configuration"), work.at("team"), false);
-            if (!stage.at("result").is_null()) {
-                const auto& team = stage.at("result").at("team");
-                check_snapshot_references(stage.at("configuration"), team);
-                for (const auto& member : team) {
-                    const auto& all = work.at("team");
-                    require(std::any_of(all.begin(), all.end(), [&](const Json& other) { return other.at("staff_id") == member.at("staff_id"); }));
-                }
-            }
-        }
-    }
-    auto collect_offer = [&](const Json& offer, Integer latest) {
-        require(offer_ids.insert(text(offer.at("id"))).second);
-        check_previous(offer, latest);
-    };
-    for (const auto& offer : state.at("offers")) collect_offer(offer, week);
-    for (auto slot : {"custom_offer", "pending_proposal"}) if (!optional_slot(state, slot).is_null()) collect_offer(state.at(slot), week);
-    const auto& last = state.at("last_project_id");
-    require(last.is_null() || history_end.count(text(last)));
-    if (!project.is_null()) {
-        const auto start = num(project, "start_week");
-        require(start <= week && last.is_null());
-        collect_offer(project.at("offer"), start);
-        const auto& tv = optional_slot(project, "tv_service");
-        if (!tv.is_null()) require(num(tv, "purchased_week") <= week);
-        for (auto name : rules::stages) {
-            const auto& stage = project.at("stages").at(name);
-            if (stage.at("status") == "completed") check_snapshot_references(stage.at("configuration"), stage.at("result").at("team"));
-            else {
-                check_configuration_references(stage.at("configuration"), state);
-                check_configuration_references(stage.at("recommended_configuration"), state);
-            }
-        }
-        for (const auto& task : project.at("outsourcing")) {
-            require(task_ids.insert(text(task.at("id"))).second);
-            const auto& suppliers = state.at("suppliers");
-            const auto supplier = std::find_if(suppliers.begin(), suppliers.end(), [&](const Json& item) { return item.at("id") == task.at("supplier_id"); });
-            require(supplier != suppliers.end() && supplier->at("unlocked") == true);
-            const auto& specialties = supplier->at("specialties");
-            require(std::find(specialties.begin(), specialties.end(), task.at("ability")) != specialties.end());
-        }
-    }
-    const auto& event = state.at("pending_event");
-    if (!event.is_null()) require(!project.is_null() && event.at("stage") == project.at("current_stage"));
-}
-void check_phase_invariants(const Json& state) {
-    const auto& company = state.at("company");
-    const auto& status = company.at("status");
     const auto& phase = state.at("phase");
-    const auto week = num(company, "week");
-    const auto& project = state.at("project");
-    const auto& offers = state.at("offers");
-    const auto& event = state.at("pending_event");
-    const auto& last = state.at("last_project_id");
-    const auto& custom = optional_slot(state, "custom_offer");
-    const auto& proposal = optional_slot(state, "pending_proposal");
+    require(one_of(phase, {"idle", "producing", "event_pending", "project_ready", "project_settled", "company_ended"}));
+    const auto& company = state.at("company");
+    const auto week = number(company.at("week"), rules::max_weeks);
+    const auto& status = company.at("status");
+    require(one_of(status, {"running", "closing", "ended"}));
+    number(company.at("initial_funds"));
+    signed_number(company.at("funds"));
+    number(company.at("reputation"));
+    check_finance(company.at("finance"));
     if (status == "running") {
-        require(company.at("end_reason").is_null() && signed_number(company.at("funds")) >= 0 && week < rules::max_weeks);
-        require(phase != "company_ended");
+        require(company.at("end_reason").is_null() && num(company, "funds") >= 0 && week < rules::max_weeks);
     } else {
-        require(!company.at("end_reason").is_null());
+        require(one_of(company.at("end_reason"), {"time_limit", "bankrupt", "voluntary"}));
         require(signed_number(company.at("funds")) >= 0 || company.at("end_reason") == "bankrupt");
         if (company.at("end_reason") == "time_limit") require(week == rules::max_weeks);
-        if (status == "closing") require(one_of(phase, {"idle", "project_ready", "project_settled"}));
-        else require(phase == "company_ended");
     }
-    if (status == "ended") require(state.at("company_result") == build_summary(state));
-    else require(state.at("company_result").is_null());
-    if (!custom.is_null()) require(offer_origin(custom) == "custom");
-    if (!proposal.is_null()) require(offer_origin(proposal) == "proposal" && proposal.at("source") == "original");
-    if (status != "running" || phase != "idle") require(custom.is_null() && proposal.is_null());
-    for (const auto& offer : offers) require(offer_origin(offer) == "market" || offer_origin(offer) == "incoming");
-    if (phase == "idle") {
-        require(project.is_null() && last.is_null() && offers.size() == (status == "running" ? 4 : 0));
-        if (status == "running") {
-            const auto available = std::count_if(offers.begin(), offers.end(), [&](const Json& offer) { return optional_amount(offer, "min_reputation") <= num(company, "reputation"); });
-            require(available >= 2);
-        }
+    require(company.at("staff").is_array() && company.at("staff").size() >= rules::staff.size()
+        && company.at("staff").size() <= static_cast<std::size_t>(rules::core_staff_cap));
+    std::set<std::string> roster_ids, roster_names;
+    for (const auto& person : company.at("staff")) {
+        const auto id = person.at("id").get<std::string>();
+        require(roster_ids.insert(id).second);
+        require(roster_names.insert(person.at("name").get<std::string>()).second);
+        bool fixed = false;
+        for (const auto& spec : rules::staff) if (id == spec.id) fixed = true;
+        if (fixed) check_staff(person); else check_staff_generated(person);
+    }
+    if (company.contains("scout_pity")) {
+        const auto& pity = company.at("scout_pity");
+        number(pity.at("since_sr"), rules::pity_sr - 1);
+        number(pity.at("since_ssr"), rules::pity_ssr - 1);
+    }
+    require(state.at("pending_event").is_null());
+    require(state.at("suppliers").is_array() && state.at("suppliers").empty());
+    require(state.at("recruitment_pool").is_array() && state.at("recruitment_pool").size() <= static_cast<std::size_t>(rules::scout_candidates));
+    std::set<std::string> pool_ids;
+    for (const auto& person : state.at("recruitment_pool")) {
+        const auto id = person.at("id").get<std::string>();
+        require(pool_ids.insert(id).second && roster_ids.count(id) == 0);
+        require(roster_names.insert(person.at("name").get<std::string>()).second);
+        check_staff_generated(person);
+    }
+    const auto& project = state.at("project");
+    const auto& offers = state.at("offers");
+    require(offers.is_array() && offers.size() <= 4);
+    std::set<std::string> offer_ids;
+    for (const auto& item : offers) { require(offer_ids.insert(item.at("id").get<std::string>()).second); check_offer(item); }
+    require(state.at("history").is_array());
+    std::set<std::string> history_ids;
+    for (const auto& work : state.at("history")) check_work_record(work, state, history_ids);
+    const auto& last = state.at("last_project_id");
+    require(last.is_null() || (last.is_string() && history_ids.count(last.get<std::string>()) > 0));
+    if (status == "ended") {
+        require(phase == "company_ended" && !state.at("company_result").is_null() && state.at("company_result") == build_summary(state));
     } else {
-        require(offers.empty());
-        if (phase == "project_settled") require(project.is_null() && !last.is_null());
-        else if (phase == "company_ended") require(project.is_null());
-        else {
-            require(!project.is_null());
-            const auto& delivery = project.at("delivery_reason");
-            if (phase == "project_ready") {
-                require(!delivery.is_null());
-                if (delivery == "deadline") require(week >= num(project, "deadline_week"));
-                if (delivery == "company_closed") require(status == "closing");
-            } else {
-                require(status == "running" && delivery.is_null() && !project.at("current_stage").is_null() && week < num(project, "deadline_week"));
-            }
-        }
+        require(phase != "company_ended" && state.at("company_result").is_null());
     }
-    if (phase == "event_pending") require(!event.is_null() && is_producing_active(state));
-    else require(event.is_null());
+    if (status == "closing") require(phase != "producing" && phase != "event_pending");
+    if (status == "running") require(phase != "company_ended");
     const auto& preview = state.at("preview");
     if (status == "running" && (phase == "idle" || (phase == "producing" && is_producing_active(state)))) {
-        require(!preview.is_null());
         const auto expected = phase == "idle" ? idle_preview(state) : active_preview(state);
-        require(preview.at("next_week") == expected.at("next_week") && preview.at("total_cost") == expected.at("total_cost")
-            && preview.at("event_probability_per_mille") == expected.at("event_probability_per_mille"));
-        for (auto key : {"salary", "operations", "production", "temporary", "outsourcing", "events", "extension", "penalty", "development", "distribution"})
-            require(optional_amount(preview.at("costs"), key) == optional_amount(expected.at("costs"), key));
+        require(preview == expected);
     } else require(preview.is_null());
+    if (phase == "idle") {
+        require(project.is_null() && last.is_null());
+        require(offers.size() == (status == "running" ? 4 : 0));
+    } else if (phase == "producing") {
+        require(offers.empty());
+        check_project(project, state);
+    } else if (phase == "project_ready") {
+        require(offers.empty());
+        check_project(project, state);
+    } else if (phase == "project_settled") {
+        require(project.is_null() && !last.is_null() && offers.empty());
+    } else if (phase == "company_ended") {
+        require(project.is_null() && offers.empty());
+    } else invalid();
 }
 void running_check(const Json& state) {
     if (state.at("company").at("status") != "running") ended_company();
-}
-void clear_offer_slots(Json& state) {
-    for (auto key : {"custom_offer", "pending_proposal"}) if (state.contains(key)) state[key] = nullptr;
-}
-void check_style_execution(const Json& offer) {
-    if (offer.contains("style") && offer.at("style") != "normal") not_allowed(u8"特殊风格制作规则尚未接入，暂不能执行该企划。");
-}
-void check_production_execution(const Json& state, const Json& config) {
-    check_style_execution(state.at("project").at("offer"));
-    for (const auto& assignment : config.at("assignments")) {
-        const auto* person = find_current_staff(state, text(assignment.at("staff_id")));
-        require(person != nullptr);
-        execution_staff_spec(*person);
-    }
-    const auto& project = state.at("project");
-    if (project.at("mode") == "committee") not_allowed(u8"委员会制作规则尚未接入，不能按承制规则推进。");
-    for (const auto& task : project.at("outsourcing"))
-        if (task.at("status") == "active") not_allowed(u8"外包交付规则尚未接入，不能忽略在途外包推进制作周。");
 }
 void pay_weekly_costs(Json& state, Integer salaries, Integer production_or_none) {
     state["company"]["finance"]["costs"]["salary"] = add(num(state.at("company").at("finance").at("costs"), "salary"), salaries);
@@ -762,16 +594,12 @@ void pay_weekly_costs(Json& state, Integer salaries, Integer production_or_none)
         state["project"]["finance"]["costs"]["salary"] = add(num(state.at("project").at("finance").at("costs"), "salary"), salaries);
         state["project"]["finance"]["costs"]["operations"] = add(num(state.at("project").at("finance").at("costs"), "operations"), rules::operations_weekly);
         if (production_or_none > 0) add_cost(state["project"]["finance"], "production", production_or_none);
-        check_costs(state.at("project").at("finance").at("costs"));
     }
-    check_costs(state.at("company").at("finance").at("costs"));
 }
 Json zero_report(const Json& state) {
     return {{"week", num(state.at("company"), "week")}, {"funds_delta", 0}, {"costs", zero_costs()}, {"stage_deltas", Json::array()}, {"staff_deltas", Json::array()}, {"messages", Json::array()}};
 }
 void close_bankrupt(Json& state) {
-    clear_offer_slots(state);
-    state["pending_event"] = nullptr;
     state["company"]["status"] = "closing";
     state["company"]["end_reason"] = "bankrupt";
     state["preview"] = nullptr;
@@ -801,9 +629,7 @@ Json complete_stage(Json& state, const std::string& stage, int index) {
     for (const auto& assignment : config.at("assignments")) {
         const auto id = assignment.at("staff_id").get<std::string>();
         if (!seen.insert(id).second) continue;
-        const auto* person = find_current_staff(state, id);
-        require(person != nullptr);
-        team.push_back(team_snapshot(*person));
+        for (const auto& person : state.at("company").at("staff")) if (person.at("id") == id) team.push_back(team_snapshot(person));
     }
     item["result"] = {{"weeks_spent", weeks_spent}, {"quality", quality}, {"costs", costs}, {"issues", issues}, {"team", team}};
     item["status"] = "completed";
@@ -814,7 +640,7 @@ template<class Action> std::string execute(const std::string& input, Action acti
     try {
         auto request = Json::parse(input);
         require(request.is_object());
-        if (with_state) validate_state(request.at("state"));
+        if (with_state) validate(request.at("state"));
         return action(request).dump();
     } catch (const ApiError& error) {
         return Json{{"error", {{"code", error.code}, {"message", error.message}}}}.dump();
@@ -825,12 +651,6 @@ template<class Action> std::string execute(const std::string& input, Action acti
     }
 }
 Json response(Json state, const std::string& message) { return {{"state", std::move(state)}, {"message", message}}; }
-}
-
-void validate_state(const nlohmann::json& state) {
-    check_state_entities(state);
-    check_global_ids_and_references(state);
-    check_phase_invariants(state);
 }
 
 std::string initialize_game(std::string input) {
@@ -845,7 +665,8 @@ std::string initialize_game(std::string input) {
             {"company", {
                 {"week", 0}, {"status", "running"}, {"end_reason", nullptr},
                 {"initial_funds", rules::initial_funds}, {"funds", rules::initial_funds},
-                {"reputation", rules::initial_reputation}, {"staff", staff}, {"finance", empty_finance()}, {"reputation_log", Json::array()}
+                {"reputation", rules::initial_reputation}, {"staff", staff}, {"finance", empty_finance()},
+                {"scout_pity", {{"since_sr", 0}, {"since_ssr", 0}}}
             }},
             {"offers", offers}, {"recruitment_pool", Json::array()}, {"suppliers", Json::array()},
             {"project", nullptr}, {"pending_event", nullptr}, {"history", Json::array()},
@@ -868,14 +689,8 @@ std::string start_project(std::string input) {
         require(num(request, "investment_percent") == 0);
         const Json* offer_json = nullptr;
         for (const auto& item : state.at("offers")) if (item.at("id") == id) offer_json = &item;
-        const auto& custom = optional_slot(state, "custom_offer");
-        if (!custom.is_null() && custom.at("id") == id) offer_json = &custom;
         require(offer_json != nullptr);
-        const auto& allowed = offer_json->at("allowed_modes");
-        if (std::find(allowed.begin(), allowed.end(), Json(mode)) == allowed.end()) not_allowed(u8"该企划不允许所选合作模式。");
-        if (optional_amount(*offer_json, "min_reputation") > num(state.at("company"), "reputation")) not_allowed(u8"公司声望尚未达到该企划的接约要求。");
-        if (offer_json->contains("required_works")) not_allowed(u8"成绩解锁规则尚未接入，暂不能承接该企划。");
-        check_style_execution(*offer_json);
+        const auto& spec = offer_catalog_item(id);
         const auto grant = num(*offer_json, "contract_budget");
         Json stages = Json::object();
         for (std::size_t i = 0; i < rules::stages.size(); ++i) {
@@ -887,7 +702,7 @@ std::string start_project(std::string input) {
         state["project"] = {
             {"offer", *offer_json}, {"mode", "contract"}, {"investment_percent", 0},
             {"opening_funds", num(state.at("company"), "funds")}, {"start_week", num(state.at("company"), "week")},
-            {"deadline_week", add(num(state.at("company"), "week"), num(*offer_json, "duration_weeks"))},
+            {"deadline_week", add(num(state.at("company"), "week"), static_cast<Integer>(spec.duration_weeks))},
             {"current_stage", std::string(rules::stages[0])}, {"stages", stages},
             {"extension_count", 0}, {"committee_pressure", nullptr}, {"finance", empty_finance(grant)},
             {"temporary_staff", Json::array()}, {"outsourcing", Json::array()}, {"delivery_reason", nullptr}
@@ -895,7 +710,6 @@ std::string start_project(std::string input) {
         state["company"]["funds"] = add(num(state.at("company").at("funds")), grant);
         state["company"]["finance"]["contract_received"] = add(num(state.at("company").at("finance"), "contract_received"), grant);
         state["offers"] = Json::array();
-        clear_offer_slots(state);
         state["phase"] = "producing";
         state["project"]["stages"]["script"]["recommended_configuration"] = recommended_configuration(state, "script");
         refresh_preview(state);
@@ -915,9 +729,7 @@ std::string apply_decision(std::string input) {
             state["company"]["end_reason"] = "voluntary";
             state["preview"] = nullptr;
             state["offers"] = Json::array();
-            clear_offer_slots(state);
-            state["pending_event"] = nullptr;
-            if (phase == "producing" || phase == "event_pending") {
+            if (phase == "producing") {
                 state["project"]["delivery_reason"] = "company_closed";
                 state["phase"] = "project_ready";
                 return response(std::move(state), u8"公司主动结束。在制项目已转入待交付结算，请完成结算后生成经营总结。");
@@ -932,7 +744,7 @@ std::string apply_decision(std::string input) {
             auto& item = state["project"]["stages"][stage];
             if (item.at("status") == "active") locked();
             require(item.at("status") == "ready");
-            check_configuration(decision.at("configuration"), state);
+            check_configuration(decision.at("configuration"), state, true);
             item["configuration"] = decision.at("configuration");
             item["status"] = "active";
             refresh_preview(state);
@@ -942,9 +754,34 @@ std::string apply_decision(std::string input) {
             if (phase != "producing") wrong_phase();
             invalid();
         }
+        if (type == "scout" || type == "targeted_scout") {
+            if (phase != "idle" && phase != "project_settled") wrong_phase();
+            const auto fee = type == "scout" ? rules::scout_fee : rules::targeted_scout_fee;
+            if (num(state.at("company"), "funds") < fee) insufficient();
+            std::uint32_t new_seed = 0;
+            Json pity;
+            auto pool = generate_pool(state, decision, new_seed, pity);
+            state["company"]["funds"] = sub(num(state.at("company"), "funds"), fee);
+            add_cost(state["company"]["finance"], "operations", fee);
+            state["company"]["scout_pity"] = pity;
+            state["seed"] = static_cast<Integer>(new_seed);
+            state["recruitment_pool"] = pool;
+            refresh_preview(state);
+            return response(std::move(state), u8"招募完成，支付 " + std::to_string(fee) + u8" 日元（记运营）；候选池已刷新为 " + std::to_string(pool.size()) + u8" 人，录用前请核对能力与周薪。");
+        }
         if (type == "hire_core") {
             if (phase != "idle" && phase != "project_settled") wrong_phase();
-            invalid();
+            const auto id = text(decision.at("candidate_id"));
+            const auto& pool = state.at("recruitment_pool");
+            std::size_t index = pool.size();
+            for (std::size_t i = 0; i < pool.size(); ++i) if (pool[i].at("id") == id) index = i;
+            require(index < pool.size());
+            if (state.at("company").at("staff").size() >= static_cast<std::size_t>(rules::core_staff_cap)) capacity();
+            auto person = pool[index];
+            state["company"]["staff"].push_back(person);
+            state["recruitment_pool"].erase(index);
+            refresh_preview(state);
+            return response(std::move(state), u8"已录用 " + person.at("name").get<std::string>() + u8" 为核心员工，周薪 " + std::to_string(num(person, "weekly_salary")) + u8" 日元自下一次周结算起支付。");
         }
         if (type == "request_extension") {
             if (phase != "producing") wrong_phase();
@@ -953,10 +790,9 @@ std::string apply_decision(std::string input) {
         if (type == "raise_salary") {
             if (phase != "idle" && phase != "project_settled") wrong_phase();
             const auto id = text(decision.at("staff_id"));
-            const auto count = state.at("company").at("staff").size();
-            std::size_t index = count;
-            for (std::size_t i = 0; i < count; ++i) if (state["company"]["staff"][i].at("id") == id) index = i;
-            require(index < count);
+            std::size_t index = state.at("company").at("staff").size();
+            for (std::size_t i = 0; i < state.at("company").at("staff").size(); ++i) if (state["company"]["staff"][i].at("id") == id) index = i;
+            require(index < state.at("company").at("staff").size());
             const auto salary = num(decision, "weekly_salary");
             require(salary > num(state.at("company").at("staff").at(index), "weekly_salary"));
             state["company"]["staff"][index]["weekly_salary"] = salary;
@@ -991,7 +827,6 @@ std::string advance_week(std::string input) {
             const auto salaries = cost - rules::operations_weekly;
             state["company"]["funds"] = sub(num(state.at("company").at("funds")), cost);
             pay_weekly_costs(state, salaries, 0);
-            if (state.contains("pending_proposal")) state["pending_proposal"] = nullptr;
             state["company"]["week"] = add(num(state.at("company").at("week")), 1);
             state["seed"] = static_cast<Integer>(next_seed(static_cast<std::uint32_t>(number(state.at("seed"), rules::max_seed))));
             state["offers"] = generate_offers(state);
@@ -1003,7 +838,6 @@ std::string advance_week(std::string input) {
             if (num(state.at("company"), "week") == rules::max_weeks) {
                 state["company"]["status"] = "closing";
                 state["company"]["end_reason"] = "time_limit";
-                clear_offer_slots(state);
                 state["offers"] = Json::array();
                 report["messages"].push_back(u8"十年经营期满，公司进入结束流程，请生成经营总结。");
             }
@@ -1014,11 +848,10 @@ std::string advance_week(std::string input) {
         const auto stage_name = state.at("project").at("current_stage").get<std::string>();
         const auto index = stage_index(stage_name);
         const auto& config = state.at("project").at("stages").at(stage_name).at("configuration");
-        check_production_execution(state, config);
         const auto& policy = policy_of(config.at("policy").get<std::string>());
         const auto production = weekly_production_cost(state);
         const auto salaries = salary_total(state) - rules::operations_weekly;
-        const auto cost = add(add(salaries, rules::operations_weekly), production);
+        const auto cost = salaries + rules::operations_weekly + production;
         if (num(state.at("company"), "funds") < cost) {
             close_bankrupt(state);
             report["messages"].push_back(u8"资金不足以支付本周开支，公司破产进入结束流程；未扣款、未推进周数，项目转入待交付结算。");
@@ -1037,10 +870,11 @@ std::string advance_week(std::string input) {
         for (const auto& assignment : config.at("assignments")) {
             const auto id = assignment.at("staff_id").get<std::string>();
             const auto focus = assignment.at("focus").get<std::string>();
-            auto* current_person = find_current_staff(state, id);
-            require(current_person != nullptr);
-            auto& person = *current_person;
-            const auto fit = std::string(execution_staff_spec(person).specialty) == required ? rules::specialty_fit : rules::nonspecialty_fit;
+            std::size_t person_index = state.at("company").at("staff").size();
+            for (std::size_t i = 0; i < state.at("company").at("staff").size(); ++i) if (state["company"]["staff"][i].at("id") == id) person_index = i;
+            require(person_index < state.at("company").at("staff").size());
+            const auto& person = state.at("company").at("staff").at(person_index);
+            const auto fit = std::string(specialty_of(person)) == required ? rules::specialty_fit : rules::nonspecialty_fit;
             const auto ability = number(person.at("abilities").at(focus), 100);
             auto speed = rules::base_speed * ability * 10;
             speed = scale(speed, fit);
@@ -1052,9 +886,9 @@ std::string advance_week(std::string input) {
             work += points;
             quality_sum += points * item_quality;
             working_ids.insert(id);
-            if (person.at("employment") == "core") person["experience"][focus] = add(num(person.at("experience").at(focus)), rules::experience_gain[index]);
+            state["company"]["staff"][person_index]["experience"][focus] = add(num(state["company"]["staff"][person_index].at("experience").at(focus)), rules::experience_gain[index]);
         }
-        const auto workload = num(state.at("project").at("offer").at("workloads"), stage_name.c_str());
+        const auto workload = static_cast<Integer>(offer_catalog_item(state.at("project").at("offer").at("id").get<std::string>()).workloads[index]);
         const auto gain = std::min(work, workload - old_work);
         auto& stage = state["project"]["stages"][stage_name];
         stage["work_done"] = old_work + gain;
@@ -1135,8 +969,8 @@ std::string advance_week(std::string input) {
 }
 
 std::string resolve_event(std::string input) {
-    return execute(input, [](const Json& request) -> Json {
-        if (request.at("state").at("phase") == "event_pending") not_allowed(u8"事件状态有效，但事件选项效果目录尚未接入，暂不能执行事件选择。");
+    return execute(input, [](const Json& state) -> Json {
+        (void)state;
         throw ApiError{"INVALID_PHASE", u8"当前没有待处理事件；随机事件库将在后续里程碑开放。"};
     });
 }
@@ -1149,9 +983,8 @@ std::string calculate_result(std::string input) {
             if (state.at("phase") != "project_ready") wrong_phase();
             const auto& project = state.at("project");
             const auto& offer = project.at("offer");
-            check_style_execution(offer);
             const auto id = text(offer.at("id"));
-            if (project.at("mode") == "committee") not_allowed(u8"委员会渠道结算规则尚未接入，不能按承制规则结算。");
+            offer_catalog_item(id);
             const auto reason = text(project.at("delivery_reason"));
             Integer weighted = 0;
             for (std::size_t i = 0; i < rules::stages.size(); ++i) weighted += num(project.at("stages").at(rules::stages[i]), "quality") * rules::quality_weights[i];
@@ -1160,44 +993,28 @@ std::string calculate_result(std::string input) {
             const auto revenue = commercial_score * scale_of(text(offer.at("scale"))).revenue_per_point;
             const auto contract = num(project.at("finance"), "contract_received");
             const auto penalty = reason == "completed" ? static_cast<Integer>(0)
-                : reason == "deadline" ? scale(contract, static_cast<int>(rules::deadline_penalty_permille))
-                : scale(contract, static_cast<int>(rules::closed_penalty_permille));
+                : reason == "deadline" ? contract * rules::deadline_penalty_permille / 1000
+                : contract * rules::closed_penalty_permille / 1000;
             if (penalty > 0) {
-                state["company"]["funds"] = sub(signed_number(state.at("company").at("funds")), penalty);
+                state["company"]["funds"] = sub(num(state.at("company").at("funds")), penalty);
                 add_cost(state["company"]["finance"], "penalty", penalty);
                 add_cost(state["project"]["finance"], "penalty", penalty);
             }
             const auto target = number(offer.at("target_quality"), 100);
-            if (reason == "completed" && quality >= target) change_reputation(state, rules::success_reputation, "project_settled_success");
-            else if (reason == "completed") change_reputation(state, rules::below_target_reputation, "project_settled_below_target");
-            else if (reason == "deadline") change_reputation(state, rules::deadline_reputation, "project_settled_deadline");
+            Integer reputation_delta = 0;
+            if (reason == "completed") reputation_delta = quality >= target ? rules::success_reputation : rules::below_target_reputation;
+            else if (reason == "deadline") reputation_delta = rules::deadline_reputation;
+            const auto reputation = num(state.at("company").at("reputation"));
+            state["company"]["reputation"] = reputation_delta >= 0 ? add(reputation, reputation_delta) : std::max<Integer>(0, reputation + reputation_delta);
             auto finance = project.at("finance");
             Json team = Json::array();
             std::set<std::string> seen;
-            bool has_completed_stage = false;
             for (auto stage_name : rules::stages) {
                 const auto& stage = project.at("stages").at(stage_name);
                 if (stage.at("status") != "completed") continue;
-                has_completed_stage = true;
                 for (const auto& member : stage.at("result").at("team")) if (seen.insert(member.at("staff_id").get<std::string>()).second) team.push_back(member);
             }
-            if (team.empty() && !has_completed_stage) {
-                for (const auto& person : state.at("company").at("staff")) {
-                    seen.insert(text(person.at("id")));
-                    team.push_back(team_snapshot(person));
-                }
-            }
-            for (auto stage_name : rules::stages) {
-                const auto& stage = project.at("stages").at(stage_name);
-                if (stage.at("status") != "active") continue;
-                for (const auto& assignment : stage.at("configuration").at("assignments")) {
-                    const auto staff_id = text(assignment.at("staff_id"));
-                    if (!seen.insert(staff_id).second) continue;
-                    const auto* person = find_current_staff(state, staff_id);
-                    require(person != nullptr);
-                    team.push_back(team_snapshot(*person));
-                }
-            }
+            if (team.empty()) for (const auto& person : state.at("company").at("staff")) team.push_back(team_snapshot(person));
             Json record = {
                 {"id", id}, {"name", offer.at("name")}, {"source", offer.at("source")}, {"scale", offer.at("scale")},
                 {"previous_work_id", offer.at("previous_work_id")}, {"mode", project.at("mode")}, {"investment_percent", 0},
@@ -1206,7 +1023,6 @@ std::string calculate_result(std::string input) {
                 {"commercial_revenue", revenue}, {"finance", finance},
                 {"profit", sub(num(finance, "contract_received"), costs_total(finance.at("costs")))}, {"team", team}, {"stages", project.at("stages")}
             };
-            for (auto key : {"origin", "style"}) if (offer.contains(key)) record[key] = offer.at(key);
             state["history"].push_back(record);
             state["last_project_id"] = id;
             state["project"] = nullptr;
