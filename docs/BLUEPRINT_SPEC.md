@@ -40,7 +40,7 @@
 | `schema_version` | 必须为 `1` | 结构变更时升版，不与存档版本混用 |
 | `id` | 小写 snake_case，全局唯一 | 企划通过 `blueprint_id` 引用 |
 | `scale` | `ova` / `short` / `tv` / `movie` | 与企划规模一致；不一致直接拒绝 |
-| `episode_count` | 正整数 | TV 12–13、短篇 1–3、OVA/剧场版 1（校验器给警告而非错误） |
+| `episode_count` | 正整数 | TV 12–13、短篇 1–4、OVA/剧场版 1（校验器给警告而非错误） |
 | `work_unit` | 固定 `centi_staff_week` | **1 工作点 = 1/100 人周**。不声明单位就无法解读 `work_total`，校验器直接报错 |
 | `common[]` | 非空 | 项目级公共制作，无阶段 |
 | `episode[]` | 非空，六阶段全覆盖 | 单集模板，实例化时复制 N 份 |
