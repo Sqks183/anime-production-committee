@@ -114,7 +114,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | INV-14 | contract ⇒ `investment.percent=0 ∧ paid=0 ∧ committee_id=null`；committee ⇒ percent ∈ {10..100} 且 committee_id≠null | INVALID_STATE |
 | INV-15 | `allowed_modes`：普通企划含 contract 与 committee；原创仅 committee | INVALID_STATE |
 | INV-16 | `balance = opening_funds + Σ entries.amount` | INVALID_STATE |
-| INV-17 | 每笔 entry 只属一个 category；收入类只能由交付结算写入 | INVALID_STATE |
+| INV-17 | 每笔 entry 只属一个 category；`commercial_share_received` 与 `success_reward_received` 只能由交付结算写入，`contract_received` 按 `start_work` 立项契约写入 | INVALID_STATE |
 | INV-18 | 当前 Finance 保留 `loans=[]` 与 `solvency.state="normal"` 作为后续更新预留；不得出现 `Loan` 实体、非空 loans 或 `solvency.state="crisis"`；融资与危机周机制不属于当前状态契约 | INVALID_STATE |
 | INV-19 | 同一供应商 `Σ active 合同 weekly_cap ≤ capacity_per_week` | CAPACITY_EXCEEDED |
 | INV-20 | 合同 `item_id` 属于同一 `work_id`；累计交付不超过该项 `work_total` | INVALID_STATE |

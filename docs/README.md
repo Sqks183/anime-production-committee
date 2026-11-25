@@ -33,6 +33,12 @@
 - [领域架构设计](DOMAIN_ARCHITECTURE.md)
 - [核心玩法重构框架](CORE_GAMEPLAY_REBUILD_FRAMEWORK.md)
 
+## M3/M4 集成协作
+
+- [M3/M4 跨模块集成契约](M3_M4_INTEGRATION_CONTRACT.md)：阶段边界、数据所有权、跨模块交接与验收顺序；与上位规则冲突时以上位规则为准。
+- [M3 多项目集成 Fixture](M3_INTEGRATION_FIXTURES.md)：员工归属、工作项磨合、供应商产能、项目隔离与正常企划来源的手算场景。
+- [M4 商业结算对账 Fixture](M4_COMMERCE_RECONCILIATION_FIXTURES.md)：投资、制作费、制作成本、BD 与非 BD 净池分配的公司现金和 Archive 对账样例。
+
 ## 复盘与协作约定
 
 - [开放式增量开发与提前实现原则](OPEN_INCREMENTAL_DEVELOPMENT_POLICY.md)：明确首版范围是最低交付目标而非功能禁区，以及无冲突新增能力的默认接纳边界。
