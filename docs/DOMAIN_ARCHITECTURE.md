@@ -291,7 +291,7 @@ v1.0 只给了骨架，并把"公共制作 + 单集 + 工作项"和"资金预检
 | 公司名称、开业周、设施/组织能力（首版可为空集合） | 项目进度（Project） |
 | 终局评价输入快照（实际评价由 Archive/内核产出） | 作品履历（Archive） |
 
-**规则边界**：Company 不计算任何公式；`change_reputation(delta, reason, week)` 是其唯一变更入口，负责钳制下限 0、不设上限、不衰减、追加日志。
+**规则边界**：Company 不计算任何公式；`change_reputation(delta, reason, week)` 是其唯一变更入口，负责钳制下限 0、不设上限、不衰减、追加日志。声望正向收益不因当前声望高而递减；收益来源与计算口径以 DEC-REP-001 为准，公式由内核计算后交 Company 写入。
 
 ### 5.2 Staff（人员与组织）
 
@@ -831,6 +831,8 @@ Partner { id, name, type: tv|publisher|toy|music|streaming|studio
           channels[], prestige, relationship: 0..100, history[], status: known|unavailable }
 Committee { id, work_id, members[{partner_id, channel}], formed_week, status: active|closed, closed_week }
 
+`Partner.relationship`（好感度/当前关系值）与 `Partner.history`（合作历史及累计合作次数）均保留；两者共同服务于合作关系判断、老搭档资格和专属事件，不因公司声望变化而清空。
+
 MarketState {
   heat: {genre: {level: boom|high|mid|low, changed_week}}
   slots: Offer[4]                  // 初始 4 槽，后续扩展上限 10
@@ -979,7 +981,7 @@ WorkRecord { id, name, ip_id, source, genre, scale, mode, investment_percent,
 | `buy_tv_service(work_id)` | Project + Finance | 委员会模式；未购买；现金 | 渠道开放、发行费入账 |
 | `request_extension(work_id)` | Project + Finance | 委员会模式；未用过；未过截止；现金 | 延期生效、压力与费用 |
 | `arrange_financing(provider, amount)` | — | **未来更新候选；当前版本不提供该命令** | — |
-| 办公场地扩容 | Company + Finance | 达到声望 190/350 对应扩容资格；现金覆盖一次性扩建搬迁费 | 玩家主动确认后即时扣费并立即扩至 4/6 个设施槽位，同时提高每周基础房租；不改变核心员工编制；具体命令名由接口契约确定 |
+| 办公场地扩容 | Company + Finance | 不以声望作为硬性门槛；现金覆盖对应搬迁费并满足槽位规则 | 玩家主动确认后即时扣费并立即扩至 4/6 个设施槽位，同时提高每周基础房租；不改变核心员工编制；具体命令名由接口契约确定 |
 | `advance_week()` | Application | 公司 running；无待处理事件；周 < 520 | 执行完整周结算（§22） |
 | `resolve_event(work_id, event_id, option_id)` | Event → Application | 该 work 存在对应 pending 事件；选项合法；现金足够（若需付款）；效果遵循通用命令原子性与财务规则 | 效果分派到各领域；只移除目标事件 |
 | `end_company()` | Company + Application | 公司 running | 锁 closing，未交付项目转 delivering |
@@ -1080,7 +1082,7 @@ UI 不计算规则。核心在每次命令后输出读模型；读模型**不持
 
 **hire_core 特例：** 只属于即时操作。签约即入职并占用名册，当周即可通过 assign_staff 分配；周薪从签约后的下一次 advance_week 周结算开始计提，不存在“下周才可用”的延迟状态。
 
-**办公场地扩容：** 声望 190 解锁 2→4 槽，声望 350 解锁 4→6 槽；玩家主动确认并支付一次性搬迁费后立即完成，同时每周基础房租小幅上调。危机期间禁止扩容。费用与租金增量待标定。
+**办公场地扩容：** 不再设置声望硬门槛；玩家主动确认并支付对应一次性搬迁费后立即完成 2→4 或 4→6 槽扩容，同时每周基础房租上调。扩容成本与租金增量待标定。
 
 **容量隔离：** Company 的办公场地规模（office_tier）决定设施槽位，初期/中型/大型分别为 2/4/6 槽；核心员工名册上限（core_staff_capacity）由独立的公司成长里程碑推导，不依赖 office_tier、设施槽位或作画工作室。开放编制不收扩容费，实际招聘受现金流与人才供给约束。编制成长曲线待标定。
 
@@ -1278,6 +1280,8 @@ BD：公司所得 = 毛收入 × 50%（另 50% 为综合成本，不再从现金
 非 BD：先汇总非 BD 渠道毛收入，扣除适用且已约定的前置商业成本，得到委员会净商业池；玩家按 Project.investment.percent 分配，其他成员合计取得剩余份额，不记录其他成员细分比例；承制项目不参与，分配额 = 0
 承制成功奖励：商业表现达门槛时由委托方另付，单独入账，不计入作品收入
 ```
+
+**声望增减与商业收入解耦**：上方声望因子仅属于商业收入计算，不代表商业收入/热度会乘算作品声望增量；商业收入、亏损及成本超支不直接决定声望加减。声望增减按 DEC-REP-001 独立结算。
 
 ---
 
