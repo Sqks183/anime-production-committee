@@ -1,31 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  Stream, GENRES, SCALES, HEAT_LEVELS, DEFAULT_PARAMS,
-  hashText, draw, drawBelow, PURPOSE,
+  GENRES, SCALES, HEAT_LEVELS, DEFAULT_PARAMS,
   generateOffer, initialMarket, expireOffers, releaseExpiredLocks,
   topUpMarket, weeklyMarketStep, lockOffer, depositBase, depositAmount, startWorkCash,
   isIdReuse, heatLevel,
 } from './lib/market-oracle.mjs'
-
-// ---- 随机原语（与 kernel.cpp / recruit-oracle 同一算法）----
-
-test('hashText FNV-1a 已知向量', () => {
-  assert.equal(hashText(''), 2166136261)
-  assert.equal(hashText('a'), 0xe40c292c)
-  assert.equal(hashText('foobar'), 0xbf9cf968)
-})
-
-test('draw 同坐标恒等、分量敏感、值域合法', () => {
-  const base = draw(42, 5, Stream.market, PURPOSE.offer_gen, 3)
-  assert.equal(base, draw(42, 5, Stream.market, PURPOSE.offer_gen, 3))
-  assert.notEqual(base, draw(43, 5, Stream.market, PURPOSE.offer_gen, 3))
-  assert.notEqual(base, draw(42, 6, Stream.market, PURPOSE.offer_gen, 3))
-  assert.notEqual(base, draw(42, 5, Stream.staff, PURPOSE.offer_gen, 3))
-  assert.notEqual(base, draw(42, 5, Stream.market, PURPOSE.heat, 3))
-  assert.notEqual(base, draw(42, 5, Stream.market, PURPOSE.offer_gen, 4))
-  assert.ok(base >= 0 && base <= 0xffffffff)
-})
 
 // ---- 企划生成 ----
 

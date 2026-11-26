@@ -11,48 +11,11 @@
 // 生成参数（weekly_add、有效期分布等）仍为 [PLACEHOLDER]，由 #59 标定。
 // 危机机制已废除：守卫不含危机分支，CRISIS_COMMITMENT_BLOCKED 为废弃占位码。
 //
-// 随机原语与 kernel.cpp / recruit-oracle.mjs 同一算法（逐行 BigInt 镜像）。
-// 自包含一份以避免跨未合并 PR 依赖；#99 合入后可抽共享 lib。
+// 坐标随机统一使用 scripts/lib/coordinate-random.mjs，与 kernel.cpp 同一算法。
 // 坐标：stream=market(4)，purpose=hash('offer_gen') / hash('heat')，
 // 候选内 index*16+k 子坐标（k=0..15）。同 (seed,week,index) 的企划 id 终身唯一。
 
-const MASK64 = (1n << 64n) - 1n
-
-export const Stream = Object.freeze({
-  production: 1, quality: 2, event: 3, market: 4,
-  competition: 5, partner: 6, staff: 7, misc: 8,
-})
-
-export function hashText(text) {
-  let value = 2166136261
-  for (let i = 0; i < text.length; i++) {
-    value ^= text.charCodeAt(i) & 0xff
-    value = Math.imul(value, 16777619) >>> 0
-  }
-  return value >>> 0
-}
-
-function splitmix64(value) {
-  value = (value + 0x9E3779B97F4A7C15n) & MASK64
-  value = ((value ^ (value >> 30n)) * 0xBF58476D1CE4E5B9n) & MASK64
-  value = ((value ^ (value >> 27n)) * 0x94D049BB133111EBn) & MASK64
-  return (value ^ (value >> 31n)) & MASK64
-}
-
-export function draw(seed, week, stream, purpose, index) {
-  let mixed = 0x9E3779B97F4A7C15n
-  mixed ^= (BigInt(seed >>> 0) * 0x9E3779B97F4A7C15n) & MASK64
-  mixed ^= (BigInt(week >>> 0) * 0xC2B2AE3D27D4EB4Fn) & MASK64
-  mixed ^= (BigInt(stream >>> 0) * 0x165667B19E3779F9n) & MASK64
-  mixed ^= (BigInt(purpose >>> 0) * 0x27D4EB2F165667C5n) & MASK64
-  mixed ^= (BigInt(index >>> 0) * 0x9E3779B185EBCA87n) & MASK64
-  return Number((splitmix64(mixed & MASK64) >> 32n) & 0xFFFFFFFFn)
-}
-
-export function drawBelow(seed, week, stream, purpose, index, bound) {
-  if (bound === 0) return 0
-  return draw(seed, week, stream, purpose, index) % bound
-}
+import { Stream, hashText, draw, drawBelow } from './coordinate-random.mjs'
 
 export const PURPOSE = Object.freeze({
   offer_gen: hashText('offer_gen'),
