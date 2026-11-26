@@ -2669,6 +2669,8 @@ test('scout 定向：role 与 focus_ability 的强制职业与 oracle 一致', (
   assert.equal(call('scout', { state, role: '作画', focus_ability: 'drawing' }).error.code, 'INVALID_INPUT')
   assert.equal(call('scout', { state, role: 'nope' }).error.code, 'INVALID_INPUT')
   assert.equal(call('scout', { state, focus_ability: 'nope' }).error.code, 'INVALID_INPUT')
+  assert.equal(call('scout', { state, focus_ability: 'animation' }).error.code, 'INVALID_INPUT')
+  assert.equal(call('scout', { state, focus_ability: 'management' }).error.code, 'INVALID_INPUT')
 })
 
 test('scout 守卫：pending 事件与资金不足', () => {
@@ -2712,6 +2714,29 @@ test('hire_core：解包入册、包装字段不残留、签约费流水', () =>
   assert.equal(entry.amount, -candidate.staff.signing_fee)
   assert.equal(result.state.finance.balance, 2000000 - candidate.staff.signing_fee)
   assert.equal(call('hire_core', { state, staff_id: 'nobody' }).error.code, 'NOT_FOUND')
+})
+
+test('hire_core：过期 scout 候选不可签约且失败原子', () => {
+  let state = ok('initialize', { seed: 42 }).state
+  state = ok('scout', { state }).state
+  const candidate = state.recruitment.pool.at(-1)
+  state.company.week = candidate.expires_week
+  const before = ok('hash_state', { state }).hash
+  const result = call('hire_core', { state, staff_id: candidate.staff.id })
+  assert.equal(result.error.code, 'NOT_FOUND')
+  assert.equal('state' in result, false)
+  assert.equal(ok('hash_state', { state }).hash, before)
+})
+
+test('hire_core：拒绝带临时合同或非 core 的池候选', () => {
+  const state = ok('initialize', { seed: 42 }).state
+  const candidate = state.recruitment.pool[0]
+  const temporary = JSON.parse(JSON.stringify(state))
+  temporary.recruitment.pool[0].staff.employment = 'temporary'
+  temporary.recruitment.pool[0].staff.temporary_contract = { work_id: 'work_01', start_week: 0, end_week: 2 }
+  const result = call('hire_core', { state: temporary, staff_id: candidate.staff.id })
+  assert.equal(result.error.code, 'INVALID_INPUT')
+  assert.equal('state' in result, false)
 })
 
 test('hire_core：资金不足与核心编制上限', () => {
@@ -2779,12 +2804,37 @@ test('dismiss_staff：有制作参与记录者暂拒（INV-12 历史引用缺口
   assert.match(rejected.error.message, /参与记录/)
 })
 
+test('dismiss_staff：已结项员工的 Archive 团队贡献同样阻止解雇', () => {
+  let state = setupTiny(42)
+  state = ok('assign_staff', { state, staff_id: 'staff_ka', work_id: 'work_01' }).state
+  state = ok('advance_week', { state }).state
+  state = completeWork(state, 'work_01', 80)
+  state = ok('deliver_work', { state, work_id: 'work_01' }).state
+  assert.ok(state.archive.works[0].team.some((member) => member.id === 'staff_ka'))
+  const before = ok('hash_state', { state }).hash
+  const rejected = call('dismiss_staff', { state, staff_id: 'staff_ka' })
+  assert.equal(rejected.error.code, 'INVALID_PHASE')
+  assert.match(rejected.error.message, /参与记录/)
+  assert.equal(ok('hash_state', { state }).hash, before)
+})
+
 test('advance_week 招聘池周步骤：部分轮换与 oracle rotatePool 一致', () => {
   const state = ok('initialize', { seed: 42 }).state
   const advanced = ok('advance_week', { state }).state
   const expected = rotatePool(state.recruitment.pool, 42, 1)
   assert.deepEqual(advanced.recruitment.pool, expected.pool)
   assert.equal(advanced.company.week, 1)
+})
+
+test('advance_week 招聘池轮换落点碰撞时仍无放回替换两个槽', () => {
+  const state = ok('initialize', { seed: 2 }).state
+  state.company.week = 2
+  const advanced = ok('advance_week', { state }).state
+  const expected = rotatePool(state.recruitment.pool, 2, 3)
+  assert.deepEqual(advanced.recruitment.pool, expected.pool)
+  assert.equal(expected.added_ids.length, 2)
+  assert.equal(new Set(expected.added_ids).size, 2)
+  assert.equal(advanced.recruitment.pool.filter((candidate) => candidate.origin === 'regular').length, 6)
 })
 
 test('scout 窗口：expires_week 是首个不可签约周，regular 不受影响', () => {

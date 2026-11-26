@@ -274,8 +274,10 @@ PoolCandidate { staff: Staff, expires_week: uint | null, origin: "regular" | "sc
 - pool 候选不是公司员工，不参与周结算、不计薪；hire 解包后 `expires_week/origin` 不得残留在 Staff。
 - 常规招聘池每周部分轮换（周结算固定步骤，先清理到期窗口再替换部分常规槽）；scout 候选不参与常规轮换，只按各自窗口到期。Scout 每周至多一次（`last_scout_week ≠ week`）；候选 `expires_week` 是首个不可签约周，regular 候选为 `null`。
 - 生成逻辑与随机坐标逐位镜像 `scripts/lib/recruit-oracle.mjs`（规则样本）；池容量、轮换数、窗口周数、概率与费用全部 `[PLACEHOLDER]`，由 #59/#58 标定。职业→主能力映射沿用 DEC-STAFF-006 提案（DISC-11 细化前不改）。
+- 2026-11-27 招聘市场设计归档要求通用随机简历按声望 Tier 生成，周薪由同能力全职工资公式乘 1.20 得出；当前 §14.13 的稀有度/保底生成与 `salary_base + primary × salary_per_primary` 仍是 #99 的 `[PLACEHOLDER]`。两套口径的衔接、档位随机分布与取整尚未裁决；在 #7/#53 收口前不得把当前占位生成误称为已实现最新设计。
 - 员工报酬统一 `signing_fee + weekly_salary`，不再使用 `project_fee`；签约费走 Finance `salary` 流水（`w{week}.salary.{staff_id}.signing`），scout 费用走 `operations`（`w{week}.operations.scout`），见 §3.7。
-- `dismiss_staff` 现行 INV-12 校验要求 contributors 引用在籍员工，冻结文本只要求"参与过"；有制作参与记录的员工暂拒解雇（`INVALID_PHASE`），离职历史引用语义待 #53 裁决（缺口登记 #7），不删改 contributors、不放宽校验。
+- `dismiss_staff` 现行 INV-12 校验要求 contributors 引用在籍员工，冻结文本只要求"参与过"；有制作参与记录（含已结项 Archive 团队快照）的员工暂拒解雇（`INVALID_PHASE`），离职历史引用语义待 #53 裁决（缺口登记 #7），不删改 contributors、不放宽校验。
+- `hire_core` 只接受 `employment=core` 且 `temporary_contract=null` 的池候选；scout 候选在 `week >= expires_week` 后即使仍留在输入状态中也返回 `NOT_FOUND`，不得签约。
 
 **Offer 生命周期（仍为 `future_contract`，不得进入当前 JSON Shape 的 `paths`）**：
 

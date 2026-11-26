@@ -6,6 +6,7 @@
 #include <initializer_list>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <set>
 #include <string>
 #include <vector>
@@ -607,16 +608,21 @@ std::vector<PoolCandidate> rotate_pool(const std::vector<PoolCandidate>& pool, s
         if (candidate.origin == "regular") regulars.push_back(candidate);
         else scouts.push_back(candidate);
     }
-    std::set<int> slots;
+    std::vector<int> available(regulars.size());
+    std::iota(available.begin(), available.end(), 0);
+    std::vector<int> slots;
     const int rotate = std::min(kRotateCount, static_cast<int>(regulars.size()));
     for (int i = 0; i < rotate; ++i) {
-        slots.insert(static_cast<int>(kernel::draw_below(seed, week, kernel::Stream::staff, purpose_recruit_regular(),
-                                                         static_cast<std::uint32_t>(i),
-                                                         static_cast<std::uint32_t>(regulars.size()))));
+        const int roll = static_cast<int>(kernel::draw_below(seed, week, kernel::Stream::staff, purpose_recruit_regular(),
+                                                             static_cast<std::uint32_t>(i),
+                                                             static_cast<std::uint32_t>(available.size())));
+        slots.push_back(available[static_cast<std::size_t>(roll)]);
+        available.erase(available.begin() + roll);
     }
+    std::sort(slots.begin(), slots.end());
     std::vector<PoolCandidate> kept;
     for (std::size_t i = 0; i < regulars.size(); ++i) {
-        if (slots.count(static_cast<int>(i)) == 0) kept.push_back(regulars[i]);
+        if (std::find(slots.begin(), slots.end(), static_cast<int>(i)) == slots.end()) kept.push_back(regulars[i]);
     }
     for (const int slot : slots) {
         auto generated = generate_candidate(seed, week, slot, purpose_recruit(), std::nullopt, Pity{});
@@ -2773,6 +2779,11 @@ std::string scout(const std::string& input) {
             if (!request.at("focus_ability").is_string()) return encode(error_body("INVALID_INPUT", "focus_ability 必须是字符串"));
             focus = request.at("focus_ability").get<std::string>();
             if (ability_index(*focus) < 0) return encode(error_body("INVALID_INPUT", "focus_ability 不是合法能力"));
+            bool mapped = false;
+            for (const char* profession : kProfessions) {
+                if (profession_ability(profession) == *focus) mapped = true;
+            }
+            if (!mapped) return encode(error_body("INVALID_INPUT", "focus_ability 没有对应职业"));
         }
         if (role && focus) return encode(error_body("INVALID_INPUT", "role 与 focus_ability 至多传一个"));
         if (state.company.status != "running") return encode(error_body("INVALID_PHASE", "只有经营中的公司可以 scout"));
@@ -2837,6 +2848,13 @@ std::string hire_core(const std::string& input) {
         if (state.company.status != "running") return encode(error_body("INVALID_PHASE", "只有经营中的公司可以签约"));
         const PoolCandidate* candidate = find_candidate(state, staff_id);
         if (candidate == nullptr) return encode(error_body("NOT_FOUND", "候选人不存在"));
+        if (candidate->origin == "scout" && candidate->expires_week &&
+            state.company.week >= *candidate->expires_week) {
+            return encode(error_body("NOT_FOUND", "候选人签约窗口已过期"));
+        }
+        if (candidate->staff.employment != "core" || !candidate->staff.temporary_contract.is_null()) {
+            return encode(error_body("INVALID_INPUT", "hire_core 只接受无项目合同的核心候选人"));
+        }
         const std::int64_t fee = candidate->staff.signing_fee;
         if (state.finance.balance < fee) return encode(error_body("INSUFFICIENT_FUNDS", "现金不足：签约费不足"));
         if (core_staff_count(state) >= core_staff_capacity(state)) {
@@ -2896,6 +2914,14 @@ std::string dismiss_staff(const std::string& input) {
                     has_contribution = true;
                 }
             });
+        }
+        if (state.archive.contains("works") && state.archive.at("works").is_array()) {
+            for (const auto& record : state.archive.at("works")) {
+                if (!record.contains("team") || !record.at("team").is_array()) continue;
+                for (const auto& member : record.at("team")) {
+                    if (member.is_object() && member.value("id", std::string{}) == staff_id) has_contribution = true;
+                }
+            }
         }
         if (has_contribution) {
             return encode(error_body("INVALID_PHASE", "该员工已有制作参与记录，历史引用语义待裁决，暂不可解雇"));
