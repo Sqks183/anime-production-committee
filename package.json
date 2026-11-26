@@ -36,7 +36,7 @@
     "audit:v4": "node scripts/audit-v4-contract.mjs",
     "check:docs": "python scripts/check_docs.py",
     "validate:market": "node scripts/check-market-cases.mjs docs/fixtures/market_cases.json",
-    "test:market": "node --test scripts/market.test.mjs"
+    "test:market": "node --test scripts/lib/coordinate-random.test.mjs scripts/market.test.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.65.1"
