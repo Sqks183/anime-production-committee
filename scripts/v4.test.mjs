@@ -2447,12 +2447,12 @@ test('validate：槽位超 10 与生命周期快照篡改被拒绝', () => {
     offer.expires_week = 10
     return offer
   })
-  assert.equal(call('hash_state', { state: withOffers(base, eleven) }).error.code, 'INVALID_INPUT')
+  assert.equal(call('advance_week', { state: withOffers(base, eleven) }).error.code, 'INVALID_STATE')
   const inconsistent = generateOffer(seed, 0, 0)
   inconsistent.lock_used = false
   inconsistent.deposit_paid = 50000
-  assert.equal(call('hash_state', { state: withOffers(base, [inconsistent]) }).error.code, 'INVALID_INPUT')
+  assert.equal(call('advance_week', { state: withOffers(base, [inconsistent]) }).error.code, 'INVALID_STATE')
   const missing = generateOffer(seed, 0, 0)
   delete missing.expires_week
-  assert.equal(call('hash_state', { state: withOffers(base, [missing]) }).error.code, 'INVALID_INPUT')
+  assert.equal(call('advance_week', { state: withOffers(base, [missing]) }).error.code, 'INVALID_STATE')
 })
