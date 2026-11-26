@@ -361,6 +361,7 @@ test('#120 破产终局：pending 按默认保守分支结清，不再以 NOT_IM
     { work_id: 'work_01', event_id: 'terminal_fixture', option_id: 'accept', automatic: true }
   ])
   assert.equal(result.report.funds.balance, 600)
+  assert.equal(result.report.funds.delta, -400)
   assert.equal(result.state.events.pending.length, 0)
   assert.equal(result.state.company.status, 'closing')
   assert.equal(result.state.company.end_reason, 'bankrupt')
@@ -1990,6 +1991,7 @@ test('#120 第 520 周：pending 结清后再锁 closing/time_limit，事件不�
   assert.equal(result.state.events.pending.length, 0)
   assert.deepEqual(result.report.events.expired.map((item) => item.event_id), ['terminal_fixture'])
   assert.equal(result.report.events.expired[0].automatic, true)
+  assert.equal(result.report.funds.delta, result.state.finance.balance - state.finance.balance)
 })
 
 test('#120 第 520 周：阶段 7 到期事件与阶段 8 终局结清按处理顺序合并', () => {

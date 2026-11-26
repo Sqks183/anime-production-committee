@@ -46,7 +46,7 @@ PR #95 落地了关闭、破产与第 520 周三条终局路径，但携带 `eve
 | `option_id` | 实际执行的默认分支 |
 | `automatic` | 恒为 `true`（非玩家选择） |
 
-- 破产：`report.events = { drawn: 0, reason: "bankrupt", expired: [...] }`，`report.funds.balance` 为结清后的真实余额。
+- 破产：`report.events = { drawn: 0, reason: "bankrupt", expired: [...] }`，`report.funds.balance` 为结清后的真实余额，`report.funds.delta` 等于本次终局现金净变化（含事件费用），不含被跳过的周刚性支出。
 - 第 520 周：`report.events.expired` = 阶段 7 到期事件 + 阶段 8 终局结清，按处理顺序合并。
 - 现金变化可用 `finance.entries`（`category=events`）逐条对账；`archive.works[].finance_summary.penalty` 只记实付扣罚，与账本一致。
 
