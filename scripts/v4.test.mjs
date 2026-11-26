@@ -1992,6 +1992,43 @@ test('#120 第 520 周：pending 结清后再锁 closing/time_limit，事件不�
   assert.equal(result.report.events.expired[0].automatic, true)
 })
 
+test('#120 第 520 周：阶段 7 到期事件与阶段 8 终局结清按处理顺序合并', () => {
+  const state = twoProjectsNearDeadline()
+  state.company.week = 519
+  for (const work of state.works) work.deadline_week = 600
+  for (const member of state.staff) member.last_participation = null
+  // 一条本周到期（阶段 7 处理），一条不限期（阶段 8 终局结清）；数组顺序故意颠倒。
+  const later = terminalEvent('work_b', { eventId: 'zz_later' })
+  later.triggered_week = 519
+  const early = terminalEvent('work_a', { eventId: 'aa_early' })
+  early.triggered_week = 519
+  early.expires_week = 519
+  state.events.pending.push(later, early)
+
+  const result = ok('advance_week', { state })
+  assert.equal(result.state.company.end_reason, 'time_limit')
+  assert.equal(result.state.events.pending.length, 0)
+  assert.deepEqual(result.report.events.expired.map((item) => item.event_id), ['aa_early', 'zz_later'])
+  assert.ok(result.report.events.expired.every((item) => item.automatic === true))
+})
+
+test('#120 结清/未结清状态都能 JSON 往返：不补字段、不推进周数、哈希不变', () => {
+  // 未结清：pending 仍在，往返后 viewed / expires_week 与哈希都不变。
+  const pendingState = timedEventState()
+  const pendingRoundTrip = JSON.parse(JSON.stringify(pendingState))
+  assert.equal(ok('hash_state', { state: pendingRoundTrip }).hash, ok('hash_state', { state: pendingState }).hash)
+  assert.equal(pendingRoundTrip.events.pending.length, 1)
+  assert.equal(pendingRoundTrip.events.pending[0].viewed, true)
+  assert.equal(pendingRoundTrip.events.pending[0].expires_week, pendingState.events.pending[0].expires_week)
+  assert.equal(pendingRoundTrip.company.week, pendingState.company.week)
+
+  // 已自动结清：阶段 7 处理后的状态往返同样稳定，不会因为结清而多出必填字段。
+  const settledState = ok('advance_week', { state: pendingState }).state
+  const settledRoundTrip = JSON.parse(JSON.stringify(settledState))
+  assert.equal(ok('hash_state', { state: settledRoundTrip }).hash, ok('hash_state', { state: settledState }).hash)
+  assert.equal(settledRoundTrip.events.pending.length, settledState.events.pending.length)
+})
+
 // ---------------- INV-27 监督岗位 ----------------
 
 function startedContract(offerId = 'offer_01', seed = 7) {
