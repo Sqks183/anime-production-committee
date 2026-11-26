@@ -25,6 +25,8 @@ export const PURPOSE = Object.freeze({
 // [PLACEHOLDER] 内容样本与生成参数，不是标定结论。
 export const GENRES = Object.freeze(['action', 'fantasy', 'scifi', 'daily', 'idol', 'sports'])
 export const SCALES = Object.freeze(['short', 'ova', 'tv', 'movie'])
+// 非 TV 蓝图尚未注册，生成器暂只产出可立项的 TV 企划；SCALES 保留完整规模词表。
+const GENERATED_SCALES = Object.freeze(['tv'])
 export const HEAT_LEVELS = Object.freeze(['low', 'mid', 'high', 'boom'])
 
 export const DEFAULT_PARAMS = Object.freeze({
@@ -46,7 +48,7 @@ export function generateOffer(seed, week, index, opts = {}) {
   const subBelow = (k, bound) => sub(k) % bound
 
   const genre = GENRES[subBelow(0, GENRES.length)]
-  const scale = SCALES[subBelow(1, SCALES.length)]
+  const scale = GENERATED_SCALES[0]
   const episodeCount = { short: 1, ova: 2, tv: 12, movie: 1 }[scale]
   const budget = (500 + subBelow(2, 1500)) * 10000
   const sourceType = opts.sourceType ?? 'market'
@@ -147,7 +149,8 @@ export function depositAmount(offer, params = DEFAULT_PARAMS) {
   const rate = offer.offer_source_type === 'ip_visit'
     ? params.deposit_rate_ip_permille
     : params.deposit_rate_regular_permille
-  return Math.floor(depositBase(offer) * rate / 1000)
+  const basis = depositBase(offer)
+  return Math.floor(basis / 1000) * rate + Math.floor((basis % 1000) * rate / 1000)
 }
 
 // 正式接单抵扣：仅锁定期内（week < locked_until）定金 100% 抵扣（预付款），

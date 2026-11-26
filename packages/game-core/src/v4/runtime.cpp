@@ -661,7 +661,8 @@ constexpr int kDepositIpPermille = 100;       // §14.13.2 冻结：IP 上门 10
 constexpr int kFixtureExpiresWeek = 3;        // [PLACEHOLDER] fixture 目录到期周，待 #59 标定
 
 const char* const kOfferGenres[6] = {"action", "fantasy", "scifi", "daily", "idol", "sports"};
-const char* const kOfferScales[4] = {"short", "ova", "tv", "movie"};
+// 非 TV 蓝图尚未注册；生成器暂只产出可立项的 TV 企划，规模词表仍保留给其他来源。
+const char* const kGeneratedOfferScales[1] = {"tv"};
 
 std::uint32_t purpose_offer_gen() { return kernel::hash_text("offer_gen"); }
 
@@ -679,7 +680,7 @@ Json generate_offer(std::uint32_t seed, int week, int index, const std::string& 
                             static_cast<std::uint32_t>(index * 16 + k));
     };
     const std::string genre = kOfferGenres[sub(0) % 6];
-    const std::string scale = kOfferScales[sub(1) % 4];
+    const std::string scale = kGeneratedOfferScales[0];
     const std::int64_t budget = static_cast<std::int64_t>(500 + sub(2) % 1500) * 10000;
     const std::string id = "offer_" + hex32(purpose_offer_gen()) + "_" + std::to_string(week) + "_" + std::to_string(index);
     return Json{{"id", id},
@@ -713,13 +714,33 @@ Json generate_offer(std::uint32_t seed, int week, int index, const std::string& 
 }
 
 // 定金档位由来源分类决定（玩家不可切换）；基数取生成时固定的 deposit_basis，
-// 后续预算调整不追溯。整数千分比向下取整（CATALOG §11.3 取整规则待标定）。
+// 后续预算调整不追溯。先除后乘，避免大基数在乘法阶段溢出；整数千分比向下取整。
 std::int64_t offer_deposit_amount(const Json& offer) {
     const std::int64_t basis = offer.value("deposit_basis", static_cast<std::int64_t>(0));
+    if (basis <= 0) return 0;
     const int rate = offer.value("offer_source_type", std::string("market")) == "ip_visit"
                          ? kDepositIpPermille
                          : kDepositRegularPermille;
-    return basis * rate / 1000;
+    constexpr std::int64_t divisor = 1000;
+    return (basis / divisor) * rate + (basis % divisor) * rate / divisor;
+}
+
+std::string offer_deposit_entry_id(int week, const std::string& offer_id) {
+    return "w" + std::to_string(week) + ".production." + offer_id + ".deposit";
+}
+
+bool is_offer_deposit_entry(const LedgerEntry& entry, const std::string& offer_id) {
+    const std::string suffix = ".production." + offer_id + ".deposit";
+    return entry.id.size() > suffix.size() &&
+           entry.id.compare(entry.id.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+std::vector<const LedgerEntry*> offer_deposit_entries(const GameState& state, const std::string& offer_id) {
+    std::vector<const LedgerEntry*> entries;
+    for (const auto& entry : state.finance.entries) {
+        if (is_offer_deposit_entry(entry, offer_id)) entries.push_back(&entry);
+    }
+    return entries;
 }
 
 bool offer_in_lock(const Json& offer, int week) {
@@ -1091,9 +1112,35 @@ std::vector<std::string> validate(const GameState& state) {
                         error("INV-01 offer.deposit_basis 必须为正: " + offer_id);
                     }
                     const bool has_lock = offer.contains("locked_until") && offer.at("locked_until").is_number_integer();
-                    if (!offer.value("lock_used", false) &&
-                        (has_lock || offer.value("deposit_paid", static_cast<std::int64_t>(0)) > 0)) {
-                        error("INV-01 offer 锁定快照不一致（lock_used=false）: " + offer_id);
+                    const bool lock_used = offer.value("lock_used", false);
+                    const auto deposits = offer_deposit_entries(state, offer_id);
+                    if (lock_used) {
+                        const std::int64_t expected_deposit = offer_deposit_amount(offer);
+                        if (deposits.size() != 1) {
+                            error("INV-01 offer 已锁定但 Finance 定金流水不唯一: " + offer_id);
+                        } else {
+                            const LedgerEntry& entry = *deposits.front();
+                            if (offer.value("deposit_paid", static_cast<std::int64_t>(0)) != expected_deposit) {
+                                error("INV-01 offer.deposit_paid 与定金公式不一致: " + offer_id);
+                            }
+                            if (!has_lock || offer.at("locked_until").get<int>() != entry.week + kLockWeeks) {
+                                error("INV-01 offer.locked_until 与定金流水不一致: " + offer_id);
+                            }
+                            if (entry.id != offer_deposit_entry_id(entry.week, offer_id) ||
+                                entry.week > state.company.week || entry.work_id.has_value() ||
+                                entry.category != "production" || entry.amount != -expected_deposit ||
+                                !entry.counterparty || *entry.counterparty != offer_id ||
+                                entry.memo != "定金锁定（到期不退）") {
+                                error("INV-01 Finance 定金流水不是规范流水: " + offer_id);
+                            }
+                        }
+                    } else {
+                        if (has_lock || offer.value("deposit_paid", static_cast<std::int64_t>(0)) > 0) {
+                            error("INV-01 offer 锁定快照不一致（lock_used=false）: " + offer_id);
+                        }
+                        if (!deposits.empty()) {
+                            error("INV-24 Finance 已有该企划的终身锁定历史: " + offer_id);
+                        }
                     }
                 }
             }
@@ -2525,11 +2572,18 @@ std::string advance_week(const std::string& input) {
                                    {"option_id", option->id}, {"automatic", true}});
         }
 
+        // ---- 阶段 7：下一周开场状态步（先于阶段 8 事件抽取）----
+        const int next_week = week + 1;
+        // 招聘池进入新周先清理到期 scout 窗口，再部分轮换常规池。
+        // 市场释放到期锁定 → 自然过期 → 自然补充；破产路径已在阶段 2 提前返回。
+        state.recruitment.pool = rotate_pool(state.recruitment.pool, state.seed, next_week);
+        state.market = weekly_market_step(state.market, state.seed, next_week);
+
         // ---- 阶段 8：随机事件抽取与周数 +1 ----
         // 每个 producing 项目各自至多一条；已有待处理事件的项目不再追加。
         // 第 520 周先合法完成当周结算，再统一收尾：不再抽事件，剩余项目转 closing 结清。
         Json events_report = Json::object();
-        if (week + 1 >= kMaxWeek) {
+        if (next_week >= kMaxWeek) {
             if (!state.events.pending.empty()) {
                 return fail_stage(8, "NOT_IMPLEMENTED",
                                   "第 520 周终局的 pending 转移/归档语义尚未冻结，不能清空事件或关闭其归属项目");
@@ -2544,12 +2598,7 @@ std::string advance_week(const std::string& input) {
             events_report = event::draw(state, week + 1);
         }
 
-        state.company.week = week + 1;
-        // 招聘池周步骤（§14.13.1）：进入新周先清理到期 scout 窗口，再部分轮换常规池。
-        // 破产路径在阶段 2 已提前返回，不会走到这里。
-        state.recruitment.pool = rotate_pool(state.recruitment.pool, state.seed, week + 1);
-        // 市场周步骤（§14.13.2）：释放到期锁定 → 自然过期 → 自然补充，开局边界语义。
-        state.market = weekly_market_step(state.market, state.seed, week + 1);
+        state.company.week = next_week;
         events_report["expired"] = expired;
 
         const auto post_errors = validate(state);
@@ -2750,7 +2799,7 @@ std::string lock_offer(const std::string& input) {
         (*slot)["lock_used"] = true;
         (*slot)["deposit_paid"] = deposit;
         state.finance.entries.push_back(LedgerEntry{
-            "w" + std::to_string(week) + ".production." + offer_id + ".deposit", week, std::nullopt,
+            offer_deposit_entry_id(week, offer_id), week, std::nullopt,
             "production", -deposit, offer_id, "定金锁定（到期不退）"});
         state.finance.balance -= deposit;
 
@@ -2786,6 +2835,25 @@ std::string start_work(const std::string& input) {
         const Json* offer = find_offer(state, offer_id);
         if (offer == nullptr) return encode(error_body("NOT_FOUND", "企划不存在或已被消费"));
         const Json& snapshot = *offer;
+        const int week = state.company.week;
+        bool market_slot = false;
+        if (state.market.contains("slots") && state.market.at("slots").is_array()) {
+            for (const auto& slot : state.market.at("slots")) {
+                if (slot.is_object() && slot.value("id", std::string{}) == offer_id) {
+                    market_slot = true;
+                    break;
+                }
+            }
+        }
+        if (market_slot) {
+            const bool has_lock = snapshot.contains("locked_until") && snapshot.at("locked_until").is_number_integer();
+            const bool lock_expired = has_lock && week >= snapshot.at("locked_until").get<int>();
+            const bool naturally_expired = week >= snapshot.value("expires_week", kMaxWeek) &&
+                                           !offer_in_lock(snapshot, week);
+            if (lock_expired || naturally_expired) {
+                return encode(error_body("NOT_FOUND", "企划不存在或已过期"));
+            }
+        }
         // DEC-PLAN-001 两级准入：普通企划看声望/履历；原创草稿只看草稿是否有效，
         // 草稿资格在 create_custom_offer 阶段检查，正式开工才检查全部应付款。
         const std::string origin = snapshot.value("origin", std::string("publisher"));
@@ -2896,12 +2964,14 @@ std::string start_work(const std::string& input) {
 
         const std::int64_t total_investment = mode == "committee" ? budget * 2 : 0;
         const std::int64_t paid = total_investment * percent / 100;
-        const int week = state.company.week;
         // §14.13.2 签约抵扣：仅锁定期内（week < locked_until）定金 100% 抵扣本次应付投资额。
         // 定金已在 lock_offer 入账，这里只减少本次现金支出，不重复计成本、不新增退款流水。
         // 承制模式无应付投资额（paid=0），按冻结公式 applied=min(deposit,0)=0（缺口已报 #6）。
-        const std::int64_t deposit_paid = snapshot.value("deposit_paid", static_cast<std::int64_t>(0));
-        const std::int64_t deposit_applied = offer_in_lock(snapshot, week) ? std::min(deposit_paid, paid) : 0;
+        const auto deposits = offer_deposit_entries(state, offer_id);
+        const std::int64_t deposit_paid = deposits.empty() ? 0 : -deposits.front()->amount;
+        const std::int64_t deposit_applied = market_slot && offer_in_lock(snapshot, week)
+                                                  ? std::min(deposit_paid, paid)
+                                                  : 0;
         const std::int64_t cash_due = paid - deposit_applied;
         if (state.finance.balance < cash_due) {
             return encode(Json{{"error", {{"code", "INSUFFICIENT_FUNDS"},

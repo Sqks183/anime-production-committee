@@ -245,13 +245,16 @@ PoolCandidate { staff: Staff, expires_week: uint | null, origin: "regular" | "sc
 Offer 新增：expires_week, locked_until, lock_used, deposit_paid, offer_source_type, deposit_basis
 ```
 
-- 市场槽位初始 4、最大 10；同一企划 id 终身唯一（坐标 id 含 week+index，构造上不可重复生成，锁定历史无法被槽位刷新洗掉）。
-- `lock_offer(offer_id)` 是命令 23（已实现）；第 W 周成功锁定后覆盖 W/W+1，W+2 开局失效。守卫：running ∧ pending 空 ∧ 市场槽存在且未过期 ∧ `lock_used=false` ∧ 现金 ≥ 定金；回执 `{state, offer_id, deposit_paid}`。
-- 同一企划终身只能锁定一次；到期释放槽位、定金不退，`lock_used` 保持 true。
+> **2026-11-27 规则冲突（暂停对应修改）：** #59 最新归档要求市场固定展示 4 个槽位（3 个独立循环槽＋1 个短期外援槽），覆盖本节沿用的“初始 4、上限 10”。槽位身份、刷新周期、外援进度缩放与持久化表达尚未冻结；在 #53 收口前不得把 cap10 实现当作最新决定，也不自行新增槽位字段。
+
+- 现行 PR 运行时沿用市场槽位初始 4、最大 10（上述 #59 冲突待 #53 收口）；同一企划 id 终身唯一（坐标 id 含 week+index，正常生成不重复）；终身锁定历史由 Finance 追加流水兜底，删除槽位后重新插入同 id 不得复位或再次收费。
+- `lock_offer(offer_id)` 是命令 23（已实现）；第 W 周成功锁定后覆盖 W/W+1，W+2 开局失效。守卫：running ∧ pending 空 ∧ 市场槽存在且未过期 ∧ `lock_used=false` ∧ Finance 无该 id 的锁定历史 ∧ 现金 ≥ 定金；回执 `{state, offer_id, deposit_paid}`。
+- 同一企划终身只能锁定一次；到期释放槽位、定金不退，Finance 定金流水保留，`lock_used` 保持 true。
 - 普通企划定金 5%、IP 上门企划 10%，按 Offer 生成时固定的 `deposit_basis` 计算（整数千分比向下取整，取整规则待 CATALOG §11.3 标定）；`offer_source_type` 与 `deposit_basis` 必须随 Offer 快照保存，后续预算调整不追溯改变定金。
-- 正式签约时定金 100% 抵扣（仅锁定期内 `week < locked_until`）：`start_work` 现金守卫与 `investment_paid` 流水按 `应付款 − min(deposit_paid, 应付款)` 计算；Finance 保留 `investment_paid/contract_received` 两笔账，不重复记录定金。定金流水类目 `production`（`w{week}.production.{offer_id}.deposit`），见 §3.7。
-- 周结算市场步（`advance_week` 开局边界）：释放到期锁定 → 自然过期（锁定期内受保护）→ 自然补充至上限；存活企划逐字段不变，不是清空重抽。生成坐标 `draw(seed, week, market/offer_gen, index*16+k)` 逐位镜像 `scripts/lib/market-oracle.mjs`；weekly_add、有效期分布 `[PLACEHOLDER]`（#59）。
-- 现行边界（缺口登记 #6）：初始 4 槽沿用 M1 fixture 目录（内容与到期窗口待 #59 标定，`expires_week=3` 为 PLACEHOLDER）；热度仍为静态 fixture，坐标热度生成随内容标定迁移；承制模式无应付投资额，按冻结公式抵扣为 0，定金是否随 `contract_received` 返还待裁决；自定/提案槽生命周期字段透传不强制，`lock_offer` 仅作用于市场槽；非 tv 规模生成企划的蓝图映射待标定（oracle 样本 blueprint 固定 tv_standard）。
+- `lock_used=true` 的企划必须唯一对应规范 Finance 定金流水 `w{week}.production.{offer_id}.deposit`：`week/work_id/category/amount/counterparty/memo` 与 `locked_until=week+2`、`deposit_paid` 全部对账；缺失、重复或篡改均判 `INVALID_STATE`。
+- 正式签约时定金 100% 抵扣（仅市场槽且锁定期内 `week < locked_until`）：抵扣额从已对账的 Finance 定金流水推导，不直接信任 `deposit_paid` 快照；`start_work` 现金守卫与 `investment_paid` 流水按 `应付款 − min(已对账定金, 应付款)` 计算。Finance 保留 `investment_paid/contract_received` 两笔账，不重复记录定金。
+- 周结算阶段 7 先执行下一周开场的招聘/市场步（释放到期锁定 → 自然过期，锁定期内受保护 → 自然补充至上限），再进入阶段 8 抽取事件；存活企划逐字段不变，不是清空重抽。生成坐标 `draw(seed, week, market/offer_gen, index*16+k)` 逐位镜像 `scripts/lib/market-oracle.mjs`；weekly_add、有效期分布 `[PLACEHOLDER]`（#59）。
+- 现行边界（缺口登记 #6）：初始 4 槽沿用 M1 fixture 目录（内容与到期窗口待 #59 标定，`expires_week=3` 为 PLACEHOLDER）；热度仍为静态 fixture，坐标热度生成随内容标定迁移；承制模式无应付投资额，按冻结公式抵扣为 0，定金是否随 `contract_received` 返还待裁决；自定/提案槽生命周期字段透传不强制，`lock_offer` 仅作用于市场槽；非 TV 蓝图尚未注册，当前生成器只产出 `tv_standard` 企划，非 TV 规模映射仍待标定。
 
 ---
 
@@ -380,7 +383,7 @@ M0 §5 的“工作副本 + 一次提交”在已实现命令上成立：守卫�
 
 ## 6. 不变式实现对照
 
-M0 §4 共 **29 条**。当前 `validate()` 实际断言 **16 条**：`INV-01/02/03/04/06/07/09/11/12/16/18/21/23/25/27/29`。
+M0 §4 共 **29 条**。当前 `validate()` 实际断言 **17 条**：`INV-01/02/03/04/06/07/09/11/12/16/18/21/23/24/25/27/29`。
 
 | INV | 断言 | 位置/缺口 |
 | --- | --- | --- |
@@ -407,7 +410,7 @@ M0 §4 共 **29 条**。当前 `validate()` 实际断言 **16 条**：`INV-01/02
 | 21 week 只由 advance_week 改 | ✅ | |
 | 22 Archive 只追加 | 🔶 部分 | 交付/结局已写入；完整追加约束未独立断言 |
 | 23 事件仲裁 | ✅ | |
-| 24 市场槽初始 4/上限 10/终身唯一 | 🔶 部分 | 初始 4 槽已实现；上限/锁定历史未完整断言 |
+| 24 市场槽初始 4/上限 10/终身唯一 | 🔶 部分 | 初始 4/上限 10 与当前槽 id 唯一已断言；Finance 定金历史防删除后重插；#59 固定 4 槽规则待 #53，跨槽历史互斥未完整断言 |
 | 25 balance ≥0 / 预检失败破产 | 🔶 部分 | 非负余额与无 pending 破产已实现；pending 终局语义未冻结 |
 | 26 存档无派生值 | ❌ | 无黑名单检查 |
 | 27 每项目恰一名监督 | ✅ | `Project.supervisor_staff_id` + 资格/归属/重复校验 |

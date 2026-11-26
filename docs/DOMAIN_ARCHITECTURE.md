@@ -966,7 +966,7 @@ WorkRecord { id, name, ip_id, source, genre, scale, mode, investment_percent,
 | 命令 | 归属 | 守卫 | 主要效果 |
 | --- | --- | --- | --- |
 | `initialize_game(seed)` | Application | — | 建立公司、初始名册、供应商、合作方、市场首轮、空项目集 |
-| `start_work(offer_id, mode, percent, committee_partner_ids)` | Application | 公司 running；企划存在且有效；模式合法；普通企划满足 `min_reputation/required_works` 或原创草稿存在且有效；现金覆盖全部应付款，锁定期内可按 M0 §14.13 抵扣 `deposit_paid` | Project 建立、委员会成立、Market 消费企划、Finance 保留投资与合同预算两笔账且定金不重复计支出、员工可归属。原创声望资格在创建草稿时检查，不因有效期内轻微波动重复卡开工 |
+| `start_work(offer_id, mode, percent, committee_partner_ids)` | Application | 公司 running；企划存在且有效（市场槽自然到期或锁定到期均拒绝）；模式合法；普通企划满足 `min_reputation/required_works` 或原创草稿存在且有效；现金覆盖全部应付款，锁定期内可按 M0 §14.13 抵扣已对账定金 | Project 建立、委员会成立、Market 消费企划、Finance 保留投资与合同预算两笔账且定金不重复计支出、员工可归属。原创声望资格在创建草稿时检查，不因有效期内轻微波动重复卡开工 |
 | `set_work_plan(work_id, plan)` | Project | 公司 running；项目 producing；`plan.target` 须引用本项目单集/阶段，至多一个 | 更新周内计划态并刷新只读预览；实际制作效果在周结算发生 |
 | `assign_staff(staff_id, work_id \| null)` | Staff | 项目存在且 producing；核心员工每周仅能归属一个项目；同时校验职业与目标工作项资格；项目/本周外派/主动待命三选一互斥 | 更新周内计划态并刷新只读预览；实际归属与产能效果在周结算快照中生效 |
 | `hire_core(staff_id)` | Staff + Finance | 公司 running；候选人存在；现金 ≥ signing_fee；名册上限（若有）。不要求全公司空闲（DEC-PLAY-003） | 签约即入职、立即进入核心名册并可当周分配；signing_fee 入账，首周周薪计入本周下一次结算 |
@@ -988,7 +988,7 @@ WorkRecord { id, name, ip_id, source, genre, scale, mode, investment_percent,
 | `finalize_delivery(work_id)` | Application | 项目 delivering | 交付结算、写 Archive、关闭委员会 |
 | `finalize_company()` | Application | 公司 ended 且全部项目已结算 | 生成公司结局评价 |
 | `view_event(work_id, event_id)` | Event → Application | 该 work 存在对应 pending 事件；公司 running；未查看时标记，已查看按幂等成功 | 只把目标事件 `viewed` 置 true，解除未查看事件对 `advance_week` 的阻塞；不结算、不扣款、不移除 |
-| `lock_offer(offer_id)` | Market + Finance | 公司 running；`events.pending[]` 为空；企划存在且未过期；`lock_used=false`（终身一次）；现金 ≥ 定金 | Finance 定金流水 + `locked_until=week+2` + `lock_used=true` + `deposit_paid` 对账快照，一次提交；W/W+1 有效、W+2 失效，到期定金不退（M0 §14.13） |
+| `lock_offer(offer_id)` | Market + Finance | 公司 running；`events.pending[]` 为空；企划存在且未过期；`lock_used=false` 且 Finance 无该 id 锁定历史（终身一次）；现金 ≥ 定金 | Finance 定金流水 + `locked_until=week+2` + `lock_used=true` + `deposit_paid` 对账快照，一次提交；W/W+1 有效、W+2 失效，到期定金不退（M0 §14.13） |
 
 **为什么不是 `apply_decision(type, ...)`**：当前实现的单一 decision 联合类型把所有守卫挤进一个长 if 链，错误码与前置条件互相纠缠，新增玩法必须改同一个函数。用例级命令把守卫放在各自入口，也让 UI 与测试的意图更清楚。
 
@@ -1674,7 +1674,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version, state: GameState }
 - Market 必须持有活动锁定、锁定期限、已支付定金及同一企划历史上是否锁定过的可追溯状态；`lock_offer(offer_id)` 在第 W 周成功后设置 `locked_until=W+2`，覆盖 W 与 W+1，W+2 开局失效；进入最后一周时由周回执提示。
 - **普通企划定金比例为 5%；IP 上门企划定金比例为 10%。** 档位由 Offer 的企划来源类型决定，不允许玩家自行选择或切换。
 - 定金统一按企划生成时固定的基础立项费用计算；该金额及企划来源类型须保存在 Offer 快照中，后续项目预算调整不得追溯改变定金。
-- 同一企划终身最多锁定一次；到期自动释放槽位且定金不退；正式接单时定金作为预付款 100% 抵扣对应立项保证金/前期费用，不得重复记成本或重复扣现金。定金扣款与签约抵扣只通过 Finance 流水体现，`deposit_paid` 仅作 Market 对账快照。
+- 同一企划终身最多锁定一次；到期自动释放槽位且定金不退；正式接单时定金作为预付款 100% 抵扣对应立项保证金/前期费用，不得重复记成本或重复扣现金。定金扣款与签约抵扣只通过 Finance 流水体现，`deposit_paid` 仅作 Market 对账快照；快照必须与唯一规范定金流水对账，抵扣额从流水推导。Finance 追加流水同时承载终身锁定历史，删除/重插槽位不得复位或重复收费。
 - 命令签名、失败码与原子范围以 M0 §5/§14.13 为准；运行时实现与参数验收前不得宣称已开放。
 
 ### 21.4 整集协力打包（Q10）
