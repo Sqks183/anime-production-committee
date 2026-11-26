@@ -249,7 +249,7 @@ Offer 新增：expires_week, locked_until, lock_used, deposit_paid, offer_source
 
 - 现行 PR 运行时沿用市场槽位初始 4、最大 10（上述 #59 冲突待 #53 收口）；同一企划 id 终身唯一（坐标 id 含 week+index，正常生成不重复）；终身锁定历史由 Finance 追加流水兜底，删除槽位后重新插入同 id 不得复位或再次收费。
 - `lock_offer(offer_id)` 是命令 23（已实现）；第 W 周成功锁定后覆盖 W/W+1，W+2 开局失效。守卫：running ∧ pending 空 ∧ 市场槽存在且未过期 ∧ `lock_used=false` ∧ Finance 无该 id 的锁定历史 ∧ 现金 ≥ 定金；回执 `{state, offer_id, deposit_paid}`。
-- 同一企划终身只能锁定一次；到期释放槽位、定金不退，Finance 定金流水保留，`lock_used` 保持 true。
+- 同一企划终身只能锁定一次；到期释放槽位、定金不退，Finance 定金流水保留，`lock_used` 保持 true。历史识别同时检查定金 ID 标记与 `production/counterparty/memo` 语义，单独改写流水 ID 不得绕过。
 - 普通企划定金 5%、IP 上门企划 10%，按 Offer 生成时固定的 `deposit_basis` 计算（整数千分比向下取整，取整规则待 CATALOG §11.3 标定）；`offer_source_type` 与 `deposit_basis` 必须随 Offer 快照保存，后续预算调整不追溯改变定金。
 - `lock_used=true` 的企划必须唯一对应规范 Finance 定金流水 `w{week}.production.{offer_id}.deposit`：`week/work_id/category/amount/counterparty/memo` 与 `locked_until=week+2`、`deposit_paid` 全部对账；缺失、重复或篡改均判 `INVALID_STATE`。
 - 正式签约时定金 100% 抵扣（仅市场槽且锁定期内 `week < locked_until`）：抵扣额从已对账的 Finance 定金流水推导，不直接信任 `deposit_paid` 快照；`start_work` 现金守卫与 `investment_paid` 流水按 `应付款 − min(已对账定金, 应付款)` 计算。Finance 保留 `investment_paid/contract_received` 两笔账，不重复记录定金。

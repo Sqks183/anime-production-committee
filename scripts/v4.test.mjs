@@ -2346,9 +2346,11 @@ test('lock_offer：大定金基数使用安全算术，不溢出', () => {
   const state = ok('initialize', { seed: 42 }).state
   const offer = generateOffer(42, 0, 0, { sourceType: 'ip_visit' })
   offer.deposit_basis = 92233720368547760
+  const expectedDeposit = Math.floor(offer.deposit_basis / 1000) * 100 +
+    Math.floor((offer.deposit_basis % 1000) * 100 / 1000)
   const rejected = call('lock_offer', { state: withOffers(state, [offer]), offer_id: offer.id })
   assert.equal(rejected.error.code, 'INSUFFICIENT_FUNDS')
-  assert.ok(Number.isFinite(rejected.error.gap) && rejected.error.gap > 0)
+  assert.equal(rejected.error.gap, expectedDeposit - state.finance.balance)
 })
 
 test('start_work：锁定快照必须与唯一 Finance 定金流水对账', () => {
@@ -2369,6 +2371,12 @@ test('start_work：锁定快照必须与唯一 Finance 定金流水对账', () =
   assert.equal(call('start_work', {
     state: tampered, offer_id: offer.id, mode: 'contract'
   }).error.code, 'INVALID_STATE')
+
+  const corruptId = structuredClone(locked)
+  corruptId.finance.entries.find((e) => e.counterparty === offer.id).id += '.corrupt'
+  assert.equal(call('start_work', {
+    state: corruptId, offer_id: offer.id, mode: 'contract'
+  }).error.code, 'INVALID_STATE')
 })
 
 test('lock_offer：有待处理事件时拒绝（INVALID_PHASE）', () => {
@@ -2384,6 +2392,21 @@ test('lock_offer：企划离开市场后回归仍拒绝再锁（Finance 终身�
   offer.expires_week = 10
   state = withOffers(state, [offer])
   state = ok('lock_offer', { state, offer_id: offer.id }).state
+  state.market.slots = []
+  state.market.slots.push(structuredClone(offer))
+  const entriesBefore = structuredClone(state.finance.entries)
+  const rejected = call('lock_offer', { state, offer_id: offer.id })
+  assert.equal(rejected.error.code, 'INVALID_STATE')
+  assert.deepEqual(state.finance.entries, entriesBefore)
+})
+
+test('lock_offer：损坏流水 ID 仍作为终身历史，不能重复锁定', () => {
+  let state = rich(ok('initialize', { seed: 42 }).state)
+  const offer = generateOffer(42, 0, 0)
+  offer.expires_week = 10
+  state = withOffers(state, [offer])
+  state = ok('lock_offer', { state, offer_id: offer.id }).state
+  state.finance.entries.find((e) => e.counterparty === offer.id).id += '.corrupt'
   state.market.slots = []
   state.market.slots.push(structuredClone(offer))
   const entriesBefore = structuredClone(state.finance.entries)
