@@ -770,9 +770,13 @@ std::string offer_deposit_entry_id(int week, const std::string& offer_id) {
 }
 
 bool is_offer_deposit_entry(const LedgerEntry& entry, const std::string& offer_id) {
-    const std::string suffix = ".production." + offer_id + ".deposit";
-    return entry.id.size() > suffix.size() &&
-           entry.id.compare(entry.id.size() - suffix.size(), suffix.size(), suffix) == 0;
+    if (entry.category == "production" && !entry.work_id.has_value() &&
+        entry.counterparty && *entry.counterparty == offer_id &&
+        entry.memo == "定金锁定（到期不退）") {
+        return true;
+    }
+    const std::string marker = ".production." + offer_id + ".deposit";
+    return entry.id.find(marker) != std::string::npos;
 }
 
 std::vector<const LedgerEntry*> offer_deposit_entries(const GameState& state, const std::string& offer_id) {
