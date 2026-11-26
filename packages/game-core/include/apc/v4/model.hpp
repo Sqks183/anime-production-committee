@@ -77,7 +77,7 @@ struct Staff {
     std::array<bool, kAbilityCount> revealed_potential{};
     std::string talent_type;
     int64_t weekly_salary = 0;
-    int64_t signing_fee = 0;
+    int64_t signing_fee = 0;    // 一次性签约费；project_fee 已由 M0 §14.6 废弃
     int fatigue = 0;
     int morale = 0;
     bool departure_warning = false;
@@ -143,13 +143,19 @@ struct WorkPlan {
 struct Project {
     std::string id;
     Json offer;                            // 企划快照（M2 强类型化）
-    std::string mode = "contract";
-    Json investment = Json::object();
+    std::string mode = "contract";         // contract / committee
+    Json investment = Json::object();      // {percent,total,paid}；承制全 0
     std::vector<std::string> channels;
     int opened_week = 0;
     int deadline_week = 0;
     Json extension = Json::object();
     std::string status = "producing";      // planning / producing / delivering / settled
+    // INV-27/§14.8：监督是项目内岗位，不写进 Staff.role（DEC-STAFF-008），
+    // 也不用"归属里角色是监督者"推导——那样多人主责与原子换班都无法表达。
+    std::optional<std::string> supervisor_staff_id;
+    std::optional<std::string> ip_id;
+    std::optional<std::string> committee_id;
+    Json tv_service = nullptr;             // M4：{channel, paid_week, fee}
     CommonProduction common;
     std::vector<Episode> episodes;
     WorkPlan plan;

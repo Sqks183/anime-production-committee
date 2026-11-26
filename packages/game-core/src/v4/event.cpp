@@ -112,9 +112,7 @@ bool parse_card(const Json& raw, Checker& checker, std::set<std::string>& ids, E
         checker.fail(id, "random_weight", "random_weight 必须在 0..1000");
     }
     const int expires = int_field(raw, "expires_weeks", 0);
-    // 首版没有处理期限/超时升级的运行时行为（M2-b 规则未落地），
-    // 严格拒绝非 0，避免内容作者误以为到期会产生效果。
-    if (expires != 0) checker.fail(id, "expires_weeks", "首版不支持处理期限，expires_weeks 必须为 0");
+    if (expires < 0 || expires > 8) checker.fail(id, "expires_weeks", "expires_weeks 必须在 0..8");
 
     // trigger
     std::string metric, op;
@@ -224,6 +222,9 @@ bool parse_card(const Json& raw, Checker& checker, std::set<std::string>& ids, E
     if (polarity == "negative" && !has_abandon) checker.fail(id, "options", "负面事件必须有 abandon 选项");
     if (polarity == "positive" && (!has_accept || !has_decline)) {
         checker.fail(id, "options", "正面事件必须有 accept 与 decline 选项");
+    }
+    if (expires > 0 && (polarity != "negative" || !has_abandon)) {
+        checker.fail(id, "options", "限期事件必须有负面 polarity 与 abandon 默认分支");
     }
     if (tier == "major" && !once) checker.fail(id, "once_per_project", "重大事件必须 once_per_project=true");
     if (tier == "major" && cooldown != 0) checker.fail(id, "cooldown_weeks", "重大事件不能配冷却（同项目只触发一次）");
@@ -420,7 +421,7 @@ PendingEvent build_instance(const EventSpec& spec, const std::string& work_id, i
     event.triggered_week = week;
     event.cooldown_weeks = spec.cooldown_weeks;
     event.once_per_project = spec.once_per_project;
-    if (spec.expires_weeks > 0) event.expires_week = week + spec.expires_weeks;
+    if (spec.expires_weeks > 0) event.expires_week = week + spec.expires_weeks - 1;
     for (const auto& option : spec.options) {
         EventOptionView view;
         view.id = option.id;

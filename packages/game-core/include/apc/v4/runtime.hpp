@@ -22,8 +22,19 @@ std::string state_hash(const GameState& state);
 std::string initialize(const std::string& input);        // 内部/测试：{seed, company_name?}
 std::string instantiate_work(const std::string& input);  // 内部/测试：{state, blueprint, work_id, duration_weeks?}
 std::string set_plan(const std::string& input);          // 内部/测试：{state, work_id, plan}
+std::string start_work(const std::string& input);        // M0 命令 2：{state, offer_id, mode, percent?, committee_partner_ids?}
+std::string create_custom_offer(const std::string& input); // M0 命令 12：{state, name, source, scale, style}
+std::string adopt_proposal(const std::string& input);     // M0 命令 13：{state}
+std::string reject_proposal(const std::string& input);    // M0 命令 14：{state}
 std::string assign_staff(const std::string& input);      // M0 命令 4：{state, staff_id, work_id|null}
-std::string advance_week(const std::string& input);      // M0 命令 17：{state}
+std::string deliver_work(const std::string& input);      // M0 命令 10：{state, work_id}
+std::string abort_work(const std::string& input);        // M0 命令 11：{state, work_id}
+std::string buy_tv_service(const std::string& input);    // M0 命令 15：{state, work_id}
+std::string request_extension(const std::string& input); // M0 命令 16：{state, work_id}
+std::string advance_week(const std::string& input);      // M0 命令 18：{state}
+std::string end_company(const std::string& input);       // M0 命令 20：{state}
+std::string finalize_delivery(const std::string& input); // M0 命令 21：{state, work_id}
+std::string finalize_company(const std::string& input);  // M0 命令 22：{state}
 std::string hash_state(const std::string& input);        // {state}
 
 // M0 契约名适配层（薄封装，不改变语义）：

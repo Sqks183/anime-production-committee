@@ -52,6 +52,7 @@ if (funded.error) fail(`抬升现金后的状态未通过校验：${funded.error
 
 let pendingState = null
 let drawnReport = null
+let weekReceipt = null
 let viewReceipt = null
 let resolveReceipt = null
 for (let week = 0; week < 24; week++) {
@@ -72,6 +73,7 @@ for (let week = 0; week < 24; week++) {
     }
   }
   const result = unwrap('advance_week', { state })
+  if (!weekReceipt) weekReceipt = result
   state = result.state
   if (result.report.events.drawn && !drawnReport) drawnReport = result.report
   if (state.finance.entries.some((entry) => entry.category === 'events')) break
@@ -221,7 +223,97 @@ function collect(node, path, out) {
   }
 }
 
+function completeGates(state, workId) {
+  const work = state.works.find((entry) => entry.id === workId)
+  for (const episode of work.episodes) {
+    for (const stage of episode.stages) {
+      for (const item of stage.items) {
+        if (!item.is_gate) continue
+        item.work_done = item.work_total
+        for (const dim of Object.keys(item.quality)) item.quality[dim] = 80
+      }
+    }
+  }
+  return state
+}
+
+function fundedInitialize() {
+  const result = unwrap('initialize_game', { seed: 20261127 }).state
+  result.finance.opening_funds += 50_000_000
+  result.finance.balance += 50_000_000
+  return result
+}
+
 const observed = new Map()
+let startReceipt
+let extensionReceipt
+let deliveryReceipt
+let endReceipt
+let finalizeDeliveryReceipt
+let finalizeCompanyReceipt
+let tvServiceReceipt
+let customOfferReceipt
+let adoptReceipt
+let rejectReceipt
+
+const commerce = fundedInitialize()
+startReceipt = unwrap('start_work', {
+  state: commerce,
+  offer_id: 'offer_01',
+  mode: 'committee',
+  percent: 50,
+  committee_partner_ids: ['partner_tv', 'partner_stream']
+})
+collect(startReceipt.state, 'state', observed)
+extensionReceipt = unwrap('request_extension', { state: startReceipt.state, work_id: startReceipt.work_id })
+collect(extensionReceipt.state, 'state', observed)
+completeGates(extensionReceipt.state, startReceipt.work_id)
+deliveryReceipt = unwrap('deliver_work', { state: extensionReceipt.state, work_id: startReceipt.work_id })
+collect(deliveryReceipt.state, 'state', observed)
+collect([deliveryReceipt.report], 'report.settlements', observed)
+const archived = deliveryReceipt.state.archive.works[0]
+if (archived.channel_breakdown.reduce((sum, line) => sum + line.revenue, 0) !== archived.commercial_revenue) {
+  fail('Archive channel_breakdown 的 Σrevenue 不等于 commercial_revenue（DA §7.6）')
+}
+if (archived.channel_breakdown.reduce((sum, line) => sum + line.company_received, 0) !== archived.finance_summary.commercial_share) {
+  fail('Archive channel_breakdown 的 Σcompany_received 不等于 finance_summary.commercial_share（DA §7.6）')
+}
+endReceipt = unwrap('end_company', { state: deliveryReceipt.state })
+collect(endReceipt.state, 'state', observed)
+finalizeCompanyReceipt = unwrap('finalize_company', { state: endReceipt.state })
+collect(finalizeCompanyReceipt.state, 'state', observed)
+collect(finalizeCompanyReceipt.result, 'result', observed)
+
+const tvCommerce = fundedInitialize()
+const tvStart = unwrap('start_work', {
+  state: tvCommerce,
+  offer_id: 'offer_01',
+  mode: 'committee',
+  percent: 50,
+  committee_partner_ids: ['partner_stream']
+})
+collect(tvStart.state, 'state', observed)
+tvServiceReceipt = unwrap('buy_tv_service', { state: tvStart.state, work_id: tvStart.work_id })
+collect(tvServiceReceipt.state, 'state', observed)
+const tvClosed = unwrap('end_company', { state: completeGates(tvServiceReceipt.state, tvStart.work_id) })
+collect(tvClosed.state, 'state', observed)
+finalizeDeliveryReceipt = unwrap('finalize_delivery', { state: tvClosed.state, work_id: tvStart.work_id })
+collect(finalizeDeliveryReceipt.state, 'state', observed)
+collect([finalizeDeliveryReceipt.report], 'report.settlements', observed)
+
+const customBase = fundedInitialize()
+customBase.company.reputation = 150
+customOfferReceipt = unwrap('create_custom_offer', {
+  state: customBase, name: '审计原创', source: 'original', scale: 'tv', style: 'normal'
+})
+collect(customOfferReceipt.state, 'state', observed)
+const proposalBase = fundedInitialize()
+proposalBase.market.proposal = { ...proposalBase.market.slots[0], id: 'proposal_audit' }
+adoptReceipt = unwrap('adopt_proposal', { state: proposalBase })
+collect(adoptReceipt.state, 'state', observed)
+rejectReceipt = unwrap('reject_proposal', { state: proposalBase })
+collect(rejectReceipt.state, 'state', observed)
+
 collect(state, 'state', observed)
 collect(pendingState, 'state', observed)
 collect(drawnReport, 'report', observed)
@@ -259,6 +351,7 @@ const requiredProbes = {
   'state.company': (s) => delete s.company,
   'state.staff': (s) => delete s.staff,
   'state.works': (s) => delete s.works,
+  'state.works[].supervisor_staff_id': (s) => delete s.works[0].supervisor_staff_id,
   'state.finance': (s) => delete s.finance,
   'state.finance.loans': (s) => delete s.finance.loans,
   'state.finance.solvency': (s) => delete s.finance.solvency,
@@ -268,6 +361,10 @@ const requiredProbes = {
   'state.finance.solvency.gap': (s) => delete s.finance.solvency.gap,
   'state.staff[].signing_fee': (s) => delete s.staff[0].signing_fee,
   'state.staff[].weekly_salary': (s) => delete s.staff[0].weekly_salary,
+  'state.staff[].fatigue': (s) => delete s.staff[0].fatigue,
+  'state.staff[].morale': (s) => delete s.staff[0].morale,
+  'state.staff[].departure_warning': (s) => delete s.staff[0].departure_warning,
+  'state.staff[].assignment_work_id': (s) => delete s.staff[0].assignment_work_id,
   'state.events': (s) => delete s.events,
   'state.events.pending': (s) => delete s.events.pending,
   'state.events.pending[].viewed': (s) => delete s.events.pending[0].viewed
@@ -307,7 +404,17 @@ const receipts = {
     plan: { intensity: 'standard', focus: 'quality', outsourcing: 'gap_fill', overtime: false, target: null }
   })).filter((key) => key !== 'error'),
   assign_staff: Object.keys(assigned).filter((key) => key !== 'error'),
-  advance_week: ['report', 'state'],
+  advance_week: Object.keys(weekReceipt).filter((key) => key !== 'error'),
+  start_work: Object.keys(startReceipt).filter((key) => key !== 'error'),
+  request_extension: Object.keys(extensionReceipt).filter((key) => key !== 'error'),
+  deliver_work: Object.keys(deliveryReceipt).filter((key) => key !== 'error'),
+  end_company: Object.keys(endReceipt).filter((key) => key !== 'error'),
+  finalize_delivery: Object.keys(finalizeDeliveryReceipt).filter((key) => key !== 'error'),
+  finalize_company: Object.keys(finalizeCompanyReceipt).filter((key) => key !== 'error'),
+  buy_tv_service: Object.keys(tvServiceReceipt).filter((key) => key !== 'error'),
+  create_custom_offer: Object.keys(customOfferReceipt).filter((key) => key !== 'error'),
+  adopt_proposal: Object.keys(adoptReceipt).filter((key) => key !== 'error'),
+  reject_proposal: Object.keys(rejectReceipt).filter((key) => key !== 'error'),
   hash_state: Object.keys(unwrap('hash_state', { state })).filter((key) => key !== 'error')
 }
 if (viewReceipt) receipts.view_event = Object.keys(viewReceipt).filter((key) => key !== 'error')
@@ -386,6 +493,9 @@ const assertSameJson = (actual, expected, label) => {
 }
 const getPath = (node, path) => path.split('.').slice(1).reduce((value, key) => value?.[key], node)
 const runtimeSource = readText('packages', 'game-core', 'src', 'v4', 'runtime.cpp')
+if (!runtimeSource.includes('events_report = event::draw(state, week + 1);')) {
+  fail('阶段 8 抽取事件必须以次周为时间基，避免 expires_week 提前一周')
+}
 for (const [path, expected] of Object.entries(shape.reserved_defaults)) {
   assertSameJson(getPath(init.state, path), expected, `初始化 reserved 默认值 ${path}`)
   assertSameJson(getPath(state, path), expected, `运行后 reserved 默认值 ${path}`)
@@ -486,31 +596,62 @@ heavy = unwrap('assign_staff', {
   staff_id: heavy.staff.find((person) => person.role === 'director').id,
   work_id: 'work_heavy'
 }).state
+let precheckOutcome = null
 let precheckFailure = null
-for (let week = 0; week < 40 && !precheckFailure; week++) {
+for (let week = 0; week < 40 && !precheckOutcome && !precheckFailure; week++) {
   for (const pending of heavy.events.pending.filter((event) => !event.viewed)) {
     heavy = unwrap('view_event', { state: heavy, work_id: pending.work_id, event_id: pending.event_id }).state
+    const safeOptions = pending.options
+      .filter((item) => !item.effects.some((effect) => effect.target === 'funds' && effect.value < 0))
+      .sort((a, b) => a.cost - b.cost)
+    const option = safeOptions.find((item) => item.kind === 'abandon') || safeOptions[0]
+    if (option) {
+      const resolved = call('resolve_event', {
+        state: heavy,
+        work_id: pending.work_id,
+        event_id: pending.event_id,
+        option_id: option.id
+      })
+      if (resolved.error) {
+        precheckFailure = resolved
+        break
+      }
+      heavy = resolved.state
+    }
   }
+  if (precheckFailure) break
   const before = unwrap('hash_state', { state: heavy }).hash
+  const beforeWeek = heavy.company.week
+  const beforeBalance = heavy.finance.balance
+  const beforeLedgerCount = heavy.finance.entries.length
   const result = call('advance_week', { state: heavy })
   if (result.error) {
     precheckFailure = result
     const after = unwrap('hash_state', { state: heavy }).hash
     if (after !== before) fail('预检失败前后状态哈希不一致（不应发生）')
     if ('state' in result) fail('失败信封不得携带 state（数据字典 §4.2）')
+  } else if (result.report?.mode === 'bankrupt') {
+    precheckOutcome = result
+    if (!result.report.bankrupt || !result.report.skipped) fail('破产回执缺少 bankrupt/skipped 标记')
+    if (typeof result.report.gap !== 'number' || result.report.gap < 0) {
+      fail('破产回执缺少非负整数 gap（M0 §14.7）')
+    }
+    if (result.report.funds?.delta !== 0 || result.state.finance.balance !== beforeBalance) {
+      fail('预检不足破产仍发生现金扣款')
+    }
+    if (result.state.finance.entries.length !== beforeLedgerCount) fail('预检不足破产仍写入 Finance 流水')
+    if (result.state.company.status !== 'closing' || result.state.company.end_reason !== 'bankrupt') {
+      fail('预检不足未进入 bankrupt 终局')
+    }
+    if (result.state.company.week !== beforeWeek) fail('预检不足破产仍推进周数')
   } else {
     heavy = result.state
   }
 }
-if (!precheckFailure) {
-  fail('未触发资金预检失败路径，无法验证 INSUFFICIENT_FUNDS.gap（数据字典 §4.3）')
-} else {
-  if (precheckFailure.error.code !== 'INSUFFICIENT_FUNDS') {
-    fail(`预检失败应为 INSUFFICIENT_FUNDS，实际 ${precheckFailure.error.code}`)
-  }
-  if (typeof precheckFailure.error.gap !== 'number' || precheckFailure.error.gap < 0) {
-    fail('INSUFFICIENT_FUNDS 缺少非负整数 gap 键（数据字典 §4.3 已冻结该字段）')
-  }
+if (!precheckOutcome && !precheckFailure) {
+  fail('未触发资金预检路径，无法验证破产回执与 gap（M0 §14.7）')
+} else if (precheckFailure) {
+  fail(`资金预检路径返回错误 ${precheckFailure.error.code}：${precheckFailure.error.message}`)
 }
 
 // ---- 结果 ----

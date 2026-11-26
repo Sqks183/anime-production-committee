@@ -34,35 +34,35 @@
       "set_plan"
     ],
     "documented_not_exported": [
-      "start_work",
       "hire_core",
       "scout",
       "dismiss_staff",
       "hire_temporary",
       "sign_outsourcing",
-      "deliver_work",
-      "abort_work",
-      "create_custom_offer",
-      "adopt_proposal",
-      "reject_proposal",
-      "buy_tv_service",
-      "request_extension",
-      "lock_offer",
-      "end_company",
-      "finalize_delivery",
-      "finalize_company"
+      "lock_offer"
     ],
     "exported": [
+      "abort_work",
+      "adopt_proposal",
       "advance_week",
       "assign_staff",
+      "buy_tv_service",
+      "create_custom_offer",
+      "deliver_work",
+      "end_company",
       "event_catalog_info",
+      "finalize_company",
+      "finalize_delivery",
       "hash_state",
       "initialize",
       "initialize_game",
       "instantiate_work",
+      "reject_proposal",
+      "request_extension",
       "resolve_event",
       "set_plan",
       "set_work_plan",
+      "start_work",
       "validate_event_catalog",
       "view_event"
     ],
@@ -123,21 +123,6 @@
       "field": "facilities",
       "path": "state.company",
       "ref": "§3.1 / §14.7 阶段2 / §14.9"
-    },
-    {
-      "field": "ip_id",
-      "path": "state.works[]",
-      "ref": "§3.3 / M0 §3"
-    },
-    {
-      "field": "committee_id",
-      "path": "state.works[]",
-      "ref": "§3.3 / INV-14"
-    },
-    {
-      "field": "tv_service",
-      "path": "state.works[]",
-      "ref": "§3.3 / 命令 15"
     },
     {
       "field": "episode_id",
@@ -213,8 +198,173 @@
     "state.committees": [],
     "state.contracts": [],
     "state.finance.entries": [],
-    "state.market": {},
-    "state.partners": [],
+    "state.market": {
+      "competitors": [],
+      "custom_offer": null,
+      "heat": {
+        "drama": {"changed_week": 0, "level": "mid"},
+        "family": {"changed_week": 0, "level": "mid"},
+        "romance": {"changed_week": 0, "level": "low"},
+        "sf": {"changed_week": 0, "level": "high"}
+      },
+      "last_competition_round": 0,
+      "proposal": null,
+      "refresh_week": 0,
+      "slots": [
+        {
+          "allowed_modes": ["contract", "committee"],
+          "audience_base": 600,
+          "blueprint_id": "tv_standard",
+          "channel_potentials": {
+            "bd_dvd": 500000,
+            "domestic_streaming": 1800000,
+            "merchandise": 1200000,
+            "music": 500000,
+            "overseas": 1400000,
+            "tv": 600000
+          },
+          "channels_baseline": ["domestic_streaming", "tv"],
+          "commercial_potential": 700,
+          "committee_candidates": ["partner_tv", "partner_stream"],
+          "contract_budget": 1200000,
+          "duration_weeks": 26,
+          "episode_count": 12,
+          "genre": "sf",
+          "id": "offer_01",
+          "min_reputation": 0,
+          "name": "星海邮差",
+          "origin": "publisher",
+          "required_works": [],
+          "scale": "tv",
+          "source": "publisher",
+          "style": "standard",
+          "target_quality": 70,
+          "workload_scale_permille": 1000
+        },
+        {
+          "allowed_modes": ["contract", "committee"],
+          "audience_base": 520,
+          "blueprint_id": "tv_standard",
+          "channel_potentials": {
+            "bd_dvd": 400000,
+            "domestic_streaming": 2000000,
+            "merchandise": 600000,
+            "music": 400000,
+            "overseas": 800000,
+            "tv": 500000
+          },
+          "channels_baseline": ["domestic_streaming"],
+          "commercial_potential": 620,
+          "committee_candidates": ["partner_stream", "partner_pub"],
+          "contract_budget": 900000,
+          "duration_weeks": 24,
+          "episode_count": 12,
+          "genre": "drama",
+          "id": "offer_02",
+          "min_reputation": 0,
+          "name": "雨夜食堂",
+          "origin": "publisher",
+          "required_works": [],
+          "scale": "tv",
+          "source": "publisher",
+          "style": "standard",
+          "target_quality": 65,
+          "workload_scale_permille": 1000
+        },
+        {
+          "allowed_modes": ["committee"],
+          "audience_base": 700,
+          "blueprint_id": "tv_standard",
+          "channel_potentials": {
+            "bd_dvd": 600000,
+            "domestic_streaming": 2200000,
+            "merchandise": 2000000,
+            "music": 700000,
+            "overseas": 1200000,
+            "tv": 700000
+          },
+          "channels_baseline": ["domestic_streaming", "merchandise", "tv"],
+          "commercial_potential": 760,
+          "committee_candidates": ["partner_tv", "partner_pub"],
+          "contract_budget": 1500000,
+          "duration_weeks": 30,
+          "episode_count": 12,
+          "genre": "family",
+          "id": "offer_03",
+          "min_reputation": 0,
+          "name": "机甲夏令营",
+          "origin": "publisher",
+          "required_works": [],
+          "scale": "tv",
+          "source": "studio",
+          "style": "standard",
+          "target_quality": 75,
+          "workload_scale_permille": 1000
+        },
+        {
+          "allowed_modes": ["contract", "committee"],
+          "audience_base": 420,
+          "blueprint_id": "tv_standard",
+          "channel_potentials": {
+            "bd_dvd": 500000,
+            "domestic_streaming": 1400000,
+            "merchandise": 500000,
+            "music": 600000,
+            "overseas": 600000,
+            "tv": 400000
+          },
+          "channels_baseline": ["domestic_streaming"],
+          "commercial_potential": 520,
+          "committee_candidates": ["partner_stream"],
+          "contract_budget": 700000,
+          "duration_weeks": 20,
+          "episode_count": 12,
+          "genre": "romance",
+          "id": "offer_04",
+          "min_reputation": 0,
+          "name": "无声的告白",
+          "origin": "publisher",
+          "required_works": [],
+          "scale": "tv",
+          "source": "publisher",
+          "style": "standard",
+          "target_quality": 60,
+          "workload_scale_permille": 1000
+        }
+      ]
+    },
+    "state.partners": [
+      {
+        "channels": ["tv"],
+        "history": [],
+        "id": "partner_tv",
+        "name": "东都电视台",
+        "prestige": 65,
+        "relationship": 50,
+        "status": "known",
+        "type": "tv"
+      },
+      {
+        "channels": ["domestic_streaming"],
+        "history": [],
+        "id": "partner_stream",
+        "name": "海流配信",
+        "prestige": 55,
+        "relationship": 50,
+        "status": "known",
+        "type": "streaming"
+      },
+      {
+        "channels": ["publishing"],
+        "history": [],
+        "id": "partner_pub",
+        "name": "白鹭出版",
+        "prestige": 45,
+        "relationship": 50,
+        "status": "known",
+        "type": "publisher"
+      }
+    ],
     "state.suppliers": [],
     "state.works": []
   },
@@ -249,7 +399,8 @@
       "INVALID_PHASE",
       "INVALID_STATE",
       "MODE_NOT_ALLOWED",
-      "NOT_FOUND"
+      "NOT_FOUND",
+      "NOT_IMPLEMENTED"
     ]
   },
   "invariants": {
@@ -267,7 +418,9 @@
       "INV-18",
       "INV-21",
       "INV-23",
-      "INV-25"
+      "INV-25",
+      "INV-27",
+      "INV-29"
     ],
     "declared_total": 29,
     "source": "packages/game-core/src/v4/runtime.cpp"
@@ -308,22 +461,214 @@
     ]
   },
   "optional_paths": {
+    "report.events.expired[]": [
+      "automatic",
+      "event_id",
+      "option_id",
+      "work_id"
+    ],
+    "report.settlements[]": [
+      "archived",
+      "bd_gross",
+      "bd_revenue",
+      "channels",
+      "committee_pool",
+      "commercial_revenue",
+      "commercial_share",
+      "company_received",
+      "end_reason",
+      "forced",
+      "gate_completion_permille",
+      "investor_share",
+      "net_received",
+      "penalty",
+      "quality_score",
+      "rating",
+      "rules_status",
+      "success_reward",
+      "total_costs",
+      "work_id"
+    ],
+    "report.settlements[].channels[]": [
+      "agency_fee_permille",
+      "company_received",
+      "gross",
+      "heat_factor",
+      "net",
+      "owner",
+      "potential",
+      "quality_factor",
+      "reputation_factor",
+      "revenue",
+      "tv_multiplier",
+      "window"
+    ],
+    "state.archive.company_result": [
+      "best_work_id",
+      "final_funds",
+      "highlights",
+      "negatives",
+      "net_cash_change",
+      "rating",
+      "reason",
+      "total_projects",
+      "weeks"
+    ],
+    "state.archive.works[]": [
+      "bd_gross",
+      "bd_revenue",
+      "channel_breakdown",
+      "commercial_revenue",
+      "committee_pool",
+      "company_received",
+      "end_reason",
+      "end_week",
+      "episodes",
+      "finance_summary",
+      "forced",
+      "gate_completion_permille",
+      "genre",
+      "id",
+      "investment_percent",
+      "investor_share",
+      "mode",
+      "name",
+      "offer_id",
+      "quality",
+      "quality_score",
+      "rating",
+      "rules_status",
+      "scale",
+      "source",
+      "start_week",
+      "team"
+    ],
+    "state.archive.works[].channel_breakdown[]": [
+      "agency_fee_permille",
+      "company_received",
+      "gross",
+      "heat_factor",
+      "net",
+      "owner",
+      "potential",
+      "quality_factor",
+      "reputation_factor",
+      "revenue",
+      "tv_multiplier",
+      "window"
+    ],
+    "state.archive.works[].episodes[]": ["id", "quality"],
+    "state.archive.works[].episodes[].quality": ["dims", "mean"],
+    "state.archive.works[].episodes[].quality.dims": [
+      "animation", "art", "direction", "drawing", "sound", "story"
+    ],
+    "state.archive.works[].finance_summary": [
+      "bd_revenue",
+      "commercial_share",
+      "contract_received",
+      "costs",
+      "investment_paid",
+      "penalty",
+      "profit",
+      "success_reward",
+      "total_costs"
+    ],
+    "state.archive.works[].finance_summary.costs": ["distribution", "production"],
+    "state.archive.works[].quality": ["dims", "mean"],
+    "state.archive.works[].quality.dims": [
+      "animation", "art", "direction", "drawing", "sound", "story"
+    ],
+    "state.committees[]": ["closed_week", "formed_week", "id", "members", "status", "work_id"],
+    "state.committees[].members[]": ["channel", "partner_id"],
     "state.company.reputation_log[]": [
       "after",
       "delta",
       "reason",
       "week"
     ],
+    "state.market.custom_offer": [
+      "allowed_modes",
+      "audience_base",
+      "blueprint_id",
+      "channel_potentials",
+      "channels_baseline",
+      "commercial_potential",
+      "committee_candidates",
+      "contract_budget",
+      "created_week",
+      "development_fee",
+      "draft_status",
+      "duration_weeks",
+      "episode_count",
+      "genre",
+      "id",
+      "min_reputation",
+      "name",
+      "origin",
+      "required_works",
+      "rules_status",
+      "scale",
+      "source",
+      "style",
+      "target_quality",
+      "workload_scale_permille"
+    ],
+    "state.market.custom_offer.channel_potentials": [
+      "bd_dvd", "domestic_streaming", "merchandise", "music", "overseas", "tv"
+    ],
+    "state.partners[].history[]": ["delta", "reason", "week", "work_id"],
     "state.staff[].last_participation": [
       "item_id",
       "week",
       "work_id"
+    ],
+    "state.works[].delivery": ["at_week", "reason"],
+    "state.works[].extension": ["fee", "used", "week", "weeks"],
+    "state.works[].investment": ["paid", "percent", "total"],
+    "state.works[].offer": [
+      "allowed_modes",
+      "audience_base",
+      "blueprint_id",
+      "channel_potentials",
+      "channels_baseline",
+      "commercial_potential",
+      "committee_candidates",
+      "contract_budget",
+      "duration_weeks",
+      "episode_count",
+      "genre",
+      "id",
+      "min_reputation",
+      "name",
+      "origin",
+      "required_works",
+      "scale",
+      "source",
+      "style",
+      "target_quality",
+      "workload_scale_permille"
+    ],
+    "state.works[].offer.channel_potentials": [
+      "bd_dvd", "domestic_streaming", "merchandise", "music", "overseas", "tv"
+    ],
+    "state.works[].tv_service": ["channel", "fee_total", "multiplier", "paid", "paid_week", "purchased"],
+    "result": [
+      "best_work_id",
+      "final_funds",
+      "highlights",
+      "negatives",
+      "net_cash_change",
+      "rating",
+      "reason",
+      "total_projects",
+      "weeks"
     ]
   },
   "paths": {
     "report": [
       "events",
       "funds",
+      "settlements",
       "staff",
       "week",
       "works"
@@ -331,7 +676,8 @@
     "report.events": [
       "count",
       "drawn",
-      "events"
+      "events",
+      "expired"
     ],
     "report.events.events[]": [
       "event_id",
@@ -462,6 +808,78 @@
       "since_week",
       "state"
     ],
+    "state.market": [
+      "competitors",
+      "custom_offer",
+      "heat",
+      "last_competition_round",
+      "proposal",
+      "refresh_week",
+      "slots"
+    ],
+    "state.market.heat": [
+      "drama",
+      "family",
+      "romance",
+      "sf"
+    ],
+    "state.market.heat.drama": [
+      "changed_week",
+      "level"
+    ],
+    "state.market.heat.family": [
+      "changed_week",
+      "level"
+    ],
+    "state.market.heat.romance": [
+      "changed_week",
+      "level"
+    ],
+    "state.market.heat.sf": [
+      "changed_week",
+      "level"
+    ],
+    "state.market.slots[]": [
+      "allowed_modes",
+      "audience_base",
+      "blueprint_id",
+      "channel_potentials",
+      "channels_baseline",
+      "commercial_potential",
+      "committee_candidates",
+      "contract_budget",
+      "duration_weeks",
+      "episode_count",
+      "genre",
+      "id",
+      "min_reputation",
+      "name",
+      "origin",
+      "required_works",
+      "scale",
+      "source",
+      "style",
+      "target_quality",
+      "workload_scale_permille"
+    ],
+    "state.market.slots[].channel_potentials": [
+      "bd_dvd",
+      "domestic_streaming",
+      "merchandise",
+      "music",
+      "overseas",
+      "tv"
+    ],
+    "state.partners[]": [
+      "channels",
+      "history",
+      "id",
+      "name",
+      "prestige",
+      "relationship",
+      "status",
+      "type"
+    ],
     "state.staff[]": [
       "abilities",
       "assignment_work_id",
@@ -515,6 +933,7 @@
     ],
     "state.works[]": [
       "channels",
+      "committee_id",
       "common",
       "deadline_week",
       "delivery",
@@ -522,11 +941,14 @@
       "extension",
       "id",
       "investment",
+      "ip_id",
       "mode",
       "offer",
       "opened_week",
       "plan",
-      "status"
+      "status",
+      "supervisor_staff_id",
+      "tv_service"
     ],
     "state.works[].common": [
       "id",
@@ -590,41 +1012,31 @@
     ]
   },
   "receipt_keys": {
-    "advance_week": [
-      "report",
-      "state"
-    ],
-    "assign_staff": [
-      "state"
-    ],
-    "hash_state": [
-      "hash"
-    ],
-    "initialize_game": [
-      "state"
-    ],
-    "instantiate_work": [
-      "state",
-      "work_id"
-    ],
-    "resolve_event": [
-      "message",
-      "state"
-    ],
-    "set_work_plan": [
-      "state"
-    ],
-    "view_event": [
-      "already_viewed",
-      "state",
-      "viewed"
-    ]
+    "adopt_proposal": ["offer_id", "state"],
+    "advance_week": ["report", "state"],
+    "assign_staff": ["state"],
+    "buy_tv_service": ["multiplier", "paid", "state"],
+    "create_custom_offer": ["contract_budget", "offer_id", "rules_status", "state"],
+    "deliver_work": ["report", "state"],
+    "end_company": ["report", "state"],
+    "finalize_company": ["result", "state"],
+    "finalize_delivery": ["company_status", "report", "state"],
+    "hash_state": ["hash"],
+    "initialize_game": ["state"],
+    "instantiate_work": ["state", "work_id"],
+    "reject_proposal": ["state"],
+    "request_extension": ["deadline_week", "state"],
+    "resolve_event": ["message", "state"],
+    "set_work_plan": ["state"],
+    "start_work": ["committee_id", "state", "work_id"],
+    "view_event": ["already_viewed", "state", "viewed"]
   },
   "required_on_parse": [
     "state",
     "state.company",
     "state.staff",
     "state.works",
+    "state.works[].supervisor_staff_id",
     "state.finance",
     "state.finance.loans",
     "state.finance.solvency",
@@ -634,6 +1046,10 @@
     "state.finance.solvency.gap",
     "state.staff[].signing_fee",
     "state.staff[].weekly_salary",
+    "state.staff[].fatigue",
+    "state.staff[].morale",
+    "state.staff[].departure_warning",
+    "state.staff[].assignment_work_id",
     "state.events",
     "state.events.pending",
     "state.events.pending[].viewed"

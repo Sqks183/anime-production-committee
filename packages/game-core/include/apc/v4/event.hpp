@@ -76,7 +76,7 @@ const char* embedded_event_cards();
 const Catalog& catalog();
 const EventSpec* find(const std::string& id);
 
-// 每周结算第 11 阶段调用：为每个 producing 项目各抽取至多一个事件，
+// 每周结算第 8 阶段调用：为每个 producing 项目各抽取至多一个事件，
 // 追加到 events.pending（不覆盖、不丢弃已有事件）。返回周回执片段。
 Json draw(GameState& state, int week);
 
