@@ -497,9 +497,8 @@ constexpr int kPitySsr = 50;                       // [PLACEHOLDER] 未冻结
 constexpr int kSigningFeePerAbility = 1000;        // [PLACEHOLDER]
 constexpr int kSalaryBase = 20000;                 // [PLACEHOLDER]
 constexpr int kSalaryPerPrimary = 300;             // [PLACEHOLDER]
-// [PLACEHOLDER] 核心编制基础值；DEC-COMPANY-003 成长里程碑与人数数值待标定，
-// 里程碑解锁前按固定基础编制执行，不在此猜测成长曲线。
-constexpr int kCoreStaffCapacityBase = 6;
+// 设施扩建尚未实现，当前采用 #63 已确认的开局正式编制。
+constexpr int kCoreStaffCapacityBase = 4;
 
 constexpr const char* kProfessions[8] = {"作画", "演出", "脚本", "摄影", "监督", "音乐", "声优", "美术"};
 constexpr const char* kTalentArchetypes[8] = {"burst_drain", "steady_floor", "mentor_boost", "team_smooth",
@@ -650,7 +649,7 @@ Recruitment initial_recruitment(std::uint32_t seed) {
 }
 
 int core_staff_capacity(const GameState& state) {
-    (void)state;   // 里程碑解锁待 DEC-COMPANY-003 标定，当前只有基础编制。
+    (void)state;   // 设施等级与升级触发尚未实现，暂按开局编制 4 人执行。
     return kCoreStaffCapacityBase;
 }
 

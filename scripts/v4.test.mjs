@@ -2739,16 +2739,16 @@ test('hire_core：拒绝带临时合同或非 core 的池候选', () => {
   assert.equal('state' in result, false)
 })
 
-test('hire_core：资金不足与核心编制上限', () => {
+test('hire_core：资金不足与开局正式编制上限 4', () => {
   const poor = ok('initialize', { seed: 42 }).state
   poor.finance.opening_funds = 0
   poor.finance.balance = 0
   assert.equal(call('hire_core', { state: poor, staff_id: poor.recruitment.pool[0].staff.id }).error.code, 'INSUFFICIENT_FUNDS')
   let state = rich(ok('initialize', { seed: 42 }).state)
-  for (let i = 0; i < 3; i++) {
+  for (let i = state.staff.length; i < 4; i++) {
     state = ok('hire_core', { state, staff_id: state.recruitment.pool[0].staff.id }).state
   }
-  assert.equal(state.staff.length, 6)
+  assert.equal(state.staff.length, 4)
   assert.equal(call('hire_core', { state, staff_id: state.recruitment.pool[0].staff.id }).error.code, 'CAPACITY_EXCEEDED')
 })
 

@@ -91,7 +91,7 @@ GameState {
 | `id` `name` `founded_week` `week` `status` `reputation` `reputation_log` | — | 否 | M0 §3 必填 | `实现` |
 | `end_reason` | string\|null | 是（仅 `running` 为 null） | M0 §3 | `实现` |
 | `facilities` | Facility[] | 是（可空数组） | §14.7 阶段 2 的设施维护费、§14.9 扩容的数据前提 | `待实现`——代码无此字段 |
-| `core_staff_capacity` | int | — | §14.9：由成长里程碑单调推导，不绑设施 | `实现`（[PLACEHOLDER] 基础编制 6）；里程碑数值待 DEC-COMPANY-003 标定，派生值不入存档 |
+| `core_staff_capacity` | int | — | §14.9 / #63：由设施扩建等级派生，仅统计核心员工 | `实现`（开局 4 人）；设施升级与派生阶梯待实现，不存入存档 |
 | `status` 取值 | `running/closing/ended` | — | `runtime.cpp` 校验 | `实现` |
 | `week` ∈ [0,520] ∧ `running ⇒ week<520` | — | — | INV-21 | `实现` |
 | `reputation_log[]` | `{week, reason, delta, after}` | — | DA §7.2 | `实现` |
