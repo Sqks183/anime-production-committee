@@ -68,14 +68,14 @@ BD 公司所得 = BD 毛收入 × 50%；另 50% 为综合成本，不进入池�
 **收入归属（DEC-BD-001 / DEC-COMM-001/002/003）**
 
 - **承制**：只获得 BD/DVD 毛收入的 50%（归公司）；BD 公司所得 ≥ 合同预算时另付成功奖励 预算×20%（占位）；不参与其他窗口。
-- **委员会**：BD/DVD 毛收入的 50% 归公司、不进池；其余开放窗口扣代理费后汇总为 `committee_pool`；按投资比例 Pro-rata 分给公司（`commercial_share`）与其他成员（`investor_share`）。
+- **委员会**：BD/DVD 毛收入的 50% 归公司、不进池；其余开放窗口扣代理费后汇总为 `committee_pool`；按投资比例 Pro-rata 分给公司（回执 `commercial_share`）与其他成员（`investor_share`）。Archive 的 `finance_summary.commercial_share` 按 DA §7.6 汇总公司所得，即回执 `commercial_share + bd_revenue`。
 - 通用前置商业成本的输入字段尚未冻结，当前只能表达已实现的逐渠道代理费；不得私加字段或默认收费。
 - 净池分配的取整顺序和余数归属尚未冻结；出现非整除分配时当前原子返回 `NOT_IMPLEMENTED`，不静默舍入、不写流水、不归档。
 - 电视：有电视台成员时获得 125% 强力播出、不可再购买；无成员且外部代理开放时使用 115% 普通播出；玩家可主动购买 130%，支付总费用 × 投资比例，其余成员共同出资。
 - 声望变化：S+8 / A+5 / B+2 / C0 / D−5，唯一入口写 `reputation_log`；强制/中止不产生正向声望。
 - 委员会关闭时按评级更新成员关系：S+3 / A+2 / B+1 / C0 / D−2（强制不产生正向关系），并追加 `history`。
 - 门槛完成度 `gate_completion_permille` = 各门槛项 `min(1000, work_done×1000/(deliver_at×work_total))` 的平均值；正常交付恒为 1000。
-- 交付结算后余额为负时按 INV-25 直接进入 `closing/bankrupt`（不再存在可持续危机周）；`advance_week` 预检失败同样整周回滚并直接破产终局（§14.7）。
+- 交付结算提交前预检最终余额；若收入与扣罚合并后仍为负，整笔返回 `INSUFFICIENT_FUNDS`，不写流水、Archive、声望或关系。`advance_week` 刚性支出预检失败同样整周回滚并直接破产终局（§14.7）。
 
 ## 5. 财务与 Archive
 
@@ -83,7 +83,7 @@ BD 公司所得 = BD 毛收入 × 50%；另 50% 为综合成本，不进入池�
 
 周薪按 DEC-ECON-001 归因：核心与临时员工均按 `weekly_salary` 计入阶段 2 刚性预检和阶段 3 流水；已分配到项目的员工记 `work_id=项目`，闲置员工记 `work_id=null`（公司级成本）。
 
-`Archive.works` 追加一条 `WorkRecord`：作品事实、六维质量、质量分、评级、`end_reason`（`completed` / `deadline` / `company_closed`）、`forced`、`gate_completion_permille`、`commercial_revenue`、`bd_gross`、`bd_revenue`（公司所得）、`committee_pool`、`investor_share`、`company_received`、逐窗口对账、单集质量摘要、团队快照，以及 `finance_summary`（合同收入、投资本金、商业份额、BD 公司所得、奖励、扣罚、`costs` 分类、`total_costs`、`profit`）与 `rules_status=placeholder`。记录只追加。
+`Archive.works` 追加一条 `WorkRecord`：作品事实、六维质量、质量分、评级、`end_reason`（`completed` / `deadline` / `company_closed`）、`forced`、`gate_completion_permille`、`commercial_revenue`、`bd_gross`、`bd_revenue`（公司所得）、`committee_pool`、`investor_share`、`company_received`、逐窗口对账 `channel_breakdown`（含毛收入 `revenue`、公司所得 `company_received` 与计算因子）、单集质量摘要、团队快照，以及 `finance_summary`（合同收入、投资本金、商业份额、BD 公司所得、奖励、扣罚、`costs` 分类、`total_costs`、`profit`）与 `rules_status=placeholder`。记录只追加。
 
 > 中止（`abort_work`）不写 WorkRecord，且在当前契约下不执行：M0 Archive 的 `end_reason` 只冻结了三种交付原因，违约扣罚公式也未标定。实现返回 `NOT_IMPLEMENTED`，等 #53 决定中止履历结构、扣罚基数/系数及现金不足行为后再补，避免以 0 处罚和 `penalty_pending` 伪报完成。
 
@@ -106,7 +106,7 @@ BD 公司所得 = BD 毛收入 × 50%；另 50% 为综合成本，不进入池�
 
 ## 7. 测试
 
-`scripts/v4.test.mjs` 共 75 条；本轮与项目闭环相关的关键用例：
+`scripts/v4.test.mjs` 共 81 条；本轮与项目闭环相关的关键用例：
 
 1. 到期强制交付：未达门槛在结算周自动交付，`deadline`、按完成度扣罚、归档并移除项目；
 2. 到期交付：门槛达成按 `completed` 正常计价，不扣罚；
@@ -121,16 +121,22 @@ BD 公司所得 = BD 毛收入 × 50%；另 50% 为综合成本，不进入池�
 11. INV-27：开工定岗、无监督拒绝、空缺/悬空/不合格校验、关键岗位锁定与原子替补；
 12. INV-29：未到期保留、到期 abandon 快照只执行一次、多项目稳定顺序、成本封顶与阶段失败原子性；
 13. 第 520 周 pending：原子拒绝非法终局，事件、项目归属与周数不变。
-14. DEC-COMM-003 非整除净池分配：取整规则未冻结时原子返回 `NOT_IMPLEMENTED`，不静默舍入、不写流水、不归档。
+14. DEC-COMM-003 非整除净池分配：取整规则未冻结时原子返回 `NOT_IMPLEMENTED`，不静默舍入、不写流水、不归档；
+15. 结算与关闭预检：交付后现金为负时原子拒绝；关闭前按真实结清顺序预演，无法非负结清则保持 running；
+16. 输入状态守卫：交付、关闭与重复查看事件都不得先改写再靠校验洗白非法状态；
+17. 必填字段：WorkItem 与 pending 的必填键缺失时返回 `INVALID_INPUT`，不补默认值；
+18. 临时员工：周结算不积累长期经验，结项退出名册且贡献保留在团队快照；
+19. 企划 ID：活动项目占用期间跳过草稿号，归档后凭 `offer_id` 仍不复用；
+20. 周回执：`funds.delta` 等于整周实际现金净变化，阶段 8 事件以次周为时间基。
 
-本机 `.tools/emsdk` 可执行真实 WASM 构建；`npm run test:v4` 结果 **75/75**。
+本机 `.tools/emsdk` 可执行真实 WASM 构建；`npm run test:v4` 结果 **81/81**。
 
 ## 8. 里程碑判定（如实）
 
 | 阶段 | 已具备 | 仍缺 |
 | --- | --- | --- |
 | M2 | 立项（含原创草稿准入）、蓝图实例化、制作、正常交付、到期强制交付、公司关闭/结清/结局、Archive、成本归因、事件处理、INV-27 监督岗位、INV-29 到期默认分支 | 中止处罚/履历、终局 pending 归档/转移、事件升级载荷、真实市场来源、12 集完整人工试玩 |
-| M2.5 | 预检失败整周回滚并直接破产终局（§14.7，无 pending 场景）、交付后负余额进 `closing/bankrupt` | 破产/520 周携带 pending 的合法终局、融资/贷款与终局展开 |
+| M2.5 | 预检失败整周回滚并直接破产终局（§14.7，无 pending 场景）、交付结算负余额原子拒绝 | 破产/520 周携带 pending 的合法终局、融资/贷款与终局展开 |
 | M3 | 多项目并存、人员单项目归属、遍历顺序无关 | 企划槽刷新/竞争、供应商目录与外包、520 周长跑 |
 | M4 | 委员会、投资比例、六窗口、BD 归属、净池分成、电视倍率、伙伴关系与 history | 更多伙伴/渠道类型、合作关系玩法、特殊商业机会、完整对账报表 |
 

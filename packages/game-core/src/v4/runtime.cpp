@@ -243,7 +243,13 @@ GameState decode_state(const Json& request) {
     for (const auto& event : state.at("events").at("pending")) {
         require(event, "work_id", "events.pending[]");
         require(event, "event_id", "events.pending[]");
+        require(event, "triggered_week", "events.pending[]");
+        require(event, "expires_week", "events.pending[]");
         require(event, "viewed", "events.pending[]");
+        if (!event.at("triggered_week").is_number_integer() ||
+            (!event.at("expires_week").is_null() && !event.at("expires_week").is_number_integer())) {
+            throw Json::type_error::create(302, "events.pending[] 触发周或到期周类型无效", nullptr);
+        }
         if (!event.at("viewed").is_boolean()) {
             throw Json::type_error::create(302, "events.pending[].viewed 必须是布尔值", nullptr);
         }
@@ -282,6 +288,33 @@ GameState decode_state(const Json& request) {
         require(member, "departure_warning", "staff[]");
         require(member, "assignment_work_id", "staff[]");
     }
+    const auto require_item = [&require](const Json& item) {
+        for (const char* key : {"id", "key", "ability", "work_total", "work_done", "deliver_at", "deps",
+                                "is_gate", "quality", "contributors"}) {
+            require(item, key, "item");
+        }
+        for (const char* key : {"id", "key", "ability"}) {
+            if (!item.at(key).is_string()) throw Json::type_error::create(302, "item." + std::string(key) + " 必须是字符串", nullptr);
+        }
+        for (const char* key : {"work_total", "work_done", "deliver_at"}) {
+            if (!item.at(key).is_number_integer()) throw Json::type_error::create(302, "item." + std::string(key) + " 必须是整数", nullptr);
+        }
+        if (!item.at("is_gate").is_boolean() || !item.at("quality").is_object() ||
+            !item.at("deps").is_array() || !item.at("contributors").is_array()) {
+            throw Json::type_error::create(302, "item 门槛、质量、依赖或贡献者类型无效", nullptr);
+        }
+        for (const char* key : {"deps", "contributors"}) {
+            for (const auto& entry : item.at(key)) {
+                if (!entry.is_string()) throw Json::type_error::create(302, "item." + std::string(key) + " 必须包含字符串", nullptr);
+            }
+        }
+        for (int i = 0; i < kDimensionCount; ++i) {
+            require(item.at("quality"), kDimensions[static_cast<std::size_t>(i)], "item.quality");
+            if (!item.at("quality").at(kDimensions[static_cast<std::size_t>(i)]).is_number_integer()) {
+                throw Json::type_error::create(302, "item.quality 维度必须是整数", nullptr);
+            }
+        }
+    };
     for (const auto& work : state.at("works")) {
         require(work, "id", "works[]");
         require(work, "status", "works[]");
@@ -296,11 +329,7 @@ GameState decode_state(const Json& request) {
         if (!work.at("common").at("items").is_array() || !work.at("episodes").is_array()) {
             throw Json::type_error::create(302, "items / episodes 必须是数组", nullptr);
         }
-        for (const auto& item : work.at("common").at("items")) {
-            require(item, "id", "item");
-            require(item, "ability", "item");
-            require(item, "work_total", "item");
-        }
+        for (const auto& item : work.at("common").at("items")) require_item(item);
         for (const auto& episode : work.at("episodes")) {
             require(episode, "id", "episode");
             require(episode, "stages", "episode");
@@ -309,11 +338,7 @@ GameState decode_state(const Json& request) {
                 require(stage, "key", "stage");
                 require(stage, "items", "stage");
                 if (!stage.at("items").is_array()) throw Json::type_error::create(302, "stage.items 必须是数组", nullptr);
-                for (const auto& item : stage.at("items")) {
-                    require(item, "id", "item");
-                    require(item, "ability", "item");
-                    require(item, "work_total", "item");
-                }
+                for (const auto& item : stage.at("items")) require_item(item);
             }
         }
     }
@@ -950,20 +975,30 @@ std::optional<int> external_agency_fee_permille(const GameState& state, const st
     return std::nullopt;
 }
 
+bool json_contains_id(const Json& node, const std::string& candidate) {
+    if (node.is_array()) {
+        return std::any_of(node.begin(), node.end(), [&candidate](const Json& item) {
+            return json_contains_id(item, candidate);
+        });
+    }
+    if (!node.is_object()) return false;
+    for (const char* key : {"id", "offer_id"}) {
+        if (node.contains(key) && node.at(key).is_string() && node.at(key).get<std::string>() == candidate) return true;
+    }
+    for (auto it = node.begin(); it != node.end(); ++it) {
+        if (json_contains_id(it.value(), candidate)) return true;
+    }
+    return false;
+}
+
 std::string next_id(const GameState& state, const char* prefix, int existing) {
+    const Json state_json = state;
     int index = existing + 1;
     while (true) {
         char buffer[48];
         std::snprintf(buffer, sizeof(buffer), "%s%02d", prefix, index);
         const std::string candidate = buffer;
-        bool used = false;
-        for (const auto& work : state.works) used = used || work.id == candidate;
-        if (state.archive.is_object() && state.archive.contains("works") && state.archive.at("works").is_array()) {
-            for (const auto& record : state.archive.at("works")) {
-                used = used || record.value("id", std::string{}) == candidate;
-            }
-        }
-        if (!used) return candidate;
+        if (!json_contains_id(state_json, candidate)) return candidate;
         ++index;
     }
 }
@@ -1035,10 +1070,17 @@ struct SettlementOutcome {
     Json report = Json::object();
 };
 
-// 关闭公司：不可逆。未交付项目转 delivering，等 finalize_delivery 逐个结清。
-// 归属与待处理事件必须同步释放：INV-09 只允许归属 producing 项目，
-// INV-23 只允许事件挂在 producing 项目上。
-void close_company(GameState& state, const std::string& reason) {
+SettlementOutcome settle_project(GameState& state, Project& work, const std::string& end_reason, bool forced);
+
+// 关闭公司前先在副本逐项预演结清，确保进入不可逆 closing 后仍有合法后继。
+SettlementOutcome close_company(GameState& state, const std::string& reason) {
+    SettlementOutcome outcome;
+    GameState preview = state;
+    for (const auto& work : state.works) {
+        Project* preview_work = find_work(preview, work.id);
+        const auto settlement = settle_project(preview, *preview_work, "company_closed", !preview_work->deliverable());
+        if (!settlement.ok) return settlement;
+    }
     state.company.status = "closing";
     state.company.end_reason = reason;
     for (auto& work : state.works) {
@@ -1050,12 +1092,8 @@ void close_company(GameState& state, const std::string& reason) {
     // 待处理事件不得丢弃：调用方必须先确认没有 pending；这里不再静默清空。
     // 没有在制项目时无需逐个 finalize_delivery，直接结束（否则 closing→ended 无驱动）。
     if (state.works.empty()) state.company.status = "ended";
-}
-
-// 结算后余额为负：INV-25 只允许破产关闭出现负余额，不再进入可持续危机周。
-void enter_bankruptcy_if_negative(GameState& state) {
-    if (state.finance.balance >= 0 || state.company.status != "running") return;
-    close_company(state, "bankrupt");
+    outcome.ok = true;
+    return outcome;
 }
 
 // 一次交付结算：质量聚合 → 评级 → 渠道收入 → 分账/奖励/扣罚 → 声望 → 委员会 →
@@ -1195,6 +1233,32 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
         (!aborted && forced) ? budget * (1000 - gcp) / 1000 * kForcedPenaltyPermille / 1000
                              : static_cast<std::int64_t>(0);
     const std::int64_t company_revenue = bd_revenue + company_share + reward;
+    const std::int64_t balance_after_settlement =
+        state.finance.balance + company_revenue - penalty;
+    if (balance_after_settlement < 0) {
+        outcome.code = "INSUFFICIENT_FUNDS";
+        outcome.message = "交付结算后现金余额将为负，已原子拒绝";
+        return outcome;
+    }
+
+    std::int64_t assigned_channel_share = 0;
+    Json* last_pool_channel = nullptr;
+    for (auto& line : channel_report) {
+        const bool bd = line.value("window", std::string{}) == kWindowBd;
+        const std::int64_t channel_company_share = bd
+            ? line.value("net", static_cast<std::int64_t>(0))
+            : line.value("net", static_cast<std::int64_t>(0)) * percent / 100;
+        line["revenue"] = line.value("gross", static_cast<std::int64_t>(0));
+        line["company_received"] = channel_company_share;
+        assigned_channel_share += channel_company_share;
+        if (!bd) last_pool_channel = &line;
+    }
+    // 逐渠道公司所得只是已定总额的展示拆分；余数归最后一条，避免改动净池分配规则。
+    if (last_pool_channel != nullptr) {
+        (*last_pool_channel)["company_received"] =
+            last_pool_channel->value("company_received", static_cast<std::int64_t>(0)) +
+            bd_revenue + company_share - assigned_channel_share;
+    }
 
     if (bd_revenue > 0) {
         state.finance.entries.push_back(LedgerEntry{
@@ -1285,6 +1349,7 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     const std::int64_t profit = budget + company_revenue - investment_paid - total_costs;
 
     Json record = Json{{"id", work_id},
+                       {"offer_id", offer.value("id", std::string{})},
                        {"name", offer.value("name", std::string{})},
                        {"source", offer.value("source", std::string{})},
                        {"genre", genre},
@@ -1307,14 +1372,14 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
                        {"company_received", company_revenue},
                        {"finance_summary", Json{{"contract_received", budget},
                                                 {"investment_paid", investment_paid},
-                                                {"commercial_share", company_share},
+                                                {"commercial_share", company_share + bd_revenue},
                                                 {"bd_revenue", bd_revenue},
                                                 {"success_reward", reward},
                                                 {"penalty", penalty},
                                                 {"costs", cost_breakdown},
                                                 {"total_costs", total_costs},
                                                 {"profit", profit}}},
-                       {"channels", channel_report},
+                       {"channel_breakdown", channel_report},
                        {"episodes", episode_records},
                        {"team", team},
                        {"rules_status", "placeholder"}};
@@ -1346,7 +1411,13 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
                           {"net_received", company_revenue - penalty},
                           {"channels", channel_report}};
 
-    // 清理：归属、项目本体（待处理事件已在入口拒绝，不在此删除）
+    // 清理：临时员工随合同项目退出，核心员工只解绑；pending 已在入口拒绝，不在此删除。
+    state.staff.erase(std::remove_if(state.staff.begin(), state.staff.end(), [&work_id](const Staff& member) {
+        if (member.employment != "temporary") return false;
+        if (member.assignment_work_id && *member.assignment_work_id == work_id) return true;
+        return member.temporary_contract.is_object() &&
+               member.temporary_contract.value("work_id", std::string{}) == work_id;
+    }), state.staff.end());
     for (auto& member : state.staff) {
         if (member.assignment_work_id && *member.assignment_work_id == work_id) member.assignment_work_id.reset();
     }
@@ -1354,7 +1425,6 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
                                      [&work_id](const Project& item) { return item.id == work_id; }),
                       state.works.end());
 
-    enter_bankruptcy_if_negative(state);
     outcome.ok = true;
     return outcome;
 }
@@ -1465,6 +1535,8 @@ std::string instantiate_work(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         const Json blueprint = request.at("blueprint");
         const std::string work_id = request.value("work_id", std::string("work_01"));
         const int duration_weeks = request.value("duration_weeks", 26);
@@ -1497,6 +1569,8 @@ std::string set_plan(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         const std::string work_id = request.at("work_id").get<std::string>();
         const Json plan = request.at("plan");
 
@@ -1578,6 +1652,8 @@ std::string assign_staff(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (!request.contains("staff_id") || !request.at("staff_id").is_string()) {
             return encode(error_body("INVALID_INPUT", "staff_id 必须是字符串"));
         }
@@ -1639,6 +1715,8 @@ std::string advance_week(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
 
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
         if (state.company.week >= kMaxWeek) return encode(error_body("INVALID_PHASE", "已达经营上限"));
@@ -1650,8 +1728,6 @@ std::string advance_week(const std::string& input) {
         if (unviewed > 0) {
             return encode(error_body("INVALID_PHASE", "存在 " + std::to_string(unviewed) + " 条未查看事件"));
         }
-        const auto pre_errors = validate(state);
-        if (!pre_errors.empty()) return encode(error_body("INVALID_STATE", pre_errors.front()));
 
         // ---- 阶段 1：计划冻结与快照；后续失败必须回到这里 ----
         const GameState snapshot = state;
@@ -1697,7 +1773,11 @@ std::string advance_week(const std::string& input) {
             const int64_t gap = total_cost - state.finance.balance;
             const int64_t balance = state.finance.balance;
             // §14.7：预检失败不扣款、不推进、不生产，回滚至阶段 1 快照并直接破产终局。
-            close_company(state, "bankrupt");
+            const auto closing = close_company(state, "bankrupt");
+            if (!closing.ok) {
+                return fail_stage(2, closing.code,
+                                  "破产终局无法合法结清在制项目: " + closing.message);
+            }
             const auto bankrupt_errors = validate(state);
             if (!bankrupt_errors.empty()) {
                 return encode(error_body("INTERNAL_ERROR", "破产终局状态非法: " + bankrupt_errors.front()));
@@ -1814,10 +1894,12 @@ std::string advance_week(const std::string& input) {
         // ---- 阶段 5：人员经验、疲劳与红灯 ----
         Json staff_report = Json::array();
         for (auto& member : state.staff) {
-            for (const int ability : experience_gains[member.id]) {
-                if (ability < 0) continue;
-                member.experience[static_cast<std::size_t>(ability)] =
-                    std::min(100, member.experience[static_cast<std::size_t>(ability)] + 1);
+            if (member.employment != "temporary") {
+                for (const int ability : experience_gains[member.id]) {
+                    if (ability < 0) continue;
+                    member.experience[static_cast<std::size_t>(ability)] =
+                        std::min(100, member.experience[static_cast<std::size_t>(ability)] + 1);
+                }
             }
             const int produced = produced_by_staff[member.id];
             if (produced > 0) {
@@ -1889,10 +1971,14 @@ std::string advance_week(const std::string& input) {
                 return fail_stage(8, "NOT_IMPLEMENTED",
                                   "第 520 周终局的 pending 转移/归档语义尚未冻结，不能清空事件或关闭其归属项目");
             }
-            close_company(state, "time_limit");
+            const auto closing = close_company(state, "time_limit");
+            if (!closing.ok) {
+                return fail_stage(8, closing.code,
+                                  "第 520 周终局无法合法结清在制项目: " + closing.message);
+            }
             events_report = Json{{"drawn", 0}, {"reason", "company_closed"}};
         } else {
-            events_report = event::draw(state, week);
+            events_report = event::draw(state, week + 1);
         }
 
         state.company.week = week + 1;
@@ -1906,7 +1992,7 @@ std::string advance_week(const std::string& input) {
                            {"staff", staff_report},
                            {"settlements", settlements},
                            {"events", events_report},
-                           {"funds", Json{{"delta", -total_cost},
+                           {"funds", Json{{"delta", state.finance.balance - snapshot.finance.balance},
                                           {"balance", state.finance.balance},
                                           {"costs", Json{{"salary", salary_total},
                                                          {"operations", operations_total},
@@ -1927,6 +2013,8 @@ std::string create_custom_offer(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
         if (!state.market.is_object()) return encode(error_body("INVALID_STATE", "market 必须是对象"));
         if (state.market.contains("custom_offer") && state.market.at("custom_offer").is_object()) {
@@ -2000,6 +2088,8 @@ std::string adopt_proposal(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
         if (!state.market.is_object() || !state.market.contains("proposal") || !state.market.at("proposal").is_object()) {
             return encode(error_body("NOT_FOUND", "没有可用提案"));
@@ -2030,6 +2120,8 @@ std::string reject_proposal(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
         if (!state.market.is_object() || !state.market.contains("proposal") || !state.market.at("proposal").is_object()) {
             return encode(error_body("NOT_FOUND", "没有可用提案"));
@@ -2049,6 +2141,8 @@ std::string start_work(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
         if (!request.contains("offer_id") || !request.at("offer_id").is_string()) {
             return encode(error_body("INVALID_INPUT", "offer_id 必须是字符串"));
@@ -2277,6 +2371,8 @@ std::string deliver_work(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         // 关闭后只允许 finalize_delivery / finalize_company（M0 §7 白名单）。
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已关闭，不能直接交付"));
         if (!request.contains("work_id") || !request.at("work_id").is_string()) {
@@ -2323,12 +2419,12 @@ std::string abort_work(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
         if (!request.contains("work_id") || !request.at("work_id").is_string()) {
             return encode(error_body("INVALID_INPUT", "work_id 必须是字符串"));
         }
-        const auto pre_errors = validate(state);
-        if (!pre_errors.empty()) return encode(error_body("INVALID_STATE", pre_errors.front()));
         const std::string work_id = request.at("work_id").get<std::string>();
         Project* work = find_work(state, work_id);
         if (work == nullptr) return encode(error_body("NOT_FOUND", "项目不存在"));
@@ -2346,6 +2442,8 @@ std::string buy_tv_service(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
         if (!request.contains("work_id") || !request.at("work_id").is_string()) {
             return encode(error_body("INVALID_INPUT", "work_id 必须是字符串"));
@@ -2406,6 +2504,8 @@ std::string request_extension(const std::string& input) {
         constexpr int kExtensionWeeks = 4;
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
         if (!request.contains("work_id") || !request.at("work_id").is_string()) {
             return encode(error_body("INVALID_INPUT", "work_id 必须是字符串"));
@@ -2548,6 +2648,8 @@ std::string view_event(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
         if (!request.contains("work_id") || !request.at("work_id").is_string() ||
             !request.contains("event_id") || !request.at("event_id").is_string()) {
@@ -2581,6 +2683,8 @@ std::string resolve_event(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status != "running") return encode(error_body("COMPANY_ENDED", "公司已结束"));
         // M0 命令 18（PR #94 冻结）：work_id / event_id / option_id 全部必填。
         if (!request.contains("work_id") || !request.at("work_id").is_string() ||
@@ -2593,8 +2697,6 @@ std::string resolve_event(const std::string& input) {
         const std::string option_id = request.at("option_id").get<std::string>();
         if (work_id.empty()) return encode(error_body("INVALID_INPUT", "work_id 不能为空"));
 
-        const auto pre_errors = validate(state);
-        if (!pre_errors.empty()) return encode(error_body("INVALID_STATE", pre_errors.front()));
 
         // 只读 pending 里的冻结快照，不回查可能已变化的内容目录。
         const auto resolution = event::inspect(state, work_id, event_id, option_id);
@@ -2666,6 +2768,8 @@ std::string end_company(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status != "running") {
             return encode(error_body("COMPANY_ENDED", "公司已结束或正在关闭"));
         }
@@ -2673,17 +2777,18 @@ std::string end_company(const std::string& input) {
         if (!state.events.pending.empty()) {
             return encode(error_body("INVALID_PHASE", "仍有待处理事件，处理完才能结束公司"));
         }
-        Json closing = Json::array();
-        for (const auto& work : state.works) closing.push_back(work.id);
+        Json closing_projects = Json::array();
+        for (const auto& work : state.works) closing_projects.push_back(work.id);
 
-        close_company(state, "voluntary");
+        const auto closing = close_company(state, "voluntary");
+        if (!closing.ok) return encode(error_body(closing.code, closing.message));
 
         const auto errors = validate(state);
         if (!errors.empty()) return encode(error_body("INTERNAL_ERROR", "关闭后状态非法: " + errors.front()));
         return encode(Json{{"state", state},
                            {"report", Json{{"status", state.company.status},
                                            {"end_reason", state.company.end_reason.value_or("voluntary")},
-                                           {"closing_projects", closing}}}});
+                                           {"closing_projects", closing_projects}}}});
     } catch (const Json::exception&) {
         return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
     } catch (...) {
@@ -2697,6 +2802,8 @@ std::string finalize_delivery(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status == "ended") return encode(error_body("COMPANY_ENDED", "公司已结束"));
         if (state.company.status != "closing") {
             return encode(error_body("INVALID_PHASE", "只有 closing 状态可以调用 finalize_delivery"));
@@ -2737,6 +2844,8 @@ std::string finalize_company(const std::string& input) {
     try {
         const Json request = Json::parse(input);
         GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
         if (state.company.status != "ended") {
             return encode(error_body("INVALID_PHASE", "公司尚未结束"));
         }

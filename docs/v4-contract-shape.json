@@ -491,6 +491,7 @@
     ],
     "report.settlements[].channels[]": [
       "agency_fee_permille",
+      "company_received",
       "gross",
       "heat_factor",
       "net",
@@ -498,19 +499,169 @@
       "potential",
       "quality_factor",
       "reputation_factor",
+      "revenue",
       "tv_multiplier",
       "window"
     ],
+    "state.archive.company_result": [
+      "best_work_id",
+      "final_funds",
+      "highlights",
+      "negatives",
+      "net_cash_change",
+      "rating",
+      "reason",
+      "total_projects",
+      "weeks"
+    ],
+    "state.archive.works[]": [
+      "bd_gross",
+      "bd_revenue",
+      "channel_breakdown",
+      "commercial_revenue",
+      "committee_pool",
+      "company_received",
+      "end_reason",
+      "end_week",
+      "episodes",
+      "finance_summary",
+      "forced",
+      "gate_completion_permille",
+      "genre",
+      "id",
+      "investment_percent",
+      "investor_share",
+      "mode",
+      "name",
+      "offer_id",
+      "quality",
+      "quality_score",
+      "rating",
+      "rules_status",
+      "scale",
+      "source",
+      "start_week",
+      "team"
+    ],
+    "state.archive.works[].channel_breakdown[]": [
+      "agency_fee_permille",
+      "company_received",
+      "gross",
+      "heat_factor",
+      "net",
+      "owner",
+      "potential",
+      "quality_factor",
+      "reputation_factor",
+      "revenue",
+      "tv_multiplier",
+      "window"
+    ],
+    "state.archive.works[].episodes[]": ["id", "quality"],
+    "state.archive.works[].episodes[].quality": ["dims", "mean"],
+    "state.archive.works[].episodes[].quality.dims": [
+      "animation", "art", "direction", "drawing", "sound", "story"
+    ],
+    "state.archive.works[].finance_summary": [
+      "bd_revenue",
+      "commercial_share",
+      "contract_received",
+      "costs",
+      "investment_paid",
+      "penalty",
+      "profit",
+      "success_reward",
+      "total_costs"
+    ],
+    "state.archive.works[].finance_summary.costs": ["distribution", "production"],
+    "state.archive.works[].quality": ["dims", "mean"],
+    "state.archive.works[].quality.dims": [
+      "animation", "art", "direction", "drawing", "sound", "story"
+    ],
+    "state.committees[]": ["closed_week", "formed_week", "id", "members", "status", "work_id"],
+    "state.committees[].members[]": ["channel", "partner_id"],
     "state.company.reputation_log[]": [
       "after",
       "delta",
       "reason",
       "week"
     ],
+    "state.market.custom_offer": [
+      "allowed_modes",
+      "audience_base",
+      "blueprint_id",
+      "channel_potentials",
+      "channels_baseline",
+      "commercial_potential",
+      "committee_candidates",
+      "contract_budget",
+      "created_week",
+      "development_fee",
+      "draft_status",
+      "duration_weeks",
+      "episode_count",
+      "genre",
+      "id",
+      "min_reputation",
+      "name",
+      "origin",
+      "required_works",
+      "rules_status",
+      "scale",
+      "source",
+      "style",
+      "target_quality",
+      "workload_scale_permille"
+    ],
+    "state.market.custom_offer.channel_potentials": [
+      "bd_dvd", "domestic_streaming", "merchandise", "music", "overseas", "tv"
+    ],
+    "state.partners[].history[]": ["delta", "reason", "week", "work_id"],
     "state.staff[].last_participation": [
       "item_id",
       "week",
       "work_id"
+    ],
+    "state.works[].delivery": ["at_week", "reason"],
+    "state.works[].extension": ["fee", "used", "week", "weeks"],
+    "state.works[].investment": ["paid", "percent", "total"],
+    "state.works[].offer": [
+      "allowed_modes",
+      "audience_base",
+      "blueprint_id",
+      "channel_potentials",
+      "channels_baseline",
+      "commercial_potential",
+      "committee_candidates",
+      "contract_budget",
+      "duration_weeks",
+      "episode_count",
+      "genre",
+      "id",
+      "min_reputation",
+      "name",
+      "origin",
+      "required_works",
+      "scale",
+      "source",
+      "style",
+      "target_quality",
+      "workload_scale_permille"
+    ],
+    "state.works[].offer.channel_potentials": [
+      "bd_dvd", "domestic_streaming", "merchandise", "music", "overseas", "tv"
+    ],
+    "state.works[].tv_service": ["channel", "fee_total", "multiplier", "paid", "paid_week", "purchased"],
+    "result": [
+      "best_work_id",
+      "final_funds",
+      "highlights",
+      "negatives",
+      "net_cash_change",
+      "rating",
+      "reason",
+      "total_projects",
+      "weeks"
     ]
   },
   "paths": {
@@ -861,35 +1012,24 @@
     ]
   },
   "receipt_keys": {
-    "advance_week": [
-      "report",
-      "state"
-    ],
-    "assign_staff": [
-      "state"
-    ],
-    "hash_state": [
-      "hash"
-    ],
-    "initialize_game": [
-      "state"
-    ],
-    "instantiate_work": [
-      "state",
-      "work_id"
-    ],
-    "resolve_event": [
-      "message",
-      "state"
-    ],
-    "set_work_plan": [
-      "state"
-    ],
-    "view_event": [
-      "already_viewed",
-      "state",
-      "viewed"
-    ]
+    "adopt_proposal": ["offer_id", "state"],
+    "advance_week": ["report", "state"],
+    "assign_staff": ["state"],
+    "buy_tv_service": ["multiplier", "paid", "state"],
+    "create_custom_offer": ["contract_budget", "offer_id", "rules_status", "state"],
+    "deliver_work": ["report", "state"],
+    "end_company": ["report", "state"],
+    "finalize_company": ["result", "state"],
+    "finalize_delivery": ["company_status", "report", "state"],
+    "hash_state": ["hash"],
+    "initialize_game": ["state"],
+    "instantiate_work": ["state", "work_id"],
+    "reject_proposal": ["state"],
+    "request_extension": ["deadline_week", "state"],
+    "resolve_event": ["message", "state"],
+    "set_work_plan": ["state"],
+    "start_work": ["committee_id", "state", "work_id"],
+    "view_event": ["already_viewed", "state", "viewed"]
   },
   "required_on_parse": [
     "state",
@@ -906,6 +1046,10 @@
     "state.finance.solvency.gap",
     "state.staff[].signing_fee",
     "state.staff[].weekly_salary",
+    "state.staff[].fatigue",
+    "state.staff[].morale",
+    "state.staff[].departure_warning",
+    "state.staff[].assignment_work_id",
     "state.events",
     "state.events.pending",
     "state.events.pending[].viewed"
