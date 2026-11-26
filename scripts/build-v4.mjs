@@ -147,6 +147,10 @@ const args = [
   join(core, 'src', 'v4', 'model.cpp'),
   join(core, 'src', 'v4', 'kernel.cpp'),
   join(core, 'src', 'v4', 'runtime.cpp'),
+  join(core, 'src', 'v4', 'event.cpp'),
+  join(core, 'src', 'v4', 'event_catalog_generated.cpp'),
+  join(core, 'src', 'v4', 'blueprint.cpp'),
+  join(core, 'src', 'v4', 'blueprint_catalog_generated.cpp'),
   join(core, 'bindings', 'v4_bindings.cpp'),
 ]
 

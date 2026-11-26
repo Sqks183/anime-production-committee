@@ -16,23 +16,33 @@
 
 ## 当前权威入口
 
-- [2026-11-25 当前进度与决策落地状态](PROGRESS.md)：M1 已合入、M2 推进基线及集中裁决索引。
+- [2026-11-26 当前进度与决策落地状态](PROGRESS.md)：M0/M1 已完成、M2 实施与验收状态、M2.5 独立财务失败路径及集中裁决索引。
 - [2026-11-25 设计建议总清单](DESIGN_BACKLOG_2026-11-25.md)：已确认、待讨论、优化储备与工程缺口的分类追踪。
+- [数值参数总清单与标定查阅索引](NUMERICAL_PARAMETERS_CATALOG.md)：盘点全系统需要确定的数值、参数类型、当前状态，以及每类参数决策前应查阅的规则、架构、契约、实现和标定议题。
 
 
 - [架构评审记录（2026-11-24）](ARCHITECTURE_REVIEW_2026-11-24.md)：架构评审结论、整改状态与 M0 契约核验。
 
 - [M0 契约冻结](M0_CONTRACT_FREEZE.md)
 - [M0–M7 开发路线与里程碑](DEVELOPMENT_ROADMAP.md)
+- [M1 运行时切片与验收记录](M1_RUNTIME_SLICE.md)
 - [制作蓝图规范](BLUEPRINT_SPEC.md)
 - [权威决策登记册](DECISION_LOG.md)
+- [决定索引与 ADR 记录](decisions/INDEX.md)：流程、治理与契约级决定单独建档，`accepted` 后不就地改写。
 - [游戏愿景与产品方向](GAME_VISION.md)：产品定位、核心体验、设计支柱、复杂度预算与成品成功标准；具体规则以决策登记册为准。
 - [研究与审计成果目录](RESEARCH_CATALOG.md)
 - [领域架构设计](DOMAIN_ARCHITECTURE.md)
 - [核心玩法重构框架](CORE_GAMEPLAY_REBUILD_FRAMEWORK.md)
 
+## M3/M4 集成协作
+
+- [M3/M4 跨模块集成契约](M3_M4_INTEGRATION_CONTRACT.md)：阶段边界、数据所有权、跨模块交接与验收顺序；与上位规则冲突时以上位规则为准。
+- [M3 多项目集成 Fixture](M3_INTEGRATION_FIXTURES.md)：员工归属、工作项磨合、供应商产能、项目隔离与正常企划来源的手算场景。
+- [M4 商业结算对账 Fixture](M4_COMMERCE_RECONCILIATION_FIXTURES.md)：投资、制作费、制作成本、BD 与非 BD 净池分配的公司现金和 Archive 对账样例。
+
 ## 复盘与协作约定
 
+- [开放式增量开发与提前实现原则](OPEN_INCREMENTAL_DEVELOPMENT_POLICY.md)：明确首版范围是最低交付目标而非功能禁区，以及无冲突新增能力的默认接纳边界。
 - [2026-11 重构复盘与协作约定](REBUILD_RETROSPECTIVE_AND_WORKING_RULES_2026-11-25.md)：记录本次架构纠偏暴露的问题、分支迁移原则、智能体协作要求和 PR 合并检查。
 
 ## 研究资料与外部证据
@@ -82,6 +92,8 @@
 - [玩法痛点专项研究与验证计划](PLAYABILITY_FOCUSED_RESEARCH_AND_VALIDATION_2026-11-24.md)
 - [重构审查与合并登记](REBUILD_REVIEW_AND_MERGE_REGISTER_2026-11-24.md)
 - [统一重构审查清单](UNIFIED_REBUILD_REVIEW_CHECKLIST_2026-11-24.md)
+- [集数规模、工作量与开局路线初稿（2026-11-26）](PRODUCTION_SCALE_AND_OPENING_ROUTES_DRAFT_2026-11-26.md)：独立设计初稿，记录短篇/10集/12集/14集以上规格、标准 TV 等效产量、4 人开局及单线/多线平衡方向；具体参数尚未冻结。
+- [经济系统核心数值基线与阶段边界（2026-11-26）](ECONOMY_NUMERICAL_BASELINE_AND_STAGE_GATES_2026-11-26.md)：标准 TV 货币尺度、57/62 周双方案、人日成本边界及 M2/M3/M7 阶段分工。\n
 
 以上文件的存在不代表其中所有提案均已生效；当前玩法以 DECISION_LOG.md、当前架构以 DOMAIN_ARCHITECTURE.md v1.4 为准，工作分工以 GitHub Issues 实时状态为准。
 
@@ -118,3 +130,14 @@
 3. 不覆盖旧报告。需要修订时保留历史版本或明确记录修订关系。
 4. 设计提案、已确认规则、已实现行为分别标识，不用“写进文档”代替“已确认”或“已实现”。
 5. 不为整理而大规模移动现有文件；旧链接和历史引用优先保持稳定。
+
+## 决定的写法与文档检查
+
+规则内容继续写进 [决定登记册](DECISION_LOG.md) 的 `DEC-*` 条目；组织方式、流程和契约级决定写进 [decisions/](decisions/INDEX.md) 的 `ADR-*` 文件：
+
+1. 复制 [ADR 模板](templates/ADR_TEMPLATE.md)，写明背景、决定、后果、被否决方案与来源，状态从 `proposed` 开始。
+2. 负责人确认后改为 `accepted`，正文冻结；后续变更新建 ADR，用 `supersedes` 指向旧文件。
+3. 研究文件与审查文件只写证据和建议，不声明规则已变更。
+4. 提交前运行 `npm run check:docs`，检查决定字段、ADR 编号、`canonical_for` 唯一性和本地链接；CI 会在改动 `docs/` 时自动执行。
+
+这套流程的取舍见 [ADR-0001](decisions/ADR-0001-decision-record-process.md)。

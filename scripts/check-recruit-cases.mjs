@@ -3,7 +3,7 @@
 // 用法: node scripts/check-recruit-cases.mjs [用例文件]
 //
 // 与 check-handover-cases.mjs 同定位：规则样本，不是运行时。
-// C++ 领域实现必须给出同一结论；改规则先改用例与 M0 §14.7，再改实现。
+// C++ 领域实现必须给出同一结论；改规则先改用例与 M0 §14.13，再改实现。
 import { readFileSync } from 'node:fs'
 import {
   scoutGuard, scout, expireCandidates, rotatePool, unpackOnHire, generateCandidate,

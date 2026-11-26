@@ -45,11 +45,11 @@ test('drawBelow 落在 [0,bound)，bound=0 返回 0', () => {
 
 // ---- 候选生成 ----
 
-test('候选形状符合 v4 Staff 契约（signing_fee+weekly_salary，无 project_fee）', () => {
+test('候选形状符合 v4 Staff 契约（signing_fee+weekly_salary，能力为 6 键对象，无 project_fee）', () => {
   const { staff } = generateCandidate(42, 3, 0)
-  assert.equal(staff.abilities.length, 6)
-  assert.equal(staff.potential.length, 6)
-  assert.equal(staff.revealed_potential.length, 6)
+  for (const key of ['abilities', 'experience', 'potential', 'revealed_potential']) {
+    assert.deepEqual(Object.keys(staff[key]), ABILITIES, `${key} 必须是固定 6 键对象`)
+  }
   assert.ok(PROFESSIONS.includes(staff.role))
   assert.ok(staff.weekly_salary > 0)
   assert.ok(staff.signing_fee > 0)
@@ -58,11 +58,13 @@ test('候选形状符合 v4 Staff 契约（signing_fee+weekly_salary，无 proje
   assert.equal(staff.last_participation, null)
   assert.equal(staff.temporary_contract, null)
   const primary = PROFESSION_ABILITY[staff.role]
-  const primaryValue = staff.abilities[ABILITIES.indexOf(primary)]
+  const primaryValue = staff.abilities[primary]
   assert.ok(primaryValue >= 20 && primaryValue <= 100)
-  for (let i = 0; i < 6; i++) {
-    assert.ok(staff.abilities[i] >= 0 && staff.abilities[i] <= 100)
-    assert.ok(staff.potential[i] >= staff.abilities[i] && staff.potential[i] <= 100)
+  for (const ability of ABILITIES) {
+    assert.ok(staff.abilities[ability] >= 0 && staff.abilities[ability] <= 100)
+    assert.ok(staff.potential[ability] >= staff.abilities[ability] && staff.potential[ability] <= 100)
+    assert.equal(staff.revealed_potential[ability], false)
+    assert.equal(staff.experience[ability], 0)
   }
 })
 
@@ -99,7 +101,7 @@ test('保底触发：计数达到阈值时即使 roll 不利也出对应档', ()
 
 // ---- 守卫矩阵 ----
 
-test('守卫优先级：形状 > 阶段 > 危机 > 每周一次 > 现金', () => {
+test('守卫优先级：形状 > 阶段 > 每周一次 > 现金（危机机制已废除，无危机分支）', () => {
   const base = {
     week: 5, last_scout_week: null, company_status: 'running',
     pending_count: 0, solvency: 'normal', balance: 1000000, fee: 50000,
@@ -107,10 +109,12 @@ test('守卫优先级：形状 > 阶段 > 危机 > 每周一次 > 现金', () =>
   assert.equal(scoutGuard({ ...base, role: '作画', focus_ability: 'drawing' }).error, 'INVALID_INPUT')
   assert.equal(scoutGuard({ ...base, company_status: 'closing' }).error, 'INVALID_PHASE')
   assert.equal(scoutGuard({ ...base, pending_count: 2 }).error, 'INVALID_PHASE')
-  assert.equal(scoutGuard({ ...base, solvency: 'crisis' }).error, 'CRISIS_COMMITMENT_BLOCKED')
   assert.equal(scoutGuard({ ...base, last_scout_week: 5 }).error, 'INVALID_PHASE')
   assert.equal(scoutGuard({ ...base, balance: 1 }).error, 'INSUFFICIENT_FUNDS')
   assert.equal(scoutGuard(base).error, null)
+  // solvency 不再参与 scout 守卫：当前契约 solvency.state 恒为 normal（INV-18），
+  // 非法 crisis 状态由运行时 validate 拒绝，不是 scout 守卫职责。
+  assert.equal(scoutGuard({ ...base, solvency: 'crisis' }).error, null)
 })
 
 test('scout 失败时不产生任何副作用（无候选、无计数变化）', () => {
@@ -134,9 +138,10 @@ function scoutCand(id, expires) {
   return { staff: { id }, expires_week: expires, origin: 'scout' }
 }
 
-test('窗口边界：expires_week 当周有效，次周移除；regular 永不过期', () => {
+test('窗口边界：expires_week 是首个不可签约周，该周开局移除；regular 永不过期', () => {
   const pool = [scoutCand('s', 7), regular('r')]
-  assert.deepEqual(expireCandidates(pool, 7).map((c) => c.staff.id), ['s', 'r'])
+  assert.deepEqual(expireCandidates(pool, 6).map((c) => c.staff.id), ['s', 'r'])
+  assert.deepEqual(expireCandidates(pool, 7).map((c) => c.staff.id), ['r'])
   assert.deepEqual(expireCandidates(pool, 8).map((c) => c.staff.id), ['r'])
   assert.deepEqual(expireCandidates(pool, 520).map((c) => c.staff.id), ['r'])
 })

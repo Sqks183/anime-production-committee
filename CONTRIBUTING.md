@@ -19,6 +19,8 @@
 
 旧最小纵向切片曾实现六个 C++ 接口，React 通过真实 WASM 完成初始化、接取企划、决策、日结、事件与结算；本地验收记录见 README。该运行时采用单项目/五阶段模型，属于迁移前历史实现。当前先完成新架构设计；新增玩法前应核对 DECISION_LOG 与 DOMAIN_ARCHITECTURE，不得把旧接口或旧阶段模型当作目标契约。
 
+规则数值变化写进 [DECISION_LOG.md](docs/DECISION_LOG.md) 的 `DEC-*` 条目；流程、治理与契约级变化写进 [docs/decisions/](docs/decisions/INDEX.md) 的 `ADR-*` 文件，接受后不再就地改写。研究文件与审查文件只写证据和建议；文档改动提交前运行 `npm run check:docs`。
+
 ## Issue 与分工
 
 1. 先搜索已有 Issue，避免重复工作。选择“开发任务”“缺陷报告”或“功能提案”模板。
@@ -36,6 +38,12 @@
 | 集成与规范 | `scripts/`、`docs/`、根配置 | workspace 配置、锁文件、CMake、部署配置 |
 
 共享文件包括 `apps/web/src/types/game.ts`、`packages/game-core/bindings/embind.cpp`、`docs/API.md`、各 `package.json`、`package-lock.json` 和 `CMakeLists.txt`。需要跨边界修改时，先在 Issue 说明并协调，避免两人同时重写同一份协议或锁文件。
+
+## 开放式增量开发
+
+首版范围代表最低交付目标和当前优先级，不是对未来功能的禁止。成员可以在不违反已确认决策、不破坏主框架与跨模块契约、风险可控的前提下，自主扩展或提前实现未来候选功能；符合条件的成果默认接纳，不需要额外提交负责人决定是否采用。默认接纳不免除正常 PR、测试、文档同步和集成验收。
+
+只有涉及既定决策变更、核心玩法/主框架调整、跨模块契约或状态所有权变更、已确认数值基准变更及重大风险时，才提交负责人裁决。详见[开放式增量开发与提前实现原则](docs/OPEN_INCREMENTAL_DEVELOPMENT_POLICY.md)。
 
 ## 开发环境
 
@@ -85,6 +93,8 @@ git switch -c feat/12-project-flow
 
 ## 架构约束
 
+持续修补与重构边界遵循[工程变更治理](docs/ENGINEERING_CHANGE_GOVERNANCE.md)：优先最小增量修复，先复用已有模块；改变共享契约或已确认玩法必须说明影响并取得相应批准。不得以进入新里程碑或代码风格偏好为由重写无关模块。
+
 - React 组件通过 Zustand 状态操作和服务接口交互，不自行实现预算、进度或评价规则。
 - C++ 保持明确输入输出，不负责 UI、存档、网络、浏览器或随机种子生命周期。
 - TypeScript 管理种子并传入 C++；相同状态、决策序列和种子必须可以复现结果。
@@ -103,7 +113,7 @@ git switch -c feat/12-project-flow
 | C++ 规则、Embind 或 JSON 协议 | `npm run test:native`、`npm run test:wasm`；涉及前端协议时同时执行前端检查 |
 | 用户交互、WASM 加载、存档流程或跨语言集成 | `npm run test:browser`，并操作受影响的页面与异常路径 |
 | 构建或部署产物 | `npm run build`、`npm run verify:dist`；涉及运行行为时补充浏览器检查 |
-| 纯文档或模板 | 检查相对链接、命令、格式与实际实现是否一致 |
+| 纯文档或模板 | `npm run check:docs`，并检查命令、格式与实际实现是否一致 |
 
 `npm test` 运行前端单元、真实 WASM 和原生测试；`npm run test:browser` 另行执行，自动完整构建并驱动已安装的 Edge。其他兼容浏览器可通过 `BROWSER_CHANNEL` 或 `BROWSER_EXECUTABLE` 指定。截图输出到 `build/browser-tests/`，供 PR 展示，不提交整个生成目录。
 

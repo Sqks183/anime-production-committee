@@ -2,13 +2,18 @@
 //
 // 定位与 scripts/check-handover-cases.mjs 相同：这不是游戏运行时，而是规则样本。
 // M2/M3 的 C++ 领域实现必须给出与本模块一致的结论；若规则要改，先改用例与
-// M0_CONTRACT_FREEZE §14.7，再改实现。
+// M0_CONTRACT_FREEZE §14.13，再改实现。
 //
-// 契约依据：M0_CONTRACT_FREEZE §14.7（#53 裁决）、DECISION_LOG §17 Q3、DEC-STAFF-006/007。
-// 目标 Staff 形状 = signing_fee + weekly_salary（PR #94 后的 v4 契约）；
-// M1 model.hpp 仍含 project_fee 属已知缺口（M0 §14.3），本模块不以其为目标。
+// 契约依据：M0_CONTRACT_FREEZE §14.13（#53 裁决，PR #97 合入）、DECISION_LOG §17 Q3、
+// DEC-STAFF-006/007、DATA_DICTIONARY_V4 §3.2/§3.12。
+// 目标 Staff 形状 = signing_fee + weekly_salary；project_fee 属 historical_fields，禁止出现。
+// abilities/experience/potential/revealed_potential 的 JSON 形状是固定 6 键对象（不是数组），
+// 与名册 Staff 一致（数据字典 §3.2）。
 //
-// 全部数值为 [PLACEHOLDER]（见 DEFAULT_PARAMS），由 #59/#58 标定；
+// 危机机制已废除：当前 solvency.state 恒为 normal，CRISIS_COMMITMENT_BLOCKED 是废弃占位码，
+// scout 守卫不含危机分支（M0 §5 行 6 / §14.13）。
+//
+// 池容量、轮换数、窗口周数、概率与费用为 [PLACEHOLDER]（见 DEFAULT_PARAMS），由 #59/#58 标定；
 // 职业→能力映射是 DEC-STAFF-006 留给员工模块的提案，未冻结。
 //
 // 随机：逐位镜像 packages/game-core/src/v4/kernel.cpp 的 draw/splitmix64/hash_text，
@@ -132,11 +137,11 @@ export function generateCandidate(seed, week, index, opts = {}) {
   const primaryRange = { n: [20, 31], sr: [45, 31], ssr: [65, 36] }[tier]
   const primary = primaryRange[0] + subBelow(2, primaryRange[1])
 
-  const abilities = ABILITIES.map((ability, i) =>
-    ability === primaryAbility ? primary : 5 + subBelow(3 + i, 41))
-  const potential = abilities.map((value, i) =>
-    Math.min(100, value + (ABILITIES[i] === primaryAbility ? 10 + subBelow(9, 31) : subBelow(9, 41))))
-  const abilitySum = abilities.reduce((sum, value) => sum + value, 0)
+  const abilities = Object.fromEntries(ABILITIES.map((ability, i) =>
+    [ability, ability === primaryAbility ? primary : 5 + subBelow(3 + i, 41)]))
+  const potential = Object.fromEntries(ABILITIES.map((ability, i) =>
+    [ability, Math.min(100, abilities[ability] + (ability === primaryAbility ? 10 + subBelow(9, 31) : subBelow(9, 41)))]))
+  const abilitySum = ABILITIES.reduce((sum, ability) => sum + abilities[ability], 0)
 
   const staff = {
     id: `cand_${purpose.toString(16)}_${week}_${index}`,
@@ -144,9 +149,9 @@ export function generateCandidate(seed, week, index, opts = {}) {
     role: profession,
     employment: 'core',
     abilities,
-    experience: ABILITIES.map(() => 0),
+    experience: Object.fromEntries(ABILITIES.map((ability) => [ability, 0])),
     potential,
-    revealed_potential: ABILITIES.map(() => false),
+    revealed_potential: Object.fromEntries(ABILITIES.map((ability) => [ability, false])),
     talent_type: TALENT_ARCHETYPES[subBelow(15, TALENT_ARCHETYPES.length)],
     signing_fee: abilitySum * params.signing_fee_per_ability,
     weekly_salary: params.salary_base + primary * params.salary_per_primary,
@@ -160,7 +165,7 @@ export function generateCandidate(seed, week, index, opts = {}) {
   return { staff, tier }
 }
 
-// ---- scout 守卫（M0 §5 行 6 / §14.7）----
+// ---- scout 守卫（M0 §5 行 6 / §14.13；无危机分支，危机机制已废除）----
 
 export function scoutGuard(ctx) {
   const hasRole = ctx.role != null
@@ -168,7 +173,6 @@ export function scoutGuard(ctx) {
   if (hasRole && hasFocus) return { error: 'INVALID_INPUT' }
   if (ctx.company_status !== 'running') return { error: 'INVALID_PHASE' }
   if ((ctx.pending_count ?? 0) > 0) return { error: 'INVALID_PHASE' }
-  if (ctx.solvency === 'crisis') return { error: 'CRISIS_COMMITMENT_BLOCKED' }
   if (ctx.last_scout_week === ctx.week) return { error: 'INVALID_PHASE' }
   if (ctx.balance < (ctx.fee ?? DEFAULT_PARAMS.scout_fee)) return { error: 'INSUFFICIENT_FUNDS' }
   return { error: null }
@@ -209,9 +213,10 @@ export function scout(ctx, pool, opts = {}) {
 
 // ---- 窗口到期与部分轮换（周结算固定阶段调用）----
 
-// 窗口语义：week <= expires_week 期间有效；结算周 week > expires_week 时移除。
+// 窗口语义（§14.13.1）：expires_week 是首个不可签约周；week < expires_week 期间可签约，
+// 进入 expires_week 周开局即失效移除。regular 候选 expires_week=null，不受窗口影响。
 export function expireCandidates(pool, week) {
-  return pool.filter((c) => !(c.origin === 'scout' && c.expires_week != null && week > c.expires_week))
+  return pool.filter((c) => !(c.origin === 'scout' && c.expires_week != null && week >= c.expires_week))
 }
 
 // 常规池部分轮换：先到期清理，再确定性选 rotate_count 个常规槽替换；
