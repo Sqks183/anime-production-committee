@@ -25,11 +25,12 @@ constexpr int kFatigueRestLoss = 4;
 constexpr int kExperienceThreshold = 20;
 
 // DEC-COMM-001/002、DEC-BD-001：六个常规商业窗口。
-// BD/DVD 始终归制作公司；其余窗口按委员会成员渠道或既有合作开放。
+// BD/DVD 公司所得固定为毛收入 50%；其余窗口按委员会成员渠道或外部代理开放。
 constexpr const char* kWindowBd = "bd_dvd";
 constexpr const char* kCommercialWindows[6] = {"domestic_streaming", "overseas", "merchandise", "music", "tv", "bd_dvd"};
-// [PLACEHOLDER] 外部代理手续费（三档开放中的第二档）与电视服务总费用。
-constexpr int kAgencyFeePermille = 400;
+constexpr int kAgencyFeeNormalPermille = 450;
+constexpr int kAgencyFeeHighPermille = 400;
+constexpr int kAgencyFeeCorePermille = 350;
 constexpr std::int64_t kTvServiceFeeTotal = 600000;
 // [PLACEHOLDER] 原创草稿基础声望门槛与按 scale 推导的预算/工期。
 constexpr int kDraftMinReputation = 120;
@@ -45,8 +46,9 @@ int draft_weeks(const std::string& scale) {
     if (scale == "movie") return 32;
     return 26;        // tv（默认）
 }
-// 电视台委员会成员默认强力播出 125%；无成员时购买黄金档 130%。
+// 电视台委员会成员默认强力播出 125%；外部代理普通播出 115%；购买黄金档 130%。
 constexpr int kTvMultiplierMember = 1250;
+constexpr int kTvMultiplierAgency = 1150;
 constexpr int kTvMultiplierPurchased = 1300;
 
 bool tv_boost_window(const std::string& window) {
@@ -917,6 +919,36 @@ const Json* find_partner(const GameState& state, const std::string& partner_id) 
     return nullptr;
 }
 
+int successful_channel_cooperations(const GameState& state, const std::string& window) {
+    if (!state.archive.is_object() || !state.archive.contains("works") ||
+        !state.archive.at("works").is_array()) {
+        return 0;
+    }
+    int count = 0;
+    for (const auto& record : state.archive.at("works")) {
+        if (!record.is_object() || record.value("end_reason", std::string{}) != "completed" ||
+            !record.contains("channels") || !record.at("channels").is_array()) {
+            continue;
+        }
+        for (const auto& channel : record.at("channels")) {
+            if (channel.is_object() && channel.value("window", std::string{}) == window &&
+                channel.value("net", static_cast<std::int64_t>(0)) > 0) {
+                ++count;
+                break;
+            }
+        }
+    }
+    return count;
+}
+
+std::optional<int> external_agency_fee_permille(const GameState& state, const std::string& window) {
+    const int cooperations = successful_channel_cooperations(state, window);
+    if (state.company.reputation >= 350 || cooperations >= 5) return kAgencyFeeCorePermille;
+    if (state.company.reputation >= 190 || cooperations >= 3) return kAgencyFeeHighPermille;
+    if (state.company.reputation >= 100 || cooperations >= 1) return kAgencyFeeNormalPermille;
+    return std::nullopt;
+}
+
 std::string next_id(const GameState& state, const char* prefix, int existing) {
     int index = existing + 1;
     while (true) {
@@ -1072,19 +1104,31 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     }
     const bool tv_member = member_windows.count("tv") > 0;
     const bool tv_purchased = work.tv_service.is_object() && work.tv_service.value("purchased", false);
-    const int tv_multiplier = tv_member ? kTvMultiplierMember : (tv_purchased ? kTvMultiplierPurchased : 1000);
     const std::set<std::string> baseline(work.channels.begin(), work.channels.end());
+    std::optional<int> tv_agency;
+    if (tv_member || tv_purchased) {
+        tv_agency = 0;
+    } else if (baseline.count("tv") > 0) {
+        tv_agency = external_agency_fee_permille(state, "tv");
+    }
+    const int tv_multiplier = tv_member                                    ? kTvMultiplierMember
+                              : tv_purchased                              ? kTvMultiplierPurchased
+                              : tv_agency.has_value()                     ? kTvMultiplierAgency
+                                                                           : 1000;
 
     Json channel_report = Json::array();
     std::int64_t gross_total = 0;
+    std::int64_t bd_gross = 0;
     std::int64_t bd_revenue = 0;
     std::int64_t committee_pool = 0;
     for (const char* window_key : kCommercialWindows) {
         if (aborted) break;   // 中止项目不产生商业收入
         const std::string window = window_key;
         const bool bd = window == kWindowBd;
-        // 承制只拿 BD/DVD；委员会按成员渠道或既有合作开放其余窗口。
-        const bool open = bd || (!contract && (member_windows.count(window) > 0 || baseline.count(window) > 0));
+        const bool tv_service_window = window == "tv" && tv_purchased;
+        // 承制只拿 BD/DVD；委员会按成员、企划或已购电视服务开放其余窗口。
+        const bool open = bd || tv_service_window ||
+                          (!contract && (member_windows.count(window) > 0 || baseline.count(window) > 0));
         std::int64_t potential = 0;
         if (offer.contains("channel_potentials") && offer.at("channel_potentials").is_object() &&
             offer.at("channel_potentials").contains(window) &&
@@ -1093,6 +1137,15 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
         }
         if (!open || potential <= 0) continue;
 
+        int agency = 0;
+        if (!bd && !tv_service_window) {
+            if (member_windows.count(window) == 0) {
+                const auto fee = external_agency_fee_permille(state, window);
+                if (!fee.has_value()) continue;
+                agency = *fee;
+            }
+        }
+
         std::int64_t gross = potential;
         gross = gross * qf / 1000;
         gross = gross * hf / 1000;
@@ -1100,12 +1153,14 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
         if (tv_boost_window(window)) gross = gross * tv_multiplier / 1000;
         if (forced) gross = gross * kForcedCommercialPermille / 1000;
 
-        // 三档开放：成员渠道 0 手续费；仅靠既有合作软绑定按代理费扣减。
-        const int agency = (contract || bd) ? 0 : (member_windows.count(window) > 0 ? 0 : kAgencyFeePermille);
-        const std::int64_t net = gross * (1000 - agency) / 1000;
+        const std::int64_t net = bd ? gross / 2 : gross * (1000 - agency) / 1000;
         gross_total += gross;
-        if (bd) bd_revenue += net;
-        else if (!contract) committee_pool += net;
+        if (bd) {
+            bd_gross += gross;
+            bd_revenue += net;
+        } else if (!contract) {
+            committee_pool += net;
+        }
         channel_report.push_back(Json{{"window", window},
                                       {"potential", potential},
                                       {"quality_factor", qf},
@@ -1122,7 +1177,13 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     std::int64_t investor_share = 0;
     std::int64_t reward = 0;
     if (!contract && !aborted) {
-        company_share = committee_pool * percent / 100;
+        const std::int64_t allocation_numerator = committee_pool * percent;
+        if (allocation_numerator % 100 != 0) {
+            outcome.code = "NOT_IMPLEMENTED";
+            outcome.message = "委员会净商业池分配的取整顺序与余数归属尚未冻结";
+            return outcome;
+        }
+        company_share = allocation_numerator / 100;
         investor_share = committee_pool - company_share;
     } else if (contract && !aborted && bd_revenue >= budget) {
         reward = budget * 200 / 1000;   // [PLACEHOLDER] 承制成功奖励 20%
@@ -1137,7 +1198,7 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     if (bd_revenue > 0) {
         state.finance.entries.push_back(LedgerEntry{
             "w" + std::to_string(week) + ".bd." + work_id, week, work_id, "commercial_share_received",
-            bd_revenue, work.committee_id, "bd_dvd (company-owned)"});
+            bd_revenue, work.committee_id, "bd_dvd (company 50% share)"});
         state.finance.balance += bd_revenue;
     }
     if (company_share > 0) {
@@ -1238,6 +1299,7 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
                        {"quality_score", score},
                        {"rating", rating},
                        {"commercial_revenue", gross_total},
+                       {"bd_gross", bd_gross},
                        {"bd_revenue", bd_revenue},
                        {"committee_pool", committee_pool},
                        {"investor_share", investor_share},
@@ -1271,6 +1333,7 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
                           {"rating", rating},
                           {"quality_score", score},
                           {"commercial_revenue", gross_total},
+                          {"bd_gross", bd_gross},
                           {"bd_revenue", bd_revenue},
                           {"committee_pool", committee_pool},
                           {"company_received", company_revenue},
@@ -2094,6 +2157,10 @@ std::string start_work(const std::string& input) {
             }
             members.emplace_back(id, channel);
         }
+        std::sort(members.begin(), members.end(), [](const auto& a, const auto& b) {
+            if (a.first != b.first) return a.first < b.first;
+            return a.second < b.second;
+        });
 
         const std::int64_t budget = snapshot.value("contract_budget", static_cast<std::int64_t>(0));
         const int duration = snapshot.value("duration_weeks", 0);
@@ -2131,6 +2198,11 @@ std::string start_work(const std::string& input) {
         work.channels.clear();
         for (const auto& channel : snapshot.at("channels_baseline")) {
             if (channel.is_string()) work.channels.push_back(channel.get<std::string>());
+        }
+        for (const auto& channel : member_channels) {
+            if (std::find(work.channels.begin(), work.channels.end(), channel) == work.channels.end()) {
+                work.channels.push_back(channel);
+            }
         }
         work.investment = Json{{"percent", percent}, {"total", total_investment}, {"paid", paid}};
         work.opened_week = week;
@@ -2303,6 +2375,9 @@ std::string buy_tv_service(const std::string& input) {
         const std::int64_t paid = kTvServiceFeeTotal * percent / 100;
         if (state.finance.balance < paid) return encode(error_body("INSUFFICIENT_FUNDS", "现金不足"));
 
+        if (std::find(work->channels.begin(), work->channels.end(), "tv") == work->channels.end()) {
+            work->channels.push_back("tv");
+        }
         work->tv_service = Json{{"purchased", true},
                                 {"channel", "tv"},
                                 {"paid_week", state.company.week},

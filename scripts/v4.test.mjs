@@ -1205,8 +1205,9 @@ test('M2 交付：门槛未达拒绝；达标后结算、归档、清归属、�
   assert.equal(delivered.report.rating, 'B')
   // 承制只拿 BD/DVD，BD 收入未达合同预算，不触发成功奖励
   assert.equal(delivered.report.success_reward, 0)
-  assert.ok(delivered.report.bd_revenue > 0)
-  assert.equal(delivered.report.commercial_revenue, delivered.report.bd_revenue)
+  assert.ok(delivered.report.bd_gross > 0)
+  assert.equal(delivered.report.bd_revenue, Math.floor(delivered.report.bd_gross / 2))
+  assert.equal(delivered.report.commercial_revenue, delivered.report.bd_gross)
   assert.equal(delivered.state.archive.works.length, 1)
   assert.equal(delivered.state.works.length, 0)
   assert.equal(delivered.state.staff.find((s) => s.id === 'staff_dir').assignment_work_id, null)
@@ -1245,7 +1246,10 @@ test('M4 交付：委员会按投资比例分账、关闭委员会并沉淀伙�
   assert.equal(poolLines.reduce((sum, line) => sum + line.net, 0), report.committee_pool)
   assert.equal(bdLines.reduce((sum, line) => sum + line.net, 0), report.bd_revenue)
   for (const line of report.channels) {
-    assert.equal(line.net, Math.floor(line.gross * (1000 - line.agency_fee_permille) / 1000))
+    const expectedNet = line.window === 'bd_dvd'
+      ? Math.floor(line.gross / 2)
+      : Math.floor(line.gross * (1000 - line.agency_fee_permille) / 1000)
+    assert.equal(line.net, expectedNet)
   }
   assert.equal(report.channels.length, 3)   // 国内配信 / 电视 / BD
   assert.equal(delivered.state.committees[0].status, 'closed')
@@ -1328,7 +1332,7 @@ test('abort_work：处罚与履历契约未冻结时原子拒绝，不伪报完�
   assert.equal(state.archive.works.length, 0)
 })
 
-test('DEC-BD-001/COMM-002：电视倍率按成员/购买分档，BD 始终归公司', () => {
+test('DEC-BD-001/COMM-002：电视倍率按成员/购买分档，BD 公司所得为毛收入 50%', () => {
   const withMember = (() => {
     let state = ok('initialize', { seed: 7 }).state
     state = ok('start_work', {
@@ -1341,6 +1345,7 @@ test('DEC-BD-001/COMM-002：电视倍率按成员/购买分档，BD 始终归公
   const lineOf = (report, id) => report.channels.find((line) => line.window === id)
   assert.equal(lineOf(withMember, 'domestic_streaming').tv_multiplier, 1250)
   assert.equal(lineOf(withMember, 'bd_dvd').owner, 'company')
+  assert.equal(lineOf(withMember, 'bd_dvd').net, Math.floor(lineOf(withMember, 'bd_dvd').gross / 2))
 
   const withoutPurchase = (() => {
     let state = ok('initialize', { seed: 7 }).state
@@ -1352,6 +1357,7 @@ test('DEC-BD-001/COMM-002：电视倍率按成员/购买分档，BD 始终归公
     return ok('deliver_work', { state, work_id: 'work_01' }).report
   })()
   assert.equal(lineOf(withoutPurchase, 'domestic_streaming').tv_multiplier, 1000)
+  assert.equal(lineOf(withoutPurchase, 'tv'), undefined)
 
   const withPurchase = (() => {
     let state = ok('initialize', { seed: 7 }).state
@@ -1360,10 +1366,112 @@ test('DEC-BD-001/COMM-002：电视倍率按成员/购买分档，BD 始终归公
       committee_partner_ids: ['partner_stream', 'partner_pub']
     }).state
     state = ok('buy_tv_service', { state, work_id: 'work_01' }).state
+    assert.ok(state.works[0].channels.includes('tv'))
     state = completeWork(state, 'work_01', 70)
     return ok('deliver_work', { state, work_id: 'work_01' }).report
   })()
   assert.equal(lineOf(withPurchase, 'domestic_streaming').tv_multiplier, 1300)
+  assert.equal(lineOf(withPurchase, 'tv').agency_fee_permille, 0)
+})
+
+function completedChannelHistory(id, windows) {
+  return {
+    id,
+    rating: 'B',
+    end_reason: 'completed',
+    gate_completion_permille: 1000,
+    end_week: 0,
+    channels: windows.map((window) => ({ window, gross: 100, net: 100 }))
+  }
+}
+
+test('DEC-COMM-001：外部代理按声望与同类渠道成功合作分档，低于门槛时关闭', () => {
+  const deliverAt = (reputation, history = []) => {
+    let state = ok('initialize', { seed: 7 }).state
+    state.company.reputation = reputation
+    state.archive.works = history
+    state = ok('start_work', {
+      state, offer_id: 'offer_02', mode: 'committee', percent: 50,
+      committee_partner_ids: ['partner_pub']
+    }).state
+    state = completeWork(state, 'work_01', 70)
+    return ok('deliver_work', { state, work_id: 'work_01' }).report
+  }
+  const lineOf = (report, id) => report.channels.find((line) => line.window === id)
+
+  assert.equal(lineOf(deliverAt(100), 'domestic_streaming').agency_fee_permille, 450)
+  assert.equal(lineOf(deliverAt(190), 'domestic_streaming').agency_fee_permille, 400)
+  assert.equal(lineOf(deliverAt(350), 'domestic_streaming').agency_fee_permille, 350)
+  assert.equal(lineOf(deliverAt(99), 'domestic_streaming'), undefined)
+})
+
+test('DEC-COMM-001：代理合作次数按渠道独立累计，不跨渠道合并', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state.market.slots.find((offer) => offer.id === 'offer_02').channels_baseline.push('overseas')
+  state.archive.works = [
+    ...Array.from({ length: 3 }, (_, index) => completedChannelHistory(`history_domestic_${index}`, ['domestic_streaming'])),
+    completedChannelHistory('history_overseas_0', ['overseas'])
+  ]
+  state = ok('start_work', {
+    state, offer_id: 'offer_02', mode: 'committee', percent: 50,
+    committee_partner_ids: ['partner_pub']
+  }).state
+  state = completeWork(state, 'work_01', 70)
+  const report = ok('deliver_work', { state, work_id: 'work_01' }).report
+  const lineOf = (id) => report.channels.find((line) => line.window === id)
+
+  assert.equal(lineOf('domestic_streaming').agency_fee_permille, 400)
+  assert.equal(lineOf('overseas').agency_fee_permille, 450)
+  assert.equal(report.committee_pool, lineOf('domestic_streaming').net + lineOf('overseas').net)
+})
+
+test('DEC-COMM-002：无电视台成员但外部代理播出开放时使用 115% 普通曝光', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state = ok('start_work', {
+    state, offer_id: 'offer_01', mode: 'committee', percent: 50,
+    committee_partner_ids: ['partner_stream']
+  }).state
+  state = completeWork(state, 'work_01', 70)
+  const report = ok('deliver_work', { state, work_id: 'work_01' }).report
+  const lineOf = (id) => report.channels.find((line) => line.window === id)
+
+  assert.equal(lineOf('tv').agency_fee_permille, 450)
+  assert.equal(lineOf('domestic_streaming').tv_multiplier, 1150)
+  assert.equal(lineOf('bd_dvd').tv_multiplier, 1150)
+})
+
+test('DEC-COMM-003：非整除净池分配尚未冻结时原子拒绝，不静默舍入', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state.company.reputation = 100
+  state = ok('start_work', {
+    state, offer_id: 'offer_02', mode: 'committee', percent: 50,
+    committee_partner_ids: ['partner_pub']
+  }).state
+  state = completeWork(state, 'work_01', 70)
+
+  const preview = ok('deliver_work', { state: structuredClone(state), work_id: 'work_01' }).report
+  const line = preview.channels.find((entry) => entry.window === 'domestic_streaming')
+  const factors = [line.quality_factor, line.heat_factor, line.reputation_factor, line.tv_multiplier]
+  const netAt = (potential) => {
+    let gross = potential
+    for (const factor of factors) gross = Math.floor(gross * factor / 1000)
+    return Math.floor(gross * (1000 - line.agency_fee_permille) / 1000)
+  }
+  const potential = Array.from({ length: 100 }, (_, index) => line.potential + index + 1)
+    .find((candidate) => netAt(candidate) % 2 === 1)
+  assert.equal(potential === undefined, false)
+  state.works[0].offer.channel_potentials.domestic_streaming = potential
+
+  const beforeHash = ok('hash_state', { state }).hash
+  const beforeBalance = state.finance.balance
+  const blocked = call('deliver_work', { state, work_id: 'work_01' })
+  assert.equal(blocked.error.code, 'NOT_IMPLEMENTED')
+  assert.match(blocked.error.message, /取整顺序与余数归属尚未冻结/)
+  assert.equal('state' in blocked, false)
+  assert.equal(ok('hash_state', { state }).hash, beforeHash)
+  assert.equal(state.finance.balance, beforeBalance)
+  assert.equal(state.works.length, 1)
+  assert.equal(state.archive.works.length, 0)
 })
 
 test('DEC-PLAN-001：原创草稿走独立准入，不复用普通企划声望/履历守卫', () => {

@@ -41,7 +41,7 @@
 
 `docs/blueprints/*.blueprint.json` 在构建期先跑 `validate-blueprint.mjs`，再打包成 `blueprint_catalog_generated.cpp`；运行时 `blueprint::find(id)` 取模板。`start_work` 按 `workload_scale_permille` 缩放 `work_total`，不改 `deliver_at`；实例化不消耗随机。
 
-## 4. 交付结算公式（结构已定，数值全部 `[PLACEHOLDER]`）
+## 4. 交付结算公式（收入潜力与部分经济系数仍为 `[PLACEHOLDER]`）
 
 ```text
 六个窗口 = 国内配信 / 海外发行 / 玩具周边 / 音乐 / 电视 / BD·DVD
@@ -50,20 +50,28 @@
 热度     = boom 1200 / high 1100 / mid 1000 / low 900
 声望     = clamp(800 + 声望 × 2, 800, 1400)‰           // 声望 100 → 1000
 窗口毛收入 = 潜力 × 质量兑现 × 热度 × 声望 × 电视倍率
-电视倍率 = 无播出 1000 / 成员 1250 / 无成员购买 1300
+电视倍率 = 无播出 1000 / 外部代理普通播出 1150 / 电视台成员 1250 / 购买黄金档 1300
           只作用于国内配信、周边、音乐、BD/DVD
-代理费   = 无对应成员但基线开放时 400‰（[PLACEHOLDER]）；成员渠道 0
-净收入   = 毛收入 × (1000 − 代理费) / 1000
+渠道集合 = 企划基线渠道 ∪ 委员会成员渠道 ∪ 已购买电视服务
+外部代理 = 普通 450‰（声望≥100 或同类成功合作≥1）
+           优质 400‰（声望≥190 或同类成功合作≥3）
+           核心 350‰（声望≥350 或同类成功合作≥5）
+          取声望与合作次数满足的最高档；成员渠道 0‰
+          声望<100 且无同类成功合作时渠道关闭
+BD 公司所得 = BD 毛收入 × 50%；另 50% 为综合成本，不进入池、不重复扣现金或制作成本
+非 BD 净池 = Σ开放窗口毛收入 × (1000 − 适用代理费) / 1000
 评级     = S ≥85 / A ≥75 / B ≥65 / C ≥50 / D（强制交付先扣 (1000−完成度)/100，最多 10 分）
 强制系数 = 正常 1000 / 未达门槛 600‰
 扣罚     = 预算 × (1000 − 门槛完成度) × 300/1000/1000   // 仅强制/关闭路径
 ```
 
-**收入归属（DEC-BD-001 / DEC-COMM-002/003）**
+**收入归属（DEC-BD-001 / DEC-COMM-001/002/003）**
 
-- **承制**：只获得 BD/DVD 收入（归公司）；BD 收入 ≥ 合同预算时另付成功奖励 预算×20%（占位）；不参与其他窗口。
-- **委员会**：BD/DVD 归公司、不进池；其余开放窗口扣代理费后汇总为 `committee_pool`；按投资比例 Pro-rata 分给公司（`commercial_share`）与其他成员（`investor_share`）。
-- 电视：有电视台成员时默认获得 125% 强力播出、不可再购买；无成员时玩家可购买 130%，支付总费用 × 投资比例，其余成员共同出资。
+- **承制**：只获得 BD/DVD 毛收入的 50%（归公司）；BD 公司所得 ≥ 合同预算时另付成功奖励 预算×20%（占位）；不参与其他窗口。
+- **委员会**：BD/DVD 毛收入的 50% 归公司、不进池；其余开放窗口扣代理费后汇总为 `committee_pool`；按投资比例 Pro-rata 分给公司（`commercial_share`）与其他成员（`investor_share`）。
+- 通用前置商业成本的输入字段尚未冻结，当前只能表达已实现的逐渠道代理费；不得私加字段或默认收费。
+- 净池分配的取整顺序和余数归属尚未冻结；出现非整除分配时当前原子返回 `NOT_IMPLEMENTED`，不静默舍入、不写流水、不归档。
+- 电视：有电视台成员时获得 125% 强力播出、不可再购买；无成员且外部代理开放时使用 115% 普通播出；玩家可主动购买 130%，支付总费用 × 投资比例，其余成员共同出资。
 - 声望变化：S+8 / A+5 / B+2 / C0 / D−5，唯一入口写 `reputation_log`；强制/中止不产生正向声望。
 - 委员会关闭时按评级更新成员关系：S+3 / A+2 / B+1 / C0 / D−2（强制不产生正向关系），并追加 `history`。
 - 门槛完成度 `gate_completion_permille` = 各门槛项 `min(1000, work_done×1000/(deliver_at×work_total))` 的平均值；正常交付恒为 1000。
@@ -71,11 +79,11 @@
 
 ## 5. 财务与 Archive
 
-流水科目：`contract_received`（+）、`investment_paid`（−）、`commercial_share_received`（+，含 BD/DVD 与委员会净池份额，靠 `memo` 区分）、`success_reward_received`（+）、`penalty`（−）、`distribution`（−，电视服务）；延期费暂记 `production`。
+流水科目：`contract_received`（+）、`investment_paid`（−）、`commercial_share_received`（+，含 BD/DVD 公司所得与委员会净池份额，靠 `memo` 区分）、`success_reward_received`（+）、`penalty`（−）、`distribution`（−，电视服务）；延期费暂记 `production`。
 
 周薪按 DEC-ECON-001 归因：核心与临时员工均按 `weekly_salary` 计入阶段 2 刚性预检和阶段 3 流水；已分配到项目的员工记 `work_id=项目`，闲置员工记 `work_id=null`（公司级成本）。
 
-`Archive.works` 追加一条 `WorkRecord`：作品事实、六维质量、质量分、评级、`end_reason`（`completed` / `deadline` / `company_closed`）、`forced`、`gate_completion_permille`、`commercial_revenue`、`bd_revenue`、`committee_pool`、`investor_share`、`company_received`、逐窗口对账、单集质量摘要、团队快照，以及 `finance_summary`（合同收入、投资本金、商业份额、BD、奖励、扣罚、`costs` 分类、`total_costs`、`profit`）与 `rules_status=placeholder`。记录只追加。
+`Archive.works` 追加一条 `WorkRecord`：作品事实、六维质量、质量分、评级、`end_reason`（`completed` / `deadline` / `company_closed`）、`forced`、`gate_completion_permille`、`commercial_revenue`、`bd_gross`、`bd_revenue`（公司所得）、`committee_pool`、`investor_share`、`company_received`、逐窗口对账、单集质量摘要、团队快照，以及 `finance_summary`（合同收入、投资本金、商业份额、BD 公司所得、奖励、扣罚、`costs` 分类、`total_costs`、`profit`）与 `rules_status=placeholder`。记录只追加。
 
 > 中止（`abort_work`）不写 WorkRecord，且在当前契约下不执行：M0 Archive 的 `end_reason` 只冻结了三种交付原因，违约扣罚公式也未标定。实现返回 `NOT_IMPLEMENTED`，等 #53 决定中止履历结构、扣罚基数/系数及现金不足行为后再补，避免以 0 处罚和 `penalty_pending` 伪报完成。
 
@@ -98,7 +106,7 @@
 
 ## 7. 测试
 
-`scripts/v4.test.mjs` 共 70 条；本轮与项目闭环相关的关键用例：
+`scripts/v4.test.mjs` 共 74 条；本轮与项目闭环相关的关键用例：
 
 1. 到期强制交付：未达门槛在结算周自动交付，`deadline`、按完成度扣罚、归档并移除项目；
 2. 到期交付：门槛达成按 `completed` 正常计价，不扣罚；
@@ -106,15 +114,16 @@
 4. 第 520 周：完成当周结算后锁 closing/time_limit，剩余项目转 `company_closed` 并可在关闭后结清；
 5. 事件保留：项目有 pending 时交付/关闭被拒，跨项目事件不被清理；
 6. 中止：契约未冻结时 `abort_work` 返回 `NOT_IMPLEMENTED`，项目、归属、账本与 Archive 均不变；
-7. 商业归属：BD 恒归公司、委员会净池按比例分账、电视倍率 1000/1250/1300 分档、代理费逐行对账；
+7. 商业归属：BD 毛收入与公司 50% 所得分开、委员会净池按比例分账、电视倍率 1000/1150/1250/1300 分档、代理 450/400/350‰ 分档与逐渠道独立累计、代理费逐行对账；
 8. 原创草稿：缺草稿/失效/有效三种路径，以及命令 12-14 的创建/采纳/拒绝；
 9. M1 输入边界：Staff 报酬字段与 `solvency.state` 缺失返回 `INVALID_INPUT`；
 10. §14.7 预检失败：无 pending 时整周回滚、不扣款、直接 closing/bankrupt；有 pending 时原子返回 `NOT_IMPLEMENTED`，不误删事件；
 11. INV-27：开工定岗、无监督拒绝、空缺/悬空/不合格校验、关键岗位锁定与原子替补；
 12. INV-29：未到期保留、到期 abandon 快照只执行一次、多项目稳定顺序、成本封顶与阶段失败原子性；
 13. 第 520 周 pending：原子拒绝非法终局，事件、项目归属与周数不变。
+14. DEC-COMM-003 非整除净池分配：取整规则未冻结时原子返回 `NOT_IMPLEMENTED`，不静默舍入、不写流水、不归档。
 
-本机 `.tools/emsdk` 可执行真实 WASM 构建；`npm run test:v4` 结果 **70/70**。
+本机 `.tools/emsdk` 可执行真实 WASM 构建；`npm run test:v4` 结果 **74/74**。
 
 ## 8. 里程碑判定（如实）
 
@@ -127,7 +136,7 @@
 
 **结论：不能宣称 M4 已验收。** 当前是把 M4 的商业结算核心接在 M2 主链路上；M2.5/M3 的缺口不补，M4 的“产业关系”只是一条单项目结算路径。
 
-**实现口径待 zm 确认**：①`closing → ended` 由“无在制项目”驱动（`close_company` 或最后一个 `finalize_delivery`）；②强制系数 600‰、扣罚 30%、评价修正 10 分、代理费 40%、电视总费用 60 万、草稿声望门槛 120/按 scale 预算均为 `[PLACEHOLDER]`，回执统一带 `rules_status=placeholder`；③`abort_work` 的扣罚基数/系数、现金不足行为与中止履历结构未冻结，当前返回 `NOT_IMPLEMENTED`；④破产/第 520 周遇到 pending 时，现有 Archive/EventState 没有合法的终局事件存放字段，当前原子返回 `NOT_IMPLEMENTED`；⑤事件升级门槛、载荷、二次超时硬罚与已升级标记未冻结，当前只实现到期 abandon 默认分支；⑥演出/作画/脚本职业转任监督的 direction/management 阈值仍待 #55 标定，当前仅允许天然具备资格的 director/animation_director/production_manager 任职。
+**实现口径待 zm 确认**：①`closing → ended` 由“无在制项目”驱动（`close_company` 或最后一个 `finalize_delivery`）；②强制系数 600‰、扣罚 30%、评价修正 10 分、电视总费用 60 万、草稿声望门槛 120/按 scale 预算均为 `[PLACEHOLDER]`，回执统一带 `rules_status=placeholder`；③`abort_work` 的扣罚基数/系数、现金不足行为与中止履历结构未冻结，当前返回 `NOT_IMPLEMENTED`；④破产/第 520 周遇到 pending 时，现有 Archive/EventState 没有合法的终局事件存放字段，当前原子返回 `NOT_IMPLEMENTED`；⑤事件升级门槛、载荷、二次超时硬罚与已升级标记未冻结，当前只实现到期 abandon 默认分支；⑥演出/作画/脚本职业转任监督的 direction/management 阈值仍待 #55 标定，当前仅允许天然具备资格的 director/animation_director/production_manager 任职；⑦通用前置商业成本输入字段与非整除净池分配取整规则未冻结，当前不新增成本字段，并在非整除分配时原子拒绝。代理 45/40/35%、电视 100/115/125/130% 与 BD 公司所得 50% 已由 DEC-COMM-001/002 与 DOMAIN_ARCHITECTURE §10.6 冻结，不再列为 placeholder。
 
 ## 9. 下一步
 

@@ -119,7 +119,7 @@ GameState {
 
 | 字段 | 类型 | 可空 | 状态 | 备注 |
 | --- | --- | --- | --- | --- |
-| `id mode investment channels opened_week deadline_week extension status common episodes plan` | — | 必填 | `实现` | `status ∈ planning/producing/delivering/settled` |
+| `id mode investment channels opened_week deadline_week extension status common episodes plan` | — | 必填 | `实现` | `status ∈ planning/producing/delivering/settled`；`channels` 为企划基线、委员会成员与已购电视服务的稳定并集 |
 | `delivery` | Json\|null | 是 | `实现` | 关闭/交付路径写入；完整载荷尚未冻结 |
 | `offer` | Json\|null | 是 | `实现` | 正式立项保存企划快照；内部实例化夹具可为 null |
 | `ip_id` | string\|null | 是 | `实现`（透传） | M0 §3 字段保留 |
@@ -178,7 +178,7 @@ GameState {
 
 - 同一命令内所有 id 全局唯一（INV-02，`claim_id`）。
 - 路径段用单数 `event`，category 用复数 `events`，登记 D-08。
-- DA §7.5 冻结 14 个当前 category；v4 代码目前只产出 `salary/operations/production/events`。`contract_received` 由 `start_work` 写入；`commercial_share_received` 与 `success_reward_received` 由交付结算写入。
+- DA §7.5 冻结 14 个当前 category；当前 v4 已产出 `salary/operations/production/events/contract_received/investment_paid/commercial_share_received/success_reward_received/penalty/distribution`。BD 公司所得与委员会净池份额均记 `commercial_share_received`，靠 `memo` 区分。
 - 定金锁定与签约抵扣必须继续使用 `investment_paid` 与 `contract_received` 两笔立项账，`deposit_paid` 只是 Market 对账快照，不是第二本账。
 
 ### 3.8 `EventState`
@@ -275,7 +275,7 @@ M0 §5 冻结 **23 条命令**。核心实际导出 **23 个绑定入口**：17 
 
 ### 4.1 未实现命令的回执
 
-M0 §6 的 `NOT_IMPLEMENTED` 已用于载荷尚未冻结的 `abort_work`，以及破产/第 520 周仍携带 pending 时的终局守卫。返回错误信封且不携带 `state`，不清事件、不关闭项目、不伪造处罚或归档。
+M0 §6 的 `NOT_IMPLEMENTED` 已用于载荷尚未冻结的 `abort_work`、破产/第 520 周仍携带 pending 时的终局守卫，以及非整除委员会净池分配。返回错误信封且不携带 `state`，不清事件、不关闭项目、不伪造处罚或归档、不静默舍入。
 
 ### 4.2 通用信封
 
@@ -322,6 +322,9 @@ report {
 - 破产回执使用 `mode="bankrupt"`、`bankrupt=true`、`skipped=true`、`gap`，`works/staff/settlements` 为空，`funds.delta=0`。
 - `funds.costs` 只有 3 个键，与 14 类 category 不对应，登记 D-13。
 - `report` 不是 DA §9.4 的 `WeekReceipt`；后者是前端派生读模型，边界见 D-14。
+- 交付/结清的 `report.settlements[]` 同时记录 `bd_gross`（BD/DVD 毛收入）与 `bd_revenue`（公司 50% 所得）；`commercial_revenue` 为全部开放窗口毛收入，`committee_pool` 为非 BD 净池，`commercial_share + investor_share = committee_pool`。
+- 外部代理按 DEC-COMM-001 使用 450/400/350‰；当前“同类成功合作”从 Archive 中 `end_reason=completed` 且对应渠道 `net>0` 的已完成作品派生，不新增持久化计数字段。
+- 非整除净池分配的取整顺序与余数归属尚未冻结，出现时原子返回 `NOT_IMPLEMENTED`；通用前置商业成本输入字段亦未冻结，登记 D-16。
 
 ### 5.2 其余命令回执
 
@@ -432,6 +435,7 @@ M0 §4 共 **29 条**。当前 `validate()` 实际断言 **16 条**：`INV-01/02
 | D-13 | report 成本分解 | B | §5.1 | 建议按 category 汇总 |
 | D-14 | report/WeekReceipt 边界 | B/C | §5.1 | report 为结算回执，WeekReceipt 为前端派生 |
 | D-15 | resolve_event 回执效果 | B | §5.2 | 建议增补，不改变业务规则 |
+| D-16 | 前置商业成本输入与净池分配舍入 | B/C | §5.1；M4 对账 fixture §6 | 输入字段、取整顺序和余数归属未冻结；当前不新增字段，非整除分配原子拒绝 |
 
 ---
 

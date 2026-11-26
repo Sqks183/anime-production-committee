@@ -469,6 +469,7 @@
     ],
     "report.settlements[]": [
       "archived",
+      "bd_gross",
       "bd_revenue",
       "channels",
       "committee_pool",
