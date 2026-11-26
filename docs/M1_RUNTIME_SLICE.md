@@ -1,6 +1,6 @@
 # M1 运行时切片：能跑一周
 
-> 状态：M1 实现中（内核 + 状态骨架 + 单周结算 + 财务最小切片 + 质量评级与聚合已可运行；交付、事件、危机未实现）。2026-11-25 按 PR #42 复审修正质量模型、不变式、维度权重与公共制作传递，见 §11
+> 状态：**M1 已完成并通过出口验收（2026-11-26）**。本文件记录 M1 v4 运行时切片及后续补丁；交付、事件、Archive、完整存档 round-trip 与破产终局按后续阶段实现。2026-11-25 按 PR #42 复审修正质量模型、不变式、维度权重与公共制作传递，见 §11
 > 契约依据：[M0_CONTRACT_FREEZE.md](M0_CONTRACT_FREEZE.md)、[DOMAIN_ARCHITECTURE.md](DOMAIN_ARCHITECTURE.md)
 > 路线依据：[DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md) 的 M1 条
 > 分支：`feat/v4-m1-runtime`
@@ -31,7 +31,7 @@ npm run test:v4      # 构建 v4 模块 + 跑 25 条契约测试
 
 | M1 出口 | 状态 | 证据 |
 | --- | --- | --- |
-| v4 状态结构与校验 | ✅ 部分 | 已校验 INV-01/02（全局唯一）/03（含公共项）/04/05(间接)/06/07/09（必须 producing）/11（严格上周或 null）/12/16/21/25；其余随 M2 领域补齐 |
+| v4 状态结构与校验 | ✅（M1 范围） | M1 必需状态与输入字段已校验；员工 `fatigue`、`morale` 缺失时拒绝输入（PR #111）；超出 M1 的领域不变式随 M2 等阶段补齐 |
 | 纯规则内核 | ✅ | 产能、分派、质量增量、磨合 |
 | 坐标式随机 | ✅ | `draw(seed, week, stream, purpose, index)`，与调用顺序无关 |
 | 正常周结算最小切片 | ✅ | 工资/运营/制作费预检 → 原子记账 → 分派与产出 → 疲劳士气；无事件、无交付（M2 补） |
@@ -220,7 +220,7 @@ npm run test:v4      # 构建 v4 模块 + 跑 25 条契约测试
 
 ### 11.6 测试执行情况
 
-本机没有 Emscripten，`npm run test:v4` 仍无法直接执行。为拿到真实结果，本轮用 MSVC 19.51 把 `model.cpp / kernel.cpp / runtime.cpp` 与一个临时 JSON CLI 编成本地可执行文件，用同一份 `scripts/v4.test.mjs` 正文（只替换调用壳）跑完 **25/25**。该壳不进入仓库；正式证据仍以 `npm run test:v4` 为准，需在有 emsdk 的环境复跑一次。
+M1 集成阶段本机曾使用 MSVC 19.51 的临时 JSON CLI 对当时测试正文跑完 **25/25**；该结果仅作补充证据。合并后的 PR #111 head 已由官方 CI 在 emsdk 环境完成 `Build v4 module and run contract tests`，并通过数据字典与文档检查，正式 Emscripten 验证已取得。
 
 ## 12. 集成方案（#42 / #45）
 
@@ -231,3 +231,16 @@ npm run test:v4      # 构建 v4 模块 + 跑 25 条契约测试
 3. 用新分支开正式 PR（base = `main`），#42 关闭或标记 superseded。
 4. #45 以新 head 为 base 重放；它只加 `event.hpp/.cpp` 与三处钩子，差异范围保持纯事件域。
 5. 集成前在有 emsdk 的环境跑 `npm run test:v4`，把输出贴到 PR；本轮的 MSVC 结果只作为本机可复现证据。
+
+
+## 13. 输入契约补丁（2026-11-26）
+
+员工的 `fatigue` 与 `morale` 是周结算产能计算的直接输入。虽然反序列化结构为它们提供默认值，但存档缺少字段时不得静默按 0 继续运行。
+
+- `decode_state` 在统一入口要求每名员工同时提供 `fatigue`、`morale`；缺失返回 `INVALID_INPUT`。
+- 回归测试分别删除两个字段，并验证 `assign_staff`、`advance_week`、`hash_state` 均拒绝输入。
+- 测试同时验证原始合法状态的 `state_hash` 不变。
+- 不迁移旧分支中的 `project_fee` 检查：当前主线字段为 `signing_fee`，且已在入口要求。
+- 不重复迁移 `finance.solvency` 检查：当前主线已经要求该对象及其状态字段。
+
+本补丁仅补齐员工状态必填校验，不改变员工数值规则、周结算公式或 M2 生命周期。PR #111 已合并；其 head 的官方 Emscripten 构建与 v4 合约测试、数据字典校验、文档结构检查均通过。

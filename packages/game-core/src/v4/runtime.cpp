@@ -276,6 +276,7 @@ GameState decode_state(const Json& request) {
         require(member, "talent_type", "staff[]");
         require(member, "signing_fee", "staff[]");
         require(member, "weekly_salary", "staff[]");
+        // fatigue / morale 会直接影响周结算产能；不能让反序列化默认值掩盖坏存档。
         require(member, "fatigue", "staff[]");
         require(member, "morale", "staff[]");
         require(member, "departure_warning", "staff[]");
