@@ -37,15 +37,6 @@ int ability_value(const Staff& staff, const std::string& ability) {
     return index < 0 ? 0 : staff.abilities[static_cast<std::size_t>(index)];
 }
 
-std::uint32_t hash_text(const std::string& text) {
-    std::uint32_t value = 2166136261U;
-    for (const char ch : text) {
-        value ^= static_cast<std::uint8_t>(ch);
-        value *= 16777619U;
-    }
-    return value;
-}
-
 struct FlatItem {
     const WorkItem* item = nullptr;
     std::string episode_id;
@@ -75,6 +66,16 @@ bool target_hit(const Project& work, const std::string& episode_id, const std::s
 
 }  // namespace
 
+// FNV-1a 32 位。purpose 坐标的统一入口（runtime 招聘/市场与测试 oracle 共用同一算法）。
+std::uint32_t hash_text(const std::string& text) {
+    std::uint32_t value = 2166136261U;
+    for (const char ch : text) {
+        value ^= static_cast<std::uint8_t>(ch);
+        value *= 16777619U;
+    }
+    return value;
+}
+
 std::uint32_t draw(std::uint32_t seed, int week, Stream stream, std::uint32_t purpose, std::uint32_t index) {
     std::uint64_t mixed = 0x9E3779B97F4A7C15ULL;
     mixed ^= static_cast<std::uint64_t>(seed) * 0x9E3779B97F4A7C15ULL;
@@ -99,6 +100,17 @@ std::string staff_specialty(const Staff& staff) {
         {"animator", "animation"},
         {"production_manager", "management"},
         {"postproduction", "postproduction"},
+        // DEC-STAFF-006 八职业（招聘候选的身份标签）。主能力映射与
+        // scripts/lib/recruit-oracle.mjs 的 PROFESSION_ABILITY 提案一致，
+        // 最终映射表由员工/制作模块细化（DISC-11）。
+        {"作画", "drawing"},
+        {"演出", "direction"},
+        {"脚本", "planning"},
+        {"摄影", "postproduction"},
+        {"监督", "direction"},
+        {"音乐", "postproduction"},
+        {"声优", "postproduction"},
+        {"美术", "drawing"},
     };
     const auto hit = by_role.find(staff.role);
     if (hit != by_role.end()) return hit->second;
@@ -329,7 +341,10 @@ std::array<int, kDimensionCount> quality_caps(const Project& work, const WorkIte
 }
 
 bool is_supervisor(const std::string& role) {
-    return role == "director" || role == "animation_director" || role == "production_manager";
+    // DEC-STAFF-008：基础职业为监督者天然具备任职资格；演出/作画/脚本的
+    // direction+management 转任阈值属 DISC-11 待标定，不在此猜测。
+    return role == "director" || role == "animation_director" || role == "production_manager" ||
+           role == "监督";
 }
 
 bool hands_over_item(int prior_work_done, int work_total, bool prior_contributed, const std::string& role) {

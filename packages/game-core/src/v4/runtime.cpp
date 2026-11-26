@@ -270,23 +270,55 @@ GameState decode_state(const Json& request) {
     if (!state.at("staff").is_array() || !state.at("works").is_array()) {
         throw Json::type_error::create(302, "staff / works 必须是数组", nullptr);
     }
-    for (const auto& member : state.at("staff")) {
-        require(member, "id", "staff[]");
-        require(member, "name", "staff[]");
-        require(member, "role", "staff[]");
-        require(member, "employment", "staff[]");
-        require(member, "abilities", "staff[]");
-        require(member, "experience", "staff[]");
-        require(member, "potential", "staff[]");
-        require(member, "revealed_potential", "staff[]");
-        require(member, "talent_type", "staff[]");
-        require(member, "signing_fee", "staff[]");
-        require(member, "weekly_salary", "staff[]");
+    const auto require_staff = [&require](const Json& member, const std::string& where) {
+        require(member, "id", where);
+        require(member, "name", where);
+        require(member, "role", where);
+        require(member, "employment", where);
+        require(member, "abilities", where);
+        require(member, "experience", where);
+        require(member, "potential", where);
+        require(member, "revealed_potential", where);
+        require(member, "talent_type", where);
+        require(member, "signing_fee", where);
+        require(member, "weekly_salary", where);
         // fatigue / morale 会直接影响周结算产能；不能让反序列化默认值掩盖坏存档。
-        require(member, "fatigue", "staff[]");
-        require(member, "morale", "staff[]");
-        require(member, "departure_warning", "staff[]");
-        require(member, "assignment_work_id", "staff[]");
+        require(member, "fatigue", where);
+        require(member, "morale", where);
+        require(member, "departure_warning", where);
+        require(member, "assignment_work_id", where);
+    };
+    for (const auto& member : state.at("staff")) require_staff(member, "staff[]");
+    // 招聘聚合（§14.13.1）：与 staff 名册分离，但字段同样必填——缺键会被
+    // from_json 读成空池/零保底，等于静默改写招聘事实。
+    require(state, "recruitment", "state");
+    const Json& recruitment = state.at("recruitment");
+    require(recruitment, "pool", "recruitment");
+    require(recruitment, "pity", "recruitment");
+    require(recruitment, "last_scout_week", "recruitment");
+    if (!recruitment.at("pool").is_array()) {
+        throw Json::type_error::create(302, "recruitment.pool 必须是数组", nullptr);
+    }
+    require(recruitment.at("pity"), "since_sr", "recruitment.pity");
+    require(recruitment.at("pity"), "since_ssr", "recruitment.pity");
+    if (!recruitment.at("pity").at("since_sr").is_number_integer() ||
+        !recruitment.at("pity").at("since_ssr").is_number_integer()) {
+        throw Json::type_error::create(302, "recruitment.pity 计数必须是整数", nullptr);
+    }
+    if (!recruitment.at("last_scout_week").is_null() && !recruitment.at("last_scout_week").is_number_integer()) {
+        throw Json::type_error::create(302, "recruitment.last_scout_week 必须是整数或 null", nullptr);
+    }
+    for (const auto& candidate : recruitment.at("pool")) {
+        require(candidate, "staff", "recruitment.pool[]");
+        require(candidate, "expires_week", "recruitment.pool[]");
+        require(candidate, "origin", "recruitment.pool[]");
+        if (!candidate.at("expires_week").is_null() && !candidate.at("expires_week").is_number_integer()) {
+            throw Json::type_error::create(302, "recruitment.pool[].expires_week 必须是整数或 null", nullptr);
+        }
+        if (!candidate.at("origin").is_string()) {
+            throw Json::type_error::create(302, "recruitment.pool[].origin 必须是字符串", nullptr);
+        }
+        require_staff(candidate.at("staff"), "recruitment.pool[].staff");
     }
     const auto require_item = [&require](const Json& item) {
         for (const char* key : {"id", "key", "ability", "work_total", "work_done", "deliver_at", "deps",
@@ -429,6 +461,189 @@ bool replace_supervisor_post(GameState& state, const std::string& work_id, const
     return true;
 }
 
+// ---- 招聘（M0 §14.13.1 / DEC-STAFF-006/007）----
+// 生成逻辑逐位镜像 scripts/lib/recruit-oracle.mjs（规则样本）：坐标式随机、
+// 无计数器入档；保底计数只存 recruitment.pity。数值全部 [PLACEHOLDER]，
+// 由 #59/#58 标定；改规则先改用例与 M0 §14.13，再改这里。
+constexpr std::int64_t kScoutFee = 50000;          // [PLACEHOLDER]
+constexpr int kScoutCount = 1;                     // [PLACEHOLDER]
+constexpr int kScoutWindowWeeks = 2;               // [PLACEHOLDER] 讨论范围 1–2 周
+constexpr int kPoolCap = 6;                        // [PLACEHOLDER] 常规池上限
+constexpr int kRotateCount = 2;                    // [PLACEHOLDER] 每周部分轮换数
+constexpr int kSsrRate = 30;                       // [PLACEHOLDER] 千分比
+constexpr int kSrRate = 150;                       // [PLACEHOLDER] 千分比
+constexpr int kPitySr = 10;                        // [PLACEHOLDER] 未冻结
+constexpr int kPitySsr = 50;                       // [PLACEHOLDER] 未冻结
+constexpr int kSigningFeePerAbility = 1000;        // [PLACEHOLDER]
+constexpr int kSalaryBase = 20000;                 // [PLACEHOLDER]
+constexpr int kSalaryPerPrimary = 300;             // [PLACEHOLDER]
+// [PLACEHOLDER] 核心编制基础值；DEC-COMPANY-003 成长里程碑与人数数值待标定，
+// 里程碑解锁前按固定基础编制执行，不在此猜测成长曲线。
+constexpr int kCoreStaffCapacityBase = 6;
+
+constexpr const char* kProfessions[8] = {"作画", "演出", "脚本", "摄影", "监督", "音乐", "声优", "美术"};
+constexpr const char* kTalentArchetypes[8] = {"burst_drain", "steady_floor", "mentor_boost", "team_smooth",
+                                              "fast_push", "deadline_calm", "slow_polish", "genre_specialist"};
+
+bool is_profession(const std::string& role) {
+    for (const char* profession : kProfessions) {
+        if (role == profession) return true;
+    }
+    return false;
+}
+
+// 职业主能力走 kernel::staff_specialty 的同一张映射表（DEC-STAFF-006 提案），
+// 不在 runtime 另写一份，避免两处漂移。
+std::string profession_ability(const std::string& profession) {
+    Staff probe;
+    probe.role = profession;
+    return kernel::staff_specialty(probe);
+}
+
+std::uint32_t purpose_recruit() { return kernel::hash_text("recruit"); }
+std::uint32_t purpose_recruit_regular() { return kernel::hash_text("recruit_regular"); }
+std::uint32_t purpose_recruit_scout() { return kernel::hash_text("recruit_scout"); }
+
+std::string hex32(std::uint32_t value) {
+    char buffer[9];
+    std::snprintf(buffer, sizeof(buffer), "%x", value);
+    return std::string(buffer);
+}
+
+struct GeneratedCandidate {
+    Staff staff;
+    std::string tier;   // n / sr / ssr（只用于保底推进，不入档）
+};
+
+// 候选内部子坐标 index*16+k（k=0..15），与 oracle generateCandidate 逐位一致。
+GeneratedCandidate generate_candidate(std::uint32_t seed, int week, int index, std::uint32_t purpose,
+                                      const std::optional<std::string>& forced_profession, const Pity& pity) {
+    const auto sub = [&](int k) {
+        return kernel::draw(seed, week, kernel::Stream::staff, purpose,
+                            static_cast<std::uint32_t>(index * 16 + k));
+    };
+    GeneratedCandidate result;
+    Staff& member = result.staff;
+    member.role = forced_profession ? *forced_profession
+                                    : kProfessions[sub(1) % 8];
+    const std::string primary_ability = profession_ability(member.role);
+
+    const std::uint32_t roll = sub(0) % 1000;
+    if (roll < static_cast<std::uint32_t>(kSsrRate) || pity.since_ssr >= kPitySsr) {
+        result.tier = "ssr";
+    } else if (roll < static_cast<std::uint32_t>(kSrRate) || pity.since_sr >= kPitySr) {
+        result.tier = "sr";
+    } else {
+        result.tier = "n";
+    }
+    const int primary_base = result.tier == "ssr" ? 65 : (result.tier == "sr" ? 45 : 20);
+    const int primary_span = result.tier == "ssr" ? 36 : 31;
+    const int primary = primary_base + static_cast<int>(sub(2) % static_cast<std::uint32_t>(primary_span));
+
+    int ability_sum = 0;
+    for (int i = 0; i < kAbilityCount; ++i) {
+        const bool is_primary = kAbilities[static_cast<std::size_t>(i)] == primary_ability;
+        const int value = is_primary ? primary : 5 + static_cast<int>(sub(3 + i) % 41);
+        member.abilities[static_cast<std::size_t>(i)] = value;
+        ability_sum += value;
+        // 注意：潜力子坐标固定 k=9（与 oracle 一致），不按能力维度展开。
+        const int gain = is_primary ? 10 + static_cast<int>(sub(9) % 31) : static_cast<int>(sub(9) % 41);
+        member.potential[static_cast<std::size_t>(i)] = std::min(100, value + gain);
+    }
+    member.id = "cand_" + hex32(purpose) + "_" + std::to_string(week) + "_" + std::to_string(index);
+    member.name = member.role + "_" + std::to_string(week) + "_" + std::to_string(index);
+    member.employment = "core";
+    member.talent_type = kTalentArchetypes[sub(15) % 8];
+    member.signing_fee = ability_sum * kSigningFeePerAbility;
+    member.weekly_salary = kSalaryBase + primary * kSalaryPerPrimary;
+    member.fatigue = 0;
+    member.morale = 60;
+    return result;
+}
+
+Pity advance_pity(const Pity& pity, const std::string& tier) {
+    Pity next;
+    next.since_sr = tier == "n" ? pity.since_sr + 1 : 0;
+    next.since_ssr = tier == "ssr" ? 0 : pity.since_ssr + 1;
+    return next;
+}
+
+// 窗口语义：expires_week 是首个不可签约周，进入该周开局即移除；regular 不受影响。
+std::vector<PoolCandidate> expire_candidates(const std::vector<PoolCandidate>& pool, int week) {
+    std::vector<PoolCandidate> alive;
+    for (const auto& candidate : pool) {
+        if (candidate.origin == "scout" && candidate.expires_week && week >= *candidate.expires_week) continue;
+        alive.push_back(candidate);
+    }
+    return alive;
+}
+
+// 常规池部分轮换：先到期清理，再确定性选 kRotateCount 个常规槽替换；
+// 未选中候选逐字段不变；scout 候选不参与轮换。轮换生成不带保底计数（与 oracle 一致）。
+std::vector<PoolCandidate> rotate_pool(const std::vector<PoolCandidate>& pool, std::uint32_t seed, int week) {
+    const auto alive = expire_candidates(pool, week);
+    std::vector<PoolCandidate> regulars;
+    std::vector<PoolCandidate> scouts;
+    for (const auto& candidate : alive) {
+        if (candidate.origin == "regular") regulars.push_back(candidate);
+        else scouts.push_back(candidate);
+    }
+    std::set<int> slots;
+    const int rotate = std::min(kRotateCount, static_cast<int>(regulars.size()));
+    for (int i = 0; i < rotate; ++i) {
+        slots.insert(static_cast<int>(kernel::draw_below(seed, week, kernel::Stream::staff, purpose_recruit_regular(),
+                                                         static_cast<std::uint32_t>(i),
+                                                         static_cast<std::uint32_t>(regulars.size()))));
+    }
+    std::vector<PoolCandidate> kept;
+    for (std::size_t i = 0; i < regulars.size(); ++i) {
+        if (slots.count(static_cast<int>(i)) == 0) kept.push_back(regulars[i]);
+    }
+    for (const int slot : slots) {
+        auto generated = generate_candidate(seed, week, slot, purpose_recruit(), std::nullopt, Pity{});
+        PoolCandidate candidate;
+        candidate.staff = std::move(generated.staff);
+        candidate.origin = "regular";
+        kept.push_back(std::move(candidate));
+    }
+    if (kept.size() > static_cast<std::size_t>(kPoolCap)) kept.resize(static_cast<std::size_t>(kPoolCap));
+    kept.insert(kept.end(), scouts.begin(), scouts.end());
+    return kept;
+}
+
+// 开局常规池：第 0 周 purpose=recruit、index 0..pool_cap-1，保底计数从零起。
+Recruitment initial_recruitment(std::uint32_t seed) {
+    Recruitment recruitment;
+    for (int i = 0; i < kPoolCap; ++i) {
+        auto generated = generate_candidate(seed, 0, i, purpose_recruit(), std::nullopt, Pity{});
+        PoolCandidate candidate;
+        candidate.staff = std::move(generated.staff);
+        candidate.origin = "regular";
+        recruitment.pool.push_back(std::move(candidate));
+    }
+    return recruitment;
+}
+
+int core_staff_capacity(const GameState& state) {
+    (void)state;   // 里程碑解锁待 DEC-COMPANY-003 标定，当前只有基础编制。
+    return kCoreStaffCapacityBase;
+}
+
+int core_staff_count(const GameState& state) {
+    int count = 0;
+    for (const auto& member : state.staff) {
+        if (member.employment == "core") ++count;
+    }
+    return count;
+}
+
+const PoolCandidate* find_candidate(const GameState& state, const std::string& staff_id) {
+    for (const auto& candidate : state.recruitment.pool) {
+        if (candidate.staff.id == staff_id) return &candidate;
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 // ---------------- 校验 ----------------
@@ -478,6 +693,39 @@ std::vector<std::string> validate(const GameState& state) {
                 error("INV-11 last_participation.week 必须是上一周或 null: " + member.id);
             }
         }
+    }
+
+    // 招聘池（§14.13.1）：候选不是员工——不进名册约束（INV-09/10/11 不适用），
+    // 但 id 仍走全局唯一集合，且不得与名册员工重叠；包装字段语义在这里拦住。
+    for (const auto& candidate : state.recruitment.pool) {
+        claim_id(candidate.staff.id, "candidate");
+        if (!one_of_text(candidate.origin, {"regular", "scout"})) {
+            error("INV-01 candidate.origin 非法: " + candidate.staff.id);
+        }
+        if (candidate.origin == "regular" && candidate.expires_week) {
+            error("INV-01 regular 候选不得带签约窗口: " + candidate.staff.id);
+        }
+        if (candidate.origin == "scout" && !candidate.expires_week) {
+            error("INV-01 scout 候选缺少 expires_week: " + candidate.staff.id);
+        }
+        for (int i = 0; i < kAbilityCount; ++i) {
+            const int ability = candidate.staff.abilities[static_cast<std::size_t>(i)];
+            const int potential = candidate.staff.potential[static_cast<std::size_t>(i)];
+            if (ability < 0 || ability > 100) error("INV-01 候选能力越界: " + candidate.staff.id);
+            if (potential < 0 || potential > 100) error("INV-01 候选潜力越界: " + candidate.staff.id);
+        }
+        if (candidate.staff.signing_fee < 0) error("INV-01 候选 signing_fee 不能为负: " + candidate.staff.id);
+        if (candidate.staff.weekly_salary <= 0) error("INV-01 候选 weekly_salary 必须为正: " + candidate.staff.id);
+        if (candidate.staff.assignment_work_id) {
+            error("INV-01 池中候选不得有项目归属: " + candidate.staff.id);
+        }
+    }
+    if (state.recruitment.pity.since_sr < 0 || state.recruitment.pity.since_ssr < 0) {
+        error("INV-01 recruitment.pity 计数不能为负");
+    }
+    if (state.recruitment.last_scout_week &&
+        (*state.recruitment.last_scout_week < 0 || *state.recruitment.last_scout_week > state.company.week)) {
+        error("INV-01 last_scout_week 越界");
     }
 
     std::set<std::string> work_ids;
@@ -1517,6 +1765,7 @@ std::string initialize(const std::string& input) {
         state.finance.balance = 2000000;
         state.market = initial_market();
         state.events = EventState{};
+        state.recruitment = initial_recruitment(seed);
         state.archive = Json{{"works", Json::array()}, {"series", Json::array()}, {"company_result", nullptr}};
 
         const auto errors = validate(state);
@@ -1700,6 +1949,175 @@ std::string assign_staff(const std::string& input) {
         } else {
             member->assignment_work_id.reset();
         }
+
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INVALID_STATE", errors.front()));
+        return encode(Json{{"state", state}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
+// M0 命令 6：scout(role?, focus_ability?)。每周至多一次（last_scout_week ≠ week），
+// 定向生成走 recruit_scout purpose 坐标；费用走 Finance operations 流水。
+std::string scout(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
+
+        std::optional<std::string> role;
+        std::optional<std::string> focus;
+        if (request.contains("role") && !request.at("role").is_null()) {
+            if (!request.at("role").is_string()) return encode(error_body("INVALID_INPUT", "role 必须是字符串"));
+            role = request.at("role").get<std::string>();
+            if (!is_profession(*role)) return encode(error_body("INVALID_INPUT", "role 必须是八职业之一"));
+        }
+        if (request.contains("focus_ability") && !request.at("focus_ability").is_null()) {
+            if (!request.at("focus_ability").is_string()) return encode(error_body("INVALID_INPUT", "focus_ability 必须是字符串"));
+            focus = request.at("focus_ability").get<std::string>();
+            if (ability_index(*focus) < 0) return encode(error_body("INVALID_INPUT", "focus_ability 不是合法能力"));
+        }
+        if (role && focus) return encode(error_body("INVALID_INPUT", "role 与 focus_ability 至多传一个"));
+        if (state.company.status != "running") return encode(error_body("INVALID_PHASE", "只有经营中的公司可以 scout"));
+        if (!state.events.pending.empty()) return encode(error_body("INVALID_PHASE", "有待处理事件时不能 scout"));
+        if (state.recruitment.last_scout_week && *state.recruitment.last_scout_week == state.company.week) {
+            return encode(error_body("INVALID_PHASE", "本周已经 scout 过"));
+        }
+        if (state.finance.balance < kScoutFee) return encode(error_body("INSUFFICIENT_FUNDS", "现金不足：scout 费用不足"));
+
+        const int week = state.company.week;
+        // 定向能力 → 职业：按 DEC-STAFF-006 顺序取第一个主能力匹配的职业（与 oracle 一致）。
+        std::optional<std::string> forced = role;
+        if (!forced && focus) {
+            for (const char* profession : kProfessions) {
+                if (profession_ability(profession) == *focus) {
+                    forced = std::string(profession);
+                    break;
+                }
+            }
+        }
+        Json added_ids = Json::array();
+        Pity pity = state.recruitment.pity;
+        for (int i = 0; i < kScoutCount; ++i) {
+            auto generated = generate_candidate(state.seed, week, i, purpose_recruit_scout(), forced, pity);
+            pity = advance_pity(pity, generated.tier);
+            PoolCandidate candidate;
+            candidate.staff = std::move(generated.staff);
+            candidate.expires_week = week + kScoutWindowWeeks;
+            candidate.origin = "scout";
+            added_ids.push_back(candidate.staff.id);
+            state.recruitment.pool.push_back(std::move(candidate));
+        }
+        state.recruitment.pity = pity;
+        state.recruitment.last_scout_week = week;
+        state.finance.entries.push_back(LedgerEntry{
+            "w" + std::to_string(week) + ".operations.scout", week, std::nullopt, "operations",
+            -kScoutFee, std::nullopt, "scout"});
+        state.finance.balance -= kScoutFee;
+
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INVALID_STATE", errors.front()));
+        return encode(Json{{"state", state}, {"added_ids", added_ids}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
+// M0 命令 5：hire_core(staff_id)。从招聘池解包加入核心名册，当周可分配（§14.4）；
+// signing_fee 通过 Finance 即时入账，首周周薪计入下一次周结算。
+std::string hire_core(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
+        if (!request.contains("staff_id") || !request.at("staff_id").is_string()) {
+            return encode(error_body("INVALID_INPUT", "staff_id 必须是字符串"));
+        }
+        const std::string staff_id = request.at("staff_id").get<std::string>();
+        if (state.company.status != "running") return encode(error_body("INVALID_PHASE", "只有经营中的公司可以签约"));
+        const PoolCandidate* candidate = find_candidate(state, staff_id);
+        if (candidate == nullptr) return encode(error_body("NOT_FOUND", "候选人不存在"));
+        const std::int64_t fee = candidate->staff.signing_fee;
+        if (state.finance.balance < fee) return encode(error_body("INSUFFICIENT_FUNDS", "现金不足：签约费不足"));
+        if (core_staff_count(state) >= core_staff_capacity(state)) {
+            return encode(error_body("CAPACITY_EXCEEDED", "核心编制已满"));
+        }
+
+        // 解包：只取 PoolCandidate.staff，expires_week/origin 是池包装字段，不得残留名册。
+        Staff member = candidate->staff;
+        auto& pool = state.recruitment.pool;
+        pool.erase(std::remove_if(pool.begin(), pool.end(),
+                                  [&staff_id](const PoolCandidate& entry) { return entry.staff.id == staff_id; }),
+                   pool.end());
+        state.staff.push_back(member);
+        const int week = state.company.week;
+        if (fee > 0) {
+            state.finance.entries.push_back(LedgerEntry{
+                "w" + std::to_string(week) + ".salary." + staff_id + ".signing", week, std::nullopt, "salary",
+                -fee, std::nullopt, "signing_fee"});
+            state.finance.balance -= fee;
+        }
+
+        const auto errors = validate(state);
+        if (!errors.empty()) return encode(error_body("INVALID_STATE", errors.front()));
+        return encode(Json{{"state", state}, {"staff_id", staff_id}});
+    } catch (const Json::exception&) {
+        return encode(error_body("INVALID_INPUT", "JSON 或字段类型无效"));
+    } catch (...) {
+        return encode(error_body("INTERNAL_ERROR", "内部错误"));
+    }
+}
+
+// M0 命令 7：dismiss_staff(staff_id)。移出名册+清空归属，不预付遣散费；
+// 解雇后 core ≥ 1；监督须先原子替换，无合格替补则关键岗位锁定（§14.8）。
+std::string dismiss_staff(const std::string& input) {
+    try {
+        const Json request = Json::parse(input);
+        GameState state = decode_state(request);
+        const auto input_errors = validate(state);
+        if (!input_errors.empty()) return encode(error_body("INVALID_STATE", input_errors.front()));
+        if (!request.contains("staff_id") || !request.at("staff_id").is_string()) {
+            return encode(error_body("INVALID_INPUT", "staff_id 必须是字符串"));
+        }
+        const std::string staff_id = request.at("staff_id").get<std::string>();
+        Staff* member = find_staff(state, staff_id);
+        if (member == nullptr) return encode(error_body("NOT_FOUND", "员工不存在"));
+        if (state.company.status != "running") return encode(error_body("INVALID_PHASE", "只有经营中的公司可以解雇"));
+        if (member->employment != "core") return encode(error_body("INVALID_INPUT", "仅核心员工可解雇"));
+        if (core_staff_count(state) <= 1) return encode(error_body("INVALID_PHASE", "解雇后至少保留 1 名核心员工"));
+
+        // INV-12 现行校验要求 contributors 引用在籍员工，而冻结文本只要求"参与过"。
+        // 离职员工的历史引用语义待 #53 裁决（缺口已登记 #7）；在此之前拒绝解雇
+        // 有制作参与记录的员工，而不是删改 contributors 或放宽校验。
+        bool has_contribution = false;
+        for (const auto& work : state.works) {
+            walk_items(work, [&](const WorkItem& item) {
+                if (std::find(item.contributors.begin(), item.contributors.end(), staff_id) != item.contributors.end()) {
+                    has_contribution = true;
+                }
+            });
+        }
+        if (has_contribution) {
+            return encode(error_body("INVALID_PHASE", "该员工已有制作参与记录，历史引用语义待裁决，暂不可解雇"));
+        }
+
+        for (const auto& work : state.works) {
+            if (work.status != "producing" || !work.supervisor_staff_id || *work.supervisor_staff_id != staff_id) continue;
+            if (!replace_supervisor_post(state, work.id, staff_id)) {
+                return encode(error_body("INVALID_PHASE", "监督关键岗位锁定：同项目与公司空闲名册中无合格替补"));
+            }
+        }
+        auto& roster = state.staff;
+        roster.erase(std::remove_if(roster.begin(), roster.end(),
+                                    [&staff_id](const Staff& entry) { return entry.id == staff_id; }),
+                     roster.end());
 
         const auto errors = validate(state);
         if (!errors.empty()) return encode(error_body("INVALID_STATE", errors.front()));
@@ -1982,6 +2400,9 @@ std::string advance_week(const std::string& input) {
         }
 
         state.company.week = week + 1;
+        // 招聘池周步骤（§14.13.1）：进入新周先清理到期 scout 窗口，再部分轮换常规池。
+        // 破产路径在阶段 2 已提前返回，不会走到这里。
+        state.recruitment.pool = rotate_pool(state.recruitment.pool, state.seed, week + 1);
         events_report["expired"] = expired;
 
         const auto post_errors = validate(state);

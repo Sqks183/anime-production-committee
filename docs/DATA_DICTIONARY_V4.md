@@ -48,7 +48,7 @@ GameState {
   seed: uint32
   company: Company
   staff: Staff[]
-  recruitment: Recruitment        // future_contract；当前 runtime 尚未产出
+  recruitment: Recruitment        // Staff 域招聘聚合（M0 §14.13.1）
   works: Project[]
   suppliers: Supplier[]
   contracts: OutsourceContract[]
@@ -67,13 +67,13 @@ GameState {
 | `seed` | uint32 | 否 | 默认 `0`，无任何校验，静默改变随机输入 | `待裁决` D-05 |
 | `company` | Company | **是** | `INVALID_INPUT` | `实现` |
 | `staff` | Staff[] | **是** | `INVALID_INPUT` | `实现` |
-| `recruitment` | Recruitment | 当前无解析要求 | — | `future_contract`（§3.12） |
+| `recruitment` | Recruitment | **是**（`pool` 数组、`pity` 双计数、`last_scout_week` 必填；池候选按 Staff 必填键检查） | `INVALID_INPUT` | `实现`（§3.12） |
 | `works` | Project[] | **是** | `INVALID_INPUT` | `实现` |
 | `finance` | Finance | **是** | `INVALID_INPUT` | `实现`；含 reserved fields |
 | `events` | EventState | **是**（且 `events.pending` 必须是数组） | `INVALID_INPUT` | `实现` |
 | `suppliers` `contracts` `partners` `committees` `market` `archive` | Json | 否 | 缺失取默认（数组 `[]`、对象 `{}`），内容零校验 | `待实现`（见 §3.10 与 §3.11） |
 
-`recruitment` 是 M0 §14.13 已冻结的目标根字段，但当前 runtime 尚未实现。审计同时检查文档包含该字段、机器基线将其登记为 `future_contract`，并禁止它悄悄进入当前 `paths`。
+`recruitment` 按 M0 §14.13.1 实现：机器基线把 `state.recruitment.*` 登记进当前 `paths`，解析必填探针覆盖聚合与池包装字段；池中候选不是员工，不进名册约束（INV-09/10/11），但 id 走全局唯一集合（INV-02）。
 
 **不存在的字段**（v3 遗产，禁止复活）与派生值不入存档清单，见 M0 §2。`project_fee` 属于 `historical_fields`，不是 V4 reserved field。
 
@@ -90,7 +90,7 @@ GameState {
 | `id` `name` `founded_week` `week` `status` `reputation` `reputation_log` | — | 否 | M0 §3 必填 | `实现` |
 | `end_reason` | string\|null | 是（仅 `running` 为 null） | M0 §3 | `实现` |
 | `facilities` | Facility[] | 是（可空数组） | §14.7 阶段 2 的设施维护费、§14.9 扩容的数据前提 | `待实现`——代码无此字段 |
-| `core_staff_capacity` | int | — | §14.9：由成长里程碑单调推导，不绑设施 | `待实现`，派生值不入存档 |
+| `core_staff_capacity` | int | — | §14.9：由成长里程碑单调推导，不绑设施 | `实现`（[PLACEHOLDER] 基础编制 6）；里程碑数值待 DEC-COMPANY-003 标定，派生值不入存档 |
 | `status` 取值 | `running/closing/ended` | — | `runtime.cpp` 校验 | `实现` |
 | `week` ∈ [0,520] ∧ `running ⇒ week<520` | — | — | INV-21 | `实现` |
 | `reputation_log[]` | `{week, reason, delta, after}` | — | DA §7.2 | `实现` |
@@ -171,7 +171,9 @@ GameState {
 | 来源 | id 模式 | category | work_id | memo |
 | --- | --- | --- | --- | --- |
 | 周薪 | `w{week}.salary.{staff_id}` | `salary` | null | 员工名 |
+| 签约费（hire_core） | `w{week}.salary.{staff_id}.signing` | `salary` | null | signing_fee |
 | 公司运营 | `w{week}.operations` | `operations` | null | 公司运营 |
+| Scout 费用 | `w{week}.operations.scout` | `operations` | null | scout |
 | 项目制作 | `w{week}.production.{work_id}` | `production` | work_id | 强度值 |
 | 事件选项 `cost` | `w{week}.event.{event_id}.{work_id}` | `events` | work_id | 事件 id |
 | 事件 `funds` 效果 | `w{week}.event.{event_id}.{work_id}.e{effectIndex}` | `events` | work_id | 事件 id |
@@ -216,9 +218,9 @@ GameState {
 
 `Facility`、`temporary_contract` 内部字段与 `WorkRecord` 全量字段的载荷尚未在 M0 冻结，按 D-07/D-10 跟踪。`Project.investment{percent,total,paid}`、`Project.extension`、`Project.delivery` 已由当前命令写入并实际使用，但其完整长期契约仍随对应批次收敛，不再标记为“命令未实现”。
 
-### 3.12 Q3/Q4 `future_contract`
+### 3.12 Q3/Q4 契约落地状态
 
-以下规则已经冻结，但当前 runtime 未实现，**不得进入当前 JSON Shape 的 `paths`**：
+**Recruitment（M0 §14.13.1，已实现）**：
 
 ```text
 Recruitment {
@@ -227,23 +229,31 @@ Recruitment {
   last_scout_week: uint | null
 }
 PoolCandidate { staff: Staff, expires_week: uint | null, origin: "regular" | "scout" }
+```
 
+- pool 候选不是公司员工，不参与周结算、不计薪；hire 解包后 `expires_week/origin` 不得残留在 Staff。
+- 常规招聘池每周部分轮换（周结算固定步骤，先清理到期窗口再替换部分常规槽）；scout 候选不参与常规轮换，只按各自窗口到期。Scout 每周至多一次（`last_scout_week ≠ week`）；候选 `expires_week` 是首个不可签约周，regular 候选为 `null`。
+- 生成逻辑与随机坐标逐位镜像 `scripts/lib/recruit-oracle.mjs`（规则样本）；池容量、轮换数、窗口周数、概率与费用全部 `[PLACEHOLDER]`，由 #59/#58 标定。职业→主能力映射沿用 DEC-STAFF-006 提案（DISC-11 细化前不改）。
+- 员工报酬统一 `signing_fee + weekly_salary`，不再使用 `project_fee`；签约费走 Finance `salary` 流水（`w{week}.salary.{staff_id}.signing`），scout 费用走 `operations`（`w{week}.operations.scout`），见 §3.7。
+- `dismiss_staff` 现行 INV-12 校验要求 contributors 引用在籍员工，冻结文本只要求"参与过"；有制作参与记录的员工暂拒解雇（`INVALID_PHASE`），离职历史引用语义待 #53 裁决（缺口登记 #7），不删改 contributors、不放宽校验。
+
+**Offer 生命周期（仍为 `future_contract`，不得进入当前 JSON Shape 的 `paths`）**：
+
+```text
 Offer 新增：expires_week, locked_until, lock_used, deposit_paid, offer_source_type, deposit_basis
 ```
 
 - 市场槽位初始 4、最大 10；同一企划 id 终身唯一。
-- 常规招聘池每周部分轮换；Scout 每周至多一次；候选 `expires_week` 是首个不可签约周，regular 候选为 `null`。
 - `lock_offer(offer_id)` 是命令 23；第 W 周成功锁定后覆盖 W/W+1，W+2 开局失效。
 - 同一企划终身只能锁定一次；到期释放槽位、定金不退，`lock_used` 保持 true。
 - 普通企划定金 5%、IP 上门企划 10%，按 Offer 生成时固定的 `deposit_basis` 计算；`offer_source_type` 与 `deposit_basis` 必须随 Offer 快照保存，后续预算调整不追溯改变定金。
 - 正式签约时定金 100% 抵扣；Finance 保留 `investment_paid/contract_received` 两笔账，不重复记录定金。
--  pool 候选不是公司员工，不参与周结算、不计薪；hire 解包后 `expires_week/origin` 不得残留在 Staff。
 
 ---
 
 ## 4. 命令矩阵
 
-M0 §5 冻结 **23 条命令**。核心实际导出 **23 个绑定入口**：17 个已接入的 §5 命令、3 个测试/内部别名、3 个状态/内容工具。文档命令数与实现覆盖度必须分开，不能继续使用旧的 22 条基线。
+M0 §5 冻结 **23 条命令**。核心实际导出 **26 个绑定入口**：20 个已接入的 §5 命令、3 个测试/内部别名、3 个状态/内容工具。文档命令数与实现覆盖度必须分开，不能继续使用旧的 22 条基线。
 
 | # | 命令 | 入口 | 输入（实测必填） | 主要错误码（实测） | 回执（实测） | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -251,9 +261,9 @@ M0 §5 冻结 **23 条命令**。核心实际导出 **23 个绑定入口**：17 
 | 2 | `start_work(offer_id, mode, percent, committee_partner_ids)` | ✅ | `state` + 命令参数 | `NOT_FOUND/INVALID_INPUT/INVALID_PHASE/INVALID_STATE/INSUFFICIENT_FUNDS` | `{state, work_id, committee_id}` | `实现`；定金 100% 抵扣见 §3.12 |
 | 3 | `set_work_plan(work_id, plan)` | ✅ | `state, work_id, plan` | `INVALID_INPUT/NOT_FOUND/INVALID_PHASE` | `{state}` | `实现` |
 | 4 | `assign_staff(staff_id, work_id\|null)` | ✅ | `state, staff_id, work_id` | `NOT_FOUND/INVALID_PHASE/INVALID_STATE` | `{state}` | `实现`；监督原子 Swap/Replace |
-| 5 | `hire_core(staff_id)` | ❌ | — | — | — | `待实现`；从 Recruitment 解包 |
-| 6 | `scout(role?, focus_ability?)` | ❌ | — | — | — | `待实现`；每周至多一次 |
-| 7 | `dismiss_staff(staff_id)` | ❌ | — | — | — | `待实现` |
+| 5 | `hire_core(staff_id)` | ✅ | `state, staff_id`（池中候选 id） | `NOT_FOUND/INVALID_PHASE/INSUFFICIENT_FUNDS/CAPACITY_EXCEEDED` | `{state, staff_id}` | `实现`；从 Recruitment 解包，当周可分配（§14.4）；编制 [PLACEHOLDER] |
+| 6 | `scout(role?, focus_ability?)` | ✅ | `state`；`role/focus_ability` 至多一个 | `INVALID_INPUT/INVALID_PHASE/INSUFFICIENT_FUNDS` | `{state, added_ids}` | `实现`；每周至多一次；窗口/费用 [PLACEHOLDER] |
+| 7 | `dismiss_staff(staff_id)` | ✅ | `state, staff_id` | `NOT_FOUND/INVALID_INPUT/INVALID_PHASE` | `{state}` | `实现`；监督原子替换；有制作参与记录者暂拒（§3.12 INV-12 缺口） |
 | 8 | `hire_temporary(work_id, candidate_id)` | ❌ | — | — | — | `待实现` |
 | 9 | `sign_outsourcing(work_id, item_id, supplier_id, work_total, mode)` | ❌ | — | — | — | `待实现` |
 | 10 | `deliver_work(work_id)` | ✅ | `state, work_id` | `NOT_FOUND/INVALID_PHASE/GATE_UNMET/INVALID_STATE` | `{state, report}` | `实现`；pending 守卫拒绝交付 |
@@ -489,7 +499,8 @@ npm run test:v4 && npm run audit:v4
 
 | 字段 | 写入点 | 唯一性 | 备注 |
 | --- | --- | --- | --- |
-| Staff 静态字段与 `signing_fee/weekly_salary` | initialize；招聘未实现 | 唯一 | 不再使用 `project_fee` |
+| Staff 静态字段与 `signing_fee/weekly_salary` | initialize；hire_core 解包入册 | 唯一 | 不再使用 `project_fee` |
+| `recruitment.pool/pity/last_scout_week` | initialize；scout/hire_core；advance_week 轮换 | Staff 域唯一 | M0 §14.13.1；dismiss_staff 只移名册不动池 |
 | `fatigue/morale` | advance_week 与事件效果 | 多写 + 代写 | P1-G2 |
 | `experience` | advance_week | 唯一 | 事件效果不包含 exp |
 | `assignment_work_id` | start_work/assign_staff；事件替换；交付/关闭释放 | 唯一 | INV-09/INV-27 |
