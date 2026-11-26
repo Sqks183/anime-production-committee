@@ -482,6 +482,7 @@
       "investor_share",
       "net_received",
       "penalty",
+      "penalty_waived",
       "quality_score",
       "rating",
       "rules_status",
