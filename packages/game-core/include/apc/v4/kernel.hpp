@@ -27,6 +27,8 @@ enum class Stream : std::uint32_t {
 
 std::uint32_t draw(std::uint32_t seed, int week, Stream stream, std::uint32_t purpose, std::uint32_t index);
 std::uint32_t draw_below(std::uint32_t seed, int week, Stream stream, std::uint32_t purpose, std::uint32_t index, std::uint32_t bound);
+// FNV-1a 32 位文本哈希：purpose 坐标派生（如 hash_text("recruit_scout")）。
+std::uint32_t hash_text(const std::string& text);
 
 // ---- 产能 ----
 // 员工某能力方向上的周产能，单位千分比（1000 = 1 人周）。

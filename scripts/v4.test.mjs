@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { validateCard } from './lib/event-schema.mjs'
+import { generateCandidate, scout as oracleScout, rotatePool, PURPOSE } from './lib/recruit-oracle.mjs'
 
 // v4 M1 契约测试：直接加载 emcc 构建的模块，全部通过 JSON 字符串接口调用。
 // 依赖 build/v4/v4.mjs（npm run build:v4 生成）。
@@ -2602,4 +2603,199 @@ test('INV-27 跨项目调动普通成员不破坏两个项目的监督', () => {
   assert.ok(allItems(advanced, 'work_02').some((item) => item.work_done > 0))
   assert.equal(advanced.staff.find((member) => member.id === 'staff_dir').assignment_work_id, 'work_01')
   assert.equal(advanced.staff.find((member) => member.id === 'staff_pm').assignment_work_id, 'work_02')
+})
+
+// ---- 招聘（M0 命令 5/6/7，§14.13.1）：与 scripts/lib/recruit-oracle.mjs 逐位对拍 ----
+
+const rich = (state) => {
+  const copy = JSON.parse(JSON.stringify(state))
+  copy.finance.opening_funds += 50_000_000
+  copy.finance.balance += 50_000_000
+  return copy
+}
+
+const scoutCtx = (state, extra = {}) => ({
+  seed: state.seed,
+  week: state.company.week,
+  company_status: state.company.status,
+  pending_count: state.events.pending.length,
+  last_scout_week: state.recruitment.last_scout_week,
+  balance: state.finance.balance,
+  pity: state.recruitment.pity,
+  ...extra
+})
+
+test('initialize 招聘池与 oracle 逐候选一致', () => {
+  for (const seed of [42, 20261127]) {
+    const state = ok('initialize', { seed }).state
+    assert.equal(state.recruitment.pool.length, 6)
+    assert.deepEqual(state.recruitment.pity, { since_sr: 0, since_ssr: 0 })
+    assert.equal(state.recruitment.last_scout_week, null)
+    state.recruitment.pool.forEach((candidate, index) => {
+      assert.equal(candidate.origin, 'regular')
+      assert.equal(candidate.expires_week, null)
+      const expected = generateCandidate(seed, 0, index, { purpose: PURPOSE.recruit })
+      assert.deepEqual(candidate.staff, expected.staff)
+    })
+  }
+})
+
+test('scout 成功：候选/保底/窗口/流水与 oracle 一致，同周第二次拒绝', () => {
+  const state = ok('initialize', { seed: 42 }).state
+  const result = ok('scout', { state })
+  const expected = oracleScout(scoutCtx(state), state.recruitment.pool)
+  assert.equal(expected.error, null)
+  assert.deepEqual(result.added_ids, expected.added_ids)
+  assert.deepEqual(result.state.recruitment.pool, expected.pool)
+  assert.deepEqual(result.state.recruitment.pity, expected.pity)
+  assert.equal(result.state.recruitment.last_scout_week, 0)
+  const added = result.state.recruitment.pool.find((candidate) => candidate.staff.id === result.added_ids[0])
+  assert.equal(added.origin, 'scout')
+  assert.equal(added.expires_week, 2)
+  const entry = result.state.finance.entries.find((item) => item.id === 'w0.operations.scout')
+  assert.equal(entry.category, 'operations')
+  assert.equal(entry.amount, -50000)
+  assert.equal(result.state.finance.balance, 2000000 - 50000)
+  assert.equal(call('scout', { state: result.state }).error.code, 'INVALID_PHASE')
+})
+
+test('scout 定向：role 与 focus_ability 的强制职业与 oracle 一致', () => {
+  const state = ok('initialize', { seed: 42 }).state
+  const byRole = ok('scout', { state, role: '脚本' })
+  assert.deepEqual(byRole.state.recruitment.pool, oracleScout(scoutCtx(state, { role: '脚本' }), state.recruitment.pool).pool)
+  const byFocus = ok('scout', { state, focus_ability: 'drawing' })
+  assert.deepEqual(byFocus.state.recruitment.pool, oracleScout(scoutCtx(state, { focus_ability: 'drawing' }), state.recruitment.pool).pool)
+  assert.equal(byFocus.state.recruitment.pool.at(-1).staff.role, '作画')
+  assert.equal(call('scout', { state, role: '作画', focus_ability: 'drawing' }).error.code, 'INVALID_INPUT')
+  assert.equal(call('scout', { state, role: 'nope' }).error.code, 'INVALID_INPUT')
+  assert.equal(call('scout', { state, focus_ability: 'nope' }).error.code, 'INVALID_INPUT')
+})
+
+test('scout 守卫：pending 事件与资金不足', () => {
+  let state = rich(setupTiny(20261127))
+  for (let i = 0; i < 24 && state.events.pending.length === 0; i++) {
+    state = ok('advance_week', { state }).state
+  }
+  assert.ok(state.events.pending.length > 0, '夹具应在 24 周内产生待处理事件')
+  assert.equal(call('scout', { state }).error.code, 'INVALID_PHASE')
+  const poor = ok('initialize', { seed: 42 }).state
+  poor.finance.opening_funds = 1000
+  poor.finance.balance = 1000
+  assert.equal(call('scout', { state: poor }).error.code, 'INSUFFICIENT_FUNDS')
+})
+
+test('scout 跨周：保底计数推进与 oracle 一致', () => {
+  let state = ok('initialize', { seed: 42 }).state
+  const first = ok('scout', { state })
+  state = ok('advance_week', { state: first.state }).state
+  const second = ok('scout', { state })
+  const expected = oracleScout(scoutCtx(state), state.recruitment.pool)
+  assert.deepEqual(second.state.recruitment.pool, expected.pool)
+  assert.deepEqual(second.state.recruitment.pity, expected.pity)
+  assert.equal(second.state.recruitment.last_scout_week, 1)
+})
+
+test('hire_core：解包入册、包装字段不残留、签约费流水', () => {
+  const state = ok('initialize', { seed: 42 }).state
+  const candidate = state.recruitment.pool[0]
+  const result = ok('hire_core', { state, staff_id: candidate.staff.id })
+  assert.equal(result.staff_id, candidate.staff.id)
+  assert.equal(result.state.staff.length, 4)
+  const hired = result.state.staff.find((member) => member.id === candidate.staff.id)
+  assert.deepEqual(hired, candidate.staff)
+  assert.equal('expires_week' in hired, false)
+  assert.equal('origin' in hired, false)
+  assert.equal(result.state.recruitment.pool.length, 5)
+  assert.ok(!result.state.recruitment.pool.some((entry) => entry.staff.id === candidate.staff.id))
+  const entry = result.state.finance.entries.find((item) => item.id === `w0.salary.${candidate.staff.id}.signing`)
+  assert.equal(entry.category, 'salary')
+  assert.equal(entry.amount, -candidate.staff.signing_fee)
+  assert.equal(result.state.finance.balance, 2000000 - candidate.staff.signing_fee)
+  assert.equal(call('hire_core', { state, staff_id: 'nobody' }).error.code, 'NOT_FOUND')
+})
+
+test('hire_core：资金不足与核心编制上限', () => {
+  const poor = ok('initialize', { seed: 42 }).state
+  poor.finance.opening_funds = 0
+  poor.finance.balance = 0
+  assert.equal(call('hire_core', { state: poor, staff_id: poor.recruitment.pool[0].staff.id }).error.code, 'INSUFFICIENT_FUNDS')
+  let state = rich(ok('initialize', { seed: 42 }).state)
+  for (let i = 0; i < 3; i++) {
+    state = ok('hire_core', { state, staff_id: state.recruitment.pool[0].staff.id }).state
+  }
+  assert.equal(state.staff.length, 6)
+  assert.equal(call('hire_core', { state, staff_id: state.recruitment.pool[0].staff.id }).error.code, 'CAPACITY_EXCEEDED')
+})
+
+test('hire_core 新员工当周可分配（§14.4）', () => {
+  let state = setupTiny(42)
+  const candidate = state.recruitment.pool[0]
+  state = ok('hire_core', { state, staff_id: candidate.staff.id }).state
+  state = ok('assign_staff', { state, staff_id: candidate.staff.id, work_id: 'work_01' }).state
+  assert.equal(state.staff.find((member) => member.id === candidate.staff.id).assignment_work_id, 'work_01')
+})
+
+test('dismiss_staff：移出名册、不预付遣散费', () => {
+  let state = ok('initialize', { seed: 42 }).state
+  const candidate = state.recruitment.pool[0]
+  state = ok('hire_core', { state, staff_id: candidate.staff.id }).state
+  const entriesBefore = state.finance.entries.length
+  const balanceBefore = state.finance.balance
+  const result = ok('dismiss_staff', { state, staff_id: candidate.staff.id })
+  assert.equal(result.state.staff.length, 3)
+  assert.ok(!result.state.staff.some((member) => member.id === candidate.staff.id))
+  assert.equal(result.state.finance.entries.length, entriesBefore)
+  assert.equal(result.state.finance.balance, balanceBefore)
+  assert.equal(call('dismiss_staff', { state, staff_id: 'nobody' }).error.code, 'NOT_FOUND')
+})
+
+test('dismiss_staff：解雇后至少保留 1 名核心员工', () => {
+  let state = ok('initialize', { seed: 42 }).state
+  state = ok('dismiss_staff', { state, staff_id: 'staff_ka' }).state
+  state = ok('dismiss_staff', { state, staff_id: 'staff_anim' }).state
+  assert.equal(state.staff.length, 1)
+  assert.equal(call('dismiss_staff', { state, staff_id: 'staff_dir' }).error.code, 'INVALID_PHASE')
+})
+
+test('dismiss_staff：监督关键岗位锁定与原子替换', () => {
+  const state = setupTiny(42)
+  assert.equal(supervisorOf(state, 'work_01'), 'staff_dir')
+  const locked = call('dismiss_staff', { state, staff_id: 'staff_dir' })
+  assert.equal(locked.error.code, 'INVALID_PHASE')
+  assert.match(locked.error.message, /关键岗位锁定/)
+  const withBackup = addIdleSupervisor(state)
+  const replaced = ok('dismiss_staff', { state: withBackup, staff_id: 'staff_dir' })
+  assert.equal(supervisorOf(replaced.state, 'work_01'), 'staff_pm')
+  assert.ok(!replaced.state.staff.some((member) => member.id === 'staff_dir'))
+})
+
+test('dismiss_staff：有制作参与记录者暂拒（INV-12 历史引用缺口）', () => {
+  let state = setupTiny(42)
+  state = ok('assign_staff', { state, staff_id: 'staff_ka', work_id: 'work_01' }).state
+  state = ok('advance_week', { state }).state
+  assert.ok(allItems(state, 'work_01').some((item) => item.contributors.includes('staff_ka')))
+  const rejected = call('dismiss_staff', { state, staff_id: 'staff_ka' })
+  assert.equal(rejected.error.code, 'INVALID_PHASE')
+  assert.match(rejected.error.message, /参与记录/)
+})
+
+test('advance_week 招聘池周步骤：部分轮换与 oracle rotatePool 一致', () => {
+  const state = ok('initialize', { seed: 42 }).state
+  const advanced = ok('advance_week', { state }).state
+  const expected = rotatePool(state.recruitment.pool, 42, 1)
+  assert.deepEqual(advanced.recruitment.pool, expected.pool)
+  assert.equal(advanced.company.week, 1)
+})
+
+test('scout 窗口：expires_week 是首个不可签约周，regular 不受影响', () => {
+  let state = ok('initialize', { seed: 42 }).state
+  state = ok('scout', { state }).state
+  const scoutId = state.recruitment.pool.at(-1).staff.id
+  const poolAfterScout = state.recruitment.pool
+  state = ok('advance_week', { state }).state
+  assert.deepEqual(state.recruitment.pool, rotatePool(poolAfterScout, 42, 1).pool)
+  assert.ok(state.recruitment.pool.some((candidate) => candidate.staff.id === scoutId))
+  state = ok('advance_week', { state }).state
+  assert.ok(!state.recruitment.pool.some((candidate) => candidate.staff.id === scoutId))
+  assert.ok(state.recruitment.pool.every((candidate) => candidate.origin !== 'regular' || candidate.expires_week === null))
 })

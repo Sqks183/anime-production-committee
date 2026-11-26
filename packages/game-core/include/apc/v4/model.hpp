@@ -232,11 +232,30 @@ struct EventState {
     std::map<std::string, WorkEventState> per_work;
 };
 
+// ---- 招聘（M2，M0 §14.13.1：Staff 域唯一持有，池中候选不是公司员工）----
+struct Pity {
+    int since_sr = 0;
+    int since_ssr = 0;
+};
+
+struct PoolCandidate {
+    Staff staff;                          // 完整候选人实体，字段与名册 Staff 相同
+    std::optional<int> expires_week;      // 首个不可签约周；regular 为 null，scout 必填
+    std::string origin = "regular";       // regular / scout
+};
+
+struct Recruitment {
+    std::vector<PoolCandidate> pool;
+    Pity pity;
+    std::optional<int> last_scout_week;   // null = 从未 scout；只由 scout 命令写入
+};
+
 struct GameState {
     int version = kContractVersion;
     std::uint32_t seed = 0;
     Company company;
     std::vector<Staff> staff;
+    Recruitment recruitment;
     std::vector<Project> works;
     Json suppliers = Json::array();
     Json contracts = Json::array();
@@ -261,6 +280,8 @@ void to_json(Json& j, const Finance& value);
 void from_json(const Json& j, Finance& value);
 void to_json(Json& j, const EventState& value);
 void from_json(const Json& j, EventState& value);
+void to_json(Json& j, const Recruitment& value);
+void from_json(const Json& j, Recruitment& value);
 void to_json(Json& j, const GameState& value);
 void from_json(const Json& j, GameState& value);
 
