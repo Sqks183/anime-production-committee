@@ -1071,7 +1071,8 @@ struct SettlementOutcome {
     Json report = Json::object();
 };
 
-SettlementOutcome settle_project(GameState& state, Project& work, const std::string& end_reason, bool forced);
+SettlementOutcome settle_project(GameState& state, Project& work, const std::string& end_reason, bool forced,
+                                  bool forced_terminal = false);
 
 // 关闭公司前先在副本逐项预演结清，确保进入不可逆 closing 后仍有合法后继。
 SettlementOutcome close_company(GameState& state, const std::string& reason) {
@@ -1079,7 +1080,10 @@ SettlementOutcome close_company(GameState& state, const std::string& reason) {
     GameState preview = state;
     for (const auto& work : state.works) {
         Project* preview_work = find_work(preview, work.id);
-        const auto settlement = settle_project(preview, *preview_work, "company_closed", !preview_work->deliverable());
+        // 只有强制终局（破产 / 第 520 周）允许把扣罚压到可支付现金；主动关闭仍按原口径原子拒绝。
+        const bool forced_terminal = reason == "bankrupt" || reason == "time_limit";
+        const auto settlement =
+            settle_project(preview, *preview_work, "company_closed", !preview_work->deliverable(), forced_terminal);
         if (!settlement.ok) return settlement;
     }
     state.company.status = "closing";
@@ -1099,7 +1103,8 @@ SettlementOutcome close_company(GameState& state, const std::string& reason) {
 
 // 一次交付结算：质量聚合 → 评级 → 渠道收入 → 分账/奖励/扣罚 → 声望 → 委员会 →
 // Archive → 清理。调用方负责守卫（producing / 门槛 / 截止）与最终 validate。
-SettlementOutcome settle_project(GameState& state, Project& work, const std::string& end_reason, bool forced) {
+SettlementOutcome settle_project(GameState& state, Project& work, const std::string& end_reason, bool forced,
+                                  bool forced_terminal) {
     SettlementOutcome outcome;
     const int week = state.company.week;
     const std::string work_id = work.id;
@@ -1230,10 +1235,22 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     }
     // 强制交付扣罚：按门槛缺口比例扣合同预算的 kForcedPenaltyPermille‰。
     // 中止的违约扣罚系数未标定，记 0 并在回执标记 penalty_pending。
-    const std::int64_t penalty =
+    std::int64_t penalty =
         (!aborted && forced) ? budget * (1000 - gcp) / 1000 * kForcedPenaltyPermille / 1000
                              : static_cast<std::int64_t>(0);
     const std::int64_t company_revenue = bd_revenue + company_share + reward;
+    // #120：强制终局（破产 / 第 520 周）不能再让扣罚把现金推到负数，否则 INV-25 与
+    // §14.7「直接破产终局」互相矛盾，公司会被永久卡在无法关闭的状态。可支付额 = 现有现金 + 本次收入；
+    // 超出部分只在回执里记为 penalty_waived，不产生欠款、递延或负现金。
+    // [PLACEHOLDER] 破产终局扣罚封顶口径待 zm 在 #120 裁定；公式本身不变，只加可支付上限。
+    std::int64_t penalty_waived = 0;
+    if (forced_terminal && penalty > 0) {
+        const std::int64_t payable = state.finance.balance + company_revenue;
+        if (penalty > payable) {
+            penalty_waived = penalty - std::max<std::int64_t>(0, payable);
+            penalty = std::max<std::int64_t>(0, payable);
+        }
+    }
     const std::int64_t balance_after_settlement =
         state.finance.balance + company_revenue - penalty;
     if (balance_after_settlement < 0) {
@@ -1408,6 +1425,7 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
                           {"investor_share", investor_share},
                           {"success_reward", reward},
                           {"penalty", penalty},
+                          {"penalty_waived", penalty_waived},
                           {"total_costs", total_costs},
                           {"net_received", company_revenue - penalty},
                           {"channels", channel_report}};
@@ -1455,11 +1473,60 @@ bool apply_event_option(GameState& state, const PendingEvent& pending, const Eve
     return true;
 }
 
+// 默认消极/保守分支（M0 §14.11）：负向事件用 abandon；正向事件按内容规范必须有 accept 与
+// decline，保守分支即 decline。两者都没有时返回 nullptr，由调用方按非法状态拒绝。
 const EventOptionView* default_event_option(const PendingEvent& pending) {
     for (const auto& option : pending.options) {
         if (option.kind == "abandon") return &option;
     }
+    for (const auto& option : pending.options) {
+        if (option.kind == "decline") return &option;
+    }
     return nullptr;
+}
+
+// #120：强制终局的 pending 结清。破产与第 520 周已经没有玩家决策机会，但事件不能丢弃、
+// 也不能留下指向已关闭项目的悬空条目，因此逐条执行冻结快照里的默认保守分支：
+//   1. 顺序固定为 (work_id, event_id) 排序，与数组顺序、项目遍历顺序无关；
+//   2. 费用沿用自动结算的现金封顶，效果走同一条事件账本，不新增收入类目；
+//   3. 每条成功后才从 pending 移除；任一条失败由调用方回滚到阶段快照，不留半状态。
+// 结清明细复用 stage-7 已登记的 report.events.expired[] 形状（work_id/event_id/option_id/automatic），
+// 不新增持久字段；现金变化可由 Finance 流水对账，归档级索引字段名待 #53 冻结。
+bool settle_pending_for_terminal(GameState& state, int week, Json& expired, std::string& code,
+                                 std::string& message) {
+    std::vector<PendingEvent> ordered = state.events.pending;
+    std::sort(ordered.begin(), ordered.end(), [](const PendingEvent& a, const PendingEvent& b) {
+        if (a.work_id != b.work_id) return a.work_id < b.work_id;
+        return a.event_id < b.event_id;
+    });
+    for (const auto& pending : ordered) {
+        const EventOptionView* option = default_event_option(pending);
+        if (option == nullptr) {
+            code = "INVALID_STATE";
+            message = "终局事件缺少默认保守分支: " + pending.event_id;
+            return false;
+        }
+        if (!apply_event_option(state, pending, *option, week, true)) {
+            code = "INVALID_STATE";
+            message = "终局事件归属项目不存在: " + pending.work_id;
+            return false;
+        }
+        auto& events = state.events.pending;
+        const auto hit = std::find_if(events.begin(), events.end(), [&pending](const PendingEvent& item) {
+            return item.work_id == pending.work_id && item.event_id == pending.event_id;
+        });
+        if (hit == events.end()) {
+            code = "INVALID_STATE";
+            message = "终局事件重复处理: " + pending.event_id;
+            return false;
+        }
+        events.erase(hit);
+        expired.push_back(Json{{"work_id", pending.work_id},
+                               {"event_id", pending.event_id},
+                               {"option_id", option->id},
+                               {"automatic", true}});
+    }
+    return true;
 }
 
 }  // namespace
@@ -1767,12 +1834,17 @@ std::string advance_week(const std::string& input) {
         }
         const int64_t total_cost = salary_total + operations_total + production_total;
         if (state.finance.balance < total_cost) {
-            if (!state.events.pending.empty()) {
-                return encode(error_body("NOT_IMPLEMENTED",
-                                         "破产终局的 pending 转移/归档语义尚未冻结，不能清空事件或关闭其归属项目"));
-            }
             const int64_t gap = total_cost - state.finance.balance;
-            const int64_t balance = state.finance.balance;
+            // #120：破产是强制终局，不能因为还有 pending 就永久卡死。先按默认保守分支逐条结清，
+            // 再走 §14.7 的破产关闭；结清或关闭任一步失败都回到阶段 1 快照。
+            Json terminal_expired = Json::array();
+            if (!state.events.pending.empty()) {
+                std::string code;
+                std::string message;
+                if (!settle_pending_for_terminal(state, week, terminal_expired, code, message)) {
+                    return fail_stage(2, code, "破产终局 pending 结清失败: " + message);
+                }
+            }
             // §14.7：预检失败不扣款、不推进、不生产，回滚至阶段 1 快照并直接破产终局。
             const auto closing = close_company(state, "bankrupt");
             if (!closing.ok) {
@@ -1789,11 +1861,14 @@ std::string advance_week(const std::string& input) {
                                                {"bankrupt", true},
                                                {"skipped", true},
                                                {"gap", gap},
-                                               {"funds", Json{{"delta", 0}, {"balance", balance}}},
+                                               {"funds", Json{{"delta", state.finance.balance - snapshot.finance.balance},
+                                                              {"balance", state.finance.balance}}},
                                                {"works", Json::array()},
                                                {"staff", Json::array()},
                                                {"settlements", Json::array()},
-                                               {"events", Json{{"drawn", 0}, {"reason", "bankrupt"}}}}}});
+                                               {"events", Json{{"drawn", 0},
+                                                               {"reason", "bankrupt"},
+                                                               {"expired", terminal_expired}}}}}});
         }
 
         // ---- 阶段 3：刚性支出扣款与流水（唯一账本，逐条可归因）----
@@ -1967,10 +2042,16 @@ std::string advance_week(const std::string& input) {
         // 每个 producing 项目各自至多一条；已有待处理事件的项目不再追加。
         // 第 520 周先合法完成当周结算，再统一收尾：不再抽事件，剩余项目转 closing 结清。
         Json events_report = Json::object();
+        Json terminal_expired = Json::array();
         if (week + 1 >= kMaxWeek) {
+            // #120：第 520 周同样是强制终局。本周已到期的限时事件已在阶段 7 处理，
+            // 这里结清仍在 pending 的其余事件（默认保守分支），再关闭公司。
             if (!state.events.pending.empty()) {
-                return fail_stage(8, "NOT_IMPLEMENTED",
-                                  "第 520 周终局的 pending 转移/归档语义尚未冻结，不能清空事件或关闭其归属项目");
+                std::string code;
+                std::string message;
+                if (!settle_pending_for_terminal(state, week, terminal_expired, code, message)) {
+                    return fail_stage(8, code, "第 520 周终局 pending 结清失败: " + message);
+                }
             }
             const auto closing = close_company(state, "time_limit");
             if (!closing.ok) {
@@ -1983,6 +2064,8 @@ std::string advance_week(const std::string& input) {
         }
 
         state.company.week = week + 1;
+        // 阶段 7 的到期事件与阶段 8 的终局结清共用已登记的 expired 形状，按处理顺序合并。
+        for (const auto& item : terminal_expired) expired.push_back(item);
         events_report["expired"] = expired;
 
         const auto post_errors = validate(state);
@@ -2823,8 +2906,13 @@ std::string finalize_delivery(const std::string& input) {
         // 关闭路径的“强制”与否只看门槛是否达成：已完成的作品仍按正常交付计价，
         // 只有未达门槛才吃强制交付的商业折扣与扣罚。
         const bool forced = !work->deliverable();
+        // #120：破产 / 第 520 周这类强制终局才允许扣罚按可支付现金封顶；
+        // 主动关闭（voluntary）保持原口径，仍以“无法非负结清即原子拒绝”防止用关闭逃避扣罚。
+        const bool forced_terminal =
+            reason == "company_closed" &&
+            (state.company.end_reason == "bankrupt" || state.company.end_reason == "time_limit");
 
-        const auto outcome = settle_project(state, *work, reason, forced);
+        const auto outcome = settle_project(state, *work, reason, forced, forced_terminal);
         if (!outcome.ok) return encode(error_body(outcome.code, outcome.message));
 
         if (state.works.empty()) state.company.status = "ended";

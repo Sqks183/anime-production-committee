@@ -345,22 +345,113 @@ test('§14.7 预检失败：整周回滚并直接破产终局，不产生半结�
   assert.equal(findItem(result.state, 'work_01', 'common.series_comp').work_done, 0)
 })
 
-test('破产终局 pending：语义未冻结时原子拒绝，不清空事件不关闭归属', () => {
-  const state = terminalPendingState()
-  state.finance.entries.push({
-    id: 'w0.fixture.depletion', week: 0, work_id: null, category: 'operations',
-    amount: -state.finance.balance, counterparty: null, memo: 'terminal pending fixture'
-  })
-  state.finance.balance = 0
+test('#120 破产终局：pending 按默认保守分支结清，不再以 NOT_IMPLEMENTED 卡死', () => {
+  let state = setupTiny()
+  for (const staffId of ['staff_dir', 'staff_ka', 'staff_anim']) {
+    state = ok('assign_staff', { state, staff_id: staffId, work_id: 'work_01' }).state
+  }
+  // 本周需要 210000，只留 1000：预检失败即破产，事件结清只能动用剩余现金。
+  forceCash(state, 1000)
+  state.events.pending.push(terminalEvent('work_01', { cost: 400 }))
+
+  const result = ok('advance_week', { state })
+  assert.equal(result.report.mode, 'bankrupt')
+  assert.equal(result.report.events.reason, 'bankrupt')
+  assert.deepEqual(result.report.events.expired, [
+    { work_id: 'work_01', event_id: 'terminal_fixture', option_id: 'accept', automatic: true }
+  ])
+  assert.equal(result.report.funds.balance, 600)
+  assert.equal(result.report.funds.delta, -400)
+  assert.equal(result.state.events.pending.length, 0)
+  assert.equal(result.state.company.status, 'closing')
+  assert.equal(result.state.company.end_reason, 'bankrupt')
+  // 结清留痕可对账：事件流水进唯一账本，并归因到项目与事件。
+  const eventEntries = result.state.finance.entries.filter((entry) => entry.category === 'events')
+  assert.equal(eventEntries.length, 1)
+  assert.equal(eventEntries[0].work_id, 'work_01')
+  assert.equal(eventEntries[0].memo, 'terminal_fixture')
+  assert.equal(eventEntries[0].amount, -400)
+})
+
+test('#120 多项目 pending：按 (work_id,event_id) 稳定顺序结清，顺序不影响结果', () => {
+  const build = () => {
+    const state = forceCash(twoProjectsNearDeadline(), 1000)
+    // 故意倒序压入，验证结清顺序由排序决定而不是数组顺序。
+    state.events.pending.push(terminalEvent('work_b', { cost: 200, eventId: 'zz_late' }))
+    state.events.pending.push(terminalEvent('work_a', { cost: 100, eventId: 'aa_early' }))
+    return state
+  }
+  const first = ok('advance_week', { state: build() })
+  const second = ok('advance_week', { state: build() })
+
+  assert.deepEqual(first.report.events.expired.map((item) => `${item.work_id}/${item.event_id}`), [
+    'work_a/aa_early',
+    'work_b/zz_late'
+  ])
+  assert.equal(first.report.funds.balance, 700)
+  assert.equal(first.state.events.pending.length, 0)
+  assert.equal(first.state.company.end_reason, 'bankrupt')
+  assert.equal(ok('hash_state', { state: first.state }).hash, ok('hash_state', { state: second.state }).hash)
+})
+
+test('#120 终局结清沿用现金封顶：现金不足以支付默认分支时不产生负余额', () => {
+  let state = setupTiny()
+  for (const staffId of ['staff_dir', 'staff_ka', 'staff_anim']) {
+    state = ok('assign_staff', { state, staff_id: staffId, work_id: 'work_01' }).state
+  }
+  forceCash(state, 300)
+  state.events.pending.push(terminalEvent('work_01', { cost: 5000 }))
+
+  const result = ok('advance_week', { state })
+  assert.equal(result.report.events.expired.length, 1)
+  assert.equal(result.state.finance.entries.filter((entry) => entry.category === 'events')[0].amount, -300)
+  assert.equal(result.state.finance.balance, 0)
+  assert.equal(result.state.events.pending.length, 0)
+  assert.equal(result.state.company.end_reason, 'bankrupt')
+})
+
+test('#120 破产终局：在制合同项目的扣罚按可支付现金封顶，终局仍能合法完成', () => {
+  const state = forceCash(startedContract(), 1000)
+  state.events.pending.push(terminalEvent('work_01'))
+
+  const closed = ok('advance_week', { state })
+  assert.equal(closed.state.company.status, 'closing')
+  assert.equal(closed.state.company.end_reason, 'bankrupt')
+  assert.equal(closed.state.events.pending.length, 0)
+  assert.equal(closed.state.works[0].status, 'delivering')
+
+  // 关闭路径的结清在 finalize_delivery 落地：名义扣罚 360000（预算 120 万 × 缺口 100% × 30%），
+  // 只能收走「现有现金 + 本次商业收入」，其余记 penalty_waived。
+  const settled = ok('finalize_delivery', { state: closed.state, work_id: 'work_01' })
+  assert.equal(settled.report.penalty + settled.report.penalty_waived, 360000)
+  assert.ok(settled.report.penalty_waived > 0)
+  assert.equal(settled.state.finance.balance, 0, '扣罚不得把现金推成负数')
+  // 归档扣罚等于实付金额，与账本一致；不产生负现金或欠款。
+  assert.equal(settled.state.archive.works[0].finance_summary.penalty, settled.report.penalty)
+  const penaltyEntries = settled.state.finance.entries.filter((entry) => entry.category === 'penalty')
+  assert.equal(penaltyEntries.length, 1)
+  assert.equal(penaltyEntries[0].amount, -settled.report.penalty)
+})
+
+test('#120 终局结清失败时原子回滚：不留半状态、不清空事件', () => {
+  let state = setupTiny()
+  for (const staffId of ['staff_dir', 'staff_ka', 'staff_anim']) {
+    state = ok('assign_staff', { state, staff_id: staffId, work_id: 'work_01' }).state
+  }
+  // 只有 accept、没有 abandon/decline：没有可执行的默认保守分支。
+  state.events.pending.push(terminalEvent('work_01', { kind: 'accept' }))
+  state.finance.opening_funds = 1000
+  state.finance.balance = 1000
   const before = ok('hash_state', { state }).hash
+
   const blocked = call('advance_week', { state })
-  assert.equal(blocked.error.code, 'NOT_IMPLEMENTED')
-  assert.match(blocked.error.message, /pending.*尚未冻结/)
+  assert.equal(blocked.error.code, 'INVALID_STATE')
+  assert.match(blocked.error.message, /默认保守分支/)
   assert.equal('state' in blocked, false)
   assert.equal(ok('hash_state', { state }).hash, before)
   assert.equal(state.events.pending.length, 1)
-  assert.equal(state.works[0].status, 'producing')
   assert.equal(state.company.status, 'running')
+  assert.equal(state.works[0].status, 'producing')
 })
 
 test('v4 员工签约费只使用 signing_fee 口径', () => {
@@ -978,19 +1069,32 @@ function timedEventState() {
   return state
 }
 
-function terminalPendingState() {
-  const state = startedContract()
-  state.events.pending.push({
-    event_id: 'terminal_fixture',
+// 直接把现金压到目标值，同时保持 INV-16（余额 = 期初 + 流水合计）。
+function forceCash(state, target) {
+  const sum = state.finance.entries.reduce((acc, entry) => acc + entry.amount, 0)
+  state.finance.opening_funds = target - sum
+  state.finance.balance = target
+  return state
+}
+
+function terminalEvent(workId, options = {}) {
+  const { cost = 0, kind = 'abandon', eventId = 'terminal_fixture' } = options
+  return {
+    event_id: eventId,
     name: '终局夹具事件',
-    work_id: 'work_01',
+    work_id: workId,
     triggered_week: 0,
     expires_week: null,
     cooldown_weeks: 0,
     once_per_project: false,
     viewed: true,
-    options: [{ id: 'accept', label: '保守处理', kind: 'abandon', risk_hint: '', cost: 0, effects: [] }]
-  })
+    options: [{ id: 'accept', label: '保守处理', kind, risk_hint: '', cost, effects: [] }]
+  }
+}
+
+function terminalPendingState() {
+  const state = startedContract()
+  state.events.pending.push(terminalEvent('work_01'))
   return state
 }
 
@@ -1873,20 +1977,58 @@ test('M2 第 520 周：完成当周结算后锁 closing/time_limit，剩余项�
   assert.equal(outcome.result.negatives.length, 1)
 })
 
-test('第 520 周 pending：原子拒绝非法终局，保留事件与项目归属', () => {
+test('#120 第 520 周：pending 结清后再锁 closing/time_limit，事件不被清空丢弃', () => {
   const state = terminalPendingState()
   state.company.week = 519
   state.works[0].deadline_week = 600
   for (const member of state.staff) member.last_participation = null
-  const before = ok('hash_state', { state }).hash
-  const blocked = call('advance_week', { state })
-  assert.equal(blocked.error.code, 'NOT_IMPLEMENTED')
-  assert.match(blocked.error.message, /阶段 8.*pending/)
-  assert.equal('state' in blocked, false)
-  assert.equal(ok('hash_state', { state }).hash, before)
-  assert.equal(state.events.pending.length, 1)
-  assert.equal(state.works[0].status, 'producing')
-  assert.equal(state.company.week, 519)
+  const result = ok('advance_week', { state })
+  assert.equal(result.state.company.week, 520)
+  assert.equal(result.state.company.status, 'closing')
+  assert.equal(result.state.company.end_reason, 'time_limit')
+  assert.equal(result.state.works[0].status, 'delivering')
+  assert.equal(result.report.events.reason, 'company_closed')
+  assert.equal(result.state.events.pending.length, 0)
+  assert.deepEqual(result.report.events.expired.map((item) => item.event_id), ['terminal_fixture'])
+  assert.equal(result.report.events.expired[0].automatic, true)
+  assert.equal(result.report.funds.delta, result.state.finance.balance - state.finance.balance)
+})
+
+test('#120 第 520 周：阶段 7 到期事件与阶段 8 终局结清按处理顺序合并', () => {
+  const state = twoProjectsNearDeadline()
+  state.company.week = 519
+  for (const work of state.works) work.deadline_week = 600
+  for (const member of state.staff) member.last_participation = null
+  // 一条本周到期（阶段 7 处理），一条不限期（阶段 8 终局结清）；数组顺序故意颠倒。
+  const later = terminalEvent('work_b', { eventId: 'zz_later' })
+  later.triggered_week = 519
+  const early = terminalEvent('work_a', { eventId: 'aa_early' })
+  early.triggered_week = 519
+  early.expires_week = 519
+  state.events.pending.push(later, early)
+
+  const result = ok('advance_week', { state })
+  assert.equal(result.state.company.end_reason, 'time_limit')
+  assert.equal(result.state.events.pending.length, 0)
+  assert.deepEqual(result.report.events.expired.map((item) => item.event_id), ['aa_early', 'zz_later'])
+  assert.ok(result.report.events.expired.every((item) => item.automatic === true))
+})
+
+test('#120 结清/未结清状态都能 JSON 往返：不补字段、不推进周数、哈希不变', () => {
+  // 未结清：pending 仍在，往返后 viewed / expires_week 与哈希都不变。
+  const pendingState = timedEventState()
+  const pendingRoundTrip = JSON.parse(JSON.stringify(pendingState))
+  assert.equal(ok('hash_state', { state: pendingRoundTrip }).hash, ok('hash_state', { state: pendingState }).hash)
+  assert.equal(pendingRoundTrip.events.pending.length, 1)
+  assert.equal(pendingRoundTrip.events.pending[0].viewed, true)
+  assert.equal(pendingRoundTrip.events.pending[0].expires_week, pendingState.events.pending[0].expires_week)
+  assert.equal(pendingRoundTrip.company.week, pendingState.company.week)
+
+  // 已自动结清：阶段 7 处理后的状态往返同样稳定，不会因为结清而多出必填字段。
+  const settledState = ok('advance_week', { state: pendingState }).state
+  const settledRoundTrip = JSON.parse(JSON.stringify(settledState))
+  assert.equal(ok('hash_state', { state: settledRoundTrip }).hash, ok('hash_state', { state: settledState }).hash)
+  assert.equal(settledRoundTrip.events.pending.length, settledState.events.pending.length)
 })
 
 // ---------------- INV-27 监督岗位 ----------------
