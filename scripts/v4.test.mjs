@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { validateCard } from './lib/event-schema.mjs'
 
 // v4 M1 契约测试：直接加载 emcc 构建的模块，全部通过 JSON 字符串接口调用。
 // 依赖 build/v4/v4.mjs（npm run build:v4 生成）。
@@ -931,6 +932,27 @@ test('事件内容：非法卡被拒绝并定位到卡片与字段', () => {
     options: [{ ...card.options[0], kind: 'accept' }]
   }])
   assert.ok(noDefault.issues.some((issue) => issue.field === 'options' && issue.message.includes('默认分支')))
+
+  // #121：§14.11 一次升级字段未冻结，非空配置必须拒绝加载，不能静默忽略。
+  const unfrozenFields = [
+    ['escalation', { description: '升级', expires_weeks: 1, options: [], timeout_option_id: 'accept' }],
+    ['timeout_option_id', 'accept'],
+    ['escalation_note', '需要二次处理']
+  ]
+  for (const [field, value] of unfrozenFields) {
+    const candidate = { ...card, [field]: value }
+    const runtime = validate([candidate])
+    assert.ok(runtime.issues.some(
+      (issue) => issue.field === field && issue.message.includes('未冻结')))
+    const content = validateCard(candidate, 'fixture.json')
+    assert.ok(content.some(
+      (issue) => issue.field === field && issue.message.includes('未冻结')))
+  }
+  const nullPlaceholders = {
+    ...card, escalation: null, timeout_option_id: null, escalation_note: null
+  }
+  assert.equal(validate([nullPlaceholders]).ok, true)
+  assert.deepEqual(validateCard(nullPlaceholders, 'fixture.json'), [])
 
   const empty = ok('validate_event_catalog', { source: 'empty', catalog: { schema_version: 1, cards: [] } })
   assert.equal(empty.ok, false)
