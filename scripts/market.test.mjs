@@ -4,7 +4,7 @@ import {
   Stream, GENRES, SCALES, HEAT_LEVELS, DEFAULT_PARAMS,
   hashText, draw, drawBelow, PURPOSE,
   generateOffer, initialMarket, expireOffers, releaseExpiredLocks,
-  topUpMarket, weeklyMarketStep, lockOffer, depositBase, startWorkCash,
+  topUpMarket, weeklyMarketStep, lockOffer, depositBase, depositAmount, startWorkCash,
   isIdReuse, heatLevel,
 } from './lib/market-oracle.mjs'
 
@@ -29,7 +29,7 @@ test('draw 同坐标恒等、分量敏感、值域合法', () => {
 
 // ---- 企划生成 ----
 
-test('企划形状符合架构 §7.4 + §14.7 生命周期字段', () => {
+test('企划形状符合架构 §7.4 + §14.13 生命周期字段', () => {
   const offer = generateOffer(42, 3, 0)
   assert.ok(GENRES.includes(offer.genre))
   assert.ok(SCALES.includes(offer.scale))
@@ -40,6 +40,8 @@ test('企划形状符合架构 §7.4 + §14.7 生命周期字段', () => {
   assert.equal(offer.locked_until, null)
   assert.equal(offer.lock_used, false)
   assert.equal(offer.deposit_paid, 0)
+  assert.equal(offer.offer_source_type, 'market')
+  assert.equal(offer.deposit_basis, offer.contract_budget, '定金基数生成时固定')
 })
 
 test('企划 id 坐标决定：同周同 index 同 id，跨周不同（终身唯一基础）', () => {
@@ -83,22 +85,23 @@ test('补充受上限 10 约束；满员不补充', () => {
   assert.equal(r2.slots.length, 10)
 })
 
-test('自然过期边界：expires_week 当周有效，次周移除', () => {
+test('自然过期边界：expires_week 是失效周，该周开局移除', () => {
   const slots = [offer('e', 5)]
-  assert.equal(expireOffers(slots, 5).length, 1)
-  assert.equal(expireOffers(slots, 6).length, 0)
+  assert.equal(expireOffers(slots, 4).length, 1)
+  assert.equal(expireOffers(slots, 5).length, 0)
 })
 
-test('锁定保护：锁定期内自然过期不生效', () => {
+test('锁定保护：week < locked_until 期间自然过期不生效', () => {
   const slots = [offer('L', 4, 7)]
   assert.equal(expireOffers(slots, 6).length, 1)
-  assert.equal(expireOffers(slots, 7).length, 1)
+  assert.equal(expireOffers(slots, 7).length, 0, 'W+2 开局锁定失效')
 })
 
-test('锁定到期未接单：释放槽位，即使自然有效期未到', () => {
+test('锁定到期未接单：W+2 开局释放槽位，即使自然有效期未到', () => {
   const slots = [offer('L', 20, 7), offer('N', 20)]
+  assert.deepEqual(releaseExpiredLocks(slots, 6).map((o) => o.id), ['L', 'N'])
+  assert.deepEqual(releaseExpiredLocks(slots, 7).map((o) => o.id), ['N'])
   assert.deepEqual(releaseExpiredLocks(slots, 8).map((o) => o.id), ['N'])
-  assert.deepEqual(releaseExpiredLocks(slots, 7).map((o) => o.id), ['L', 'N'])
 })
 
 test('周结算市场步顺序：释放到期锁定 → 自然过期 → 补充', () => {
@@ -128,18 +131,36 @@ test('终身一次：lock_used=true 拒绝再锁，即使锁定已到期', () =>
   assert.equal(lockOffer(o, 10, 800000).error, 'INVALID_INPUT')
 })
 
-test('已过期企划不可锁定', () => {
+test('已过期企划不可锁定（expires_week 开局即不存在）', () => {
   assert.equal(lockOffer(offer('o', 8), 9, 100).error, 'NOT_FOUND')
+  assert.equal(lockOffer(offer('o', 8), 8, 100).error, 'NOT_FOUND', '边界：失效周当周不可锁')
+  assert.equal(lockOffer(offer('o', 8), 7, 100).error, null)
 })
 
-test('定金基数提案 = 生成时基础立项费用；抵扣 100% 不重复计成本', () => {
+test('定金档位已冻结：普通 5%、IP 上门 10%，按生成时固定的 deposit_basis', () => {
   const o = generateOffer(42, 3, 0)
-  assert.equal(depositBase(o), o.contract_budget)
+  assert.equal(depositBase(o), o.deposit_basis)
+  assert.equal(depositAmount(o), Math.floor(o.deposit_basis * 50 / 1000))
+  const ip = generateOffer(42, 3, 0, { sourceType: 'ip_visit' })
+  assert.equal(ip.offer_source_type, 'ip_visit')
+  assert.equal(depositAmount(ip), Math.floor(ip.deposit_basis * 100 / 1000))
+  const inflated = { ...o, contract_budget: o.contract_budget * 2 }
+  assert.equal(depositAmount(inflated), depositAmount(o), '后续预算调整不追溯改变定金')
+})
+
+test('抵扣 100% 仅限锁定期内；锁定期外不抵扣', () => {
+  const o = generateOffer(42, 3, 0)
   const locked = lockOffer(o, 3, 800000).offer
-  const cash = startWorkCash(locked, 10000000)
-  assert.equal(cash.deposit_applied, 800000)
-  assert.equal(cash.cash_due, 9200000)
-  const small = startWorkCash(locked, 500000)
+  assert.equal(locked.locked_until, 5)
+  const inLock = startWorkCash(locked, 10000000, 3)
+  assert.equal(inLock.deposit_applied, 800000)
+  assert.equal(inLock.cash_due, 9200000)
+  const lastWeek = startWorkCash(locked, 10000000, 4)
+  assert.equal(lastWeek.deposit_applied, 800000, 'W+1 仍有效')
+  const expired = startWorkCash(locked, 10000000, 5)
+  assert.equal(expired.deposit_applied, 0, 'W+2 开局锁定失效，不抵扣')
+  assert.equal(expired.cash_due, 10000000)
+  const small = startWorkCash(locked, 500000, 3)
   assert.equal(small.cash_due, 0)
   assert.equal(small.deposit_applied, 500000)
 })

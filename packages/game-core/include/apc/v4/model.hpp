@@ -14,6 +14,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -76,7 +77,7 @@ struct Staff {
     std::array<bool, kAbilityCount> revealed_potential{};
     std::string talent_type;
     int64_t weekly_salary = 0;
-    int64_t project_fee = 0;
+    int64_t signing_fee = 0;    // 一次性签约费；project_fee 已由 M0 §14.6 废弃
     int fatigue = 0;
     int morale = 0;
     bool departure_warning = false;
@@ -142,13 +143,19 @@ struct WorkPlan {
 struct Project {
     std::string id;
     Json offer;                            // 企划快照（M2 强类型化）
-    std::string mode = "contract";
-    Json investment = Json::object();
+    std::string mode = "contract";         // contract / committee
+    Json investment = Json::object();      // {percent,total,paid}；承制全 0
     std::vector<std::string> channels;
     int opened_week = 0;
     int deadline_week = 0;
     Json extension = Json::object();
     std::string status = "producing";      // planning / producing / delivering / settled
+    // INV-27/§14.8：监督是项目内岗位，不写进 Staff.role（DEC-STAFF-008），
+    // 也不用"归属里角色是监督者"推导——那样多人主责与原子换班都无法表达。
+    std::optional<std::string> supervisor_staff_id;
+    std::optional<std::string> ip_id;
+    std::optional<std::string> committee_id;
+    Json tv_service = nullptr;             // M4：{channel, paid_week, fee}
     CommonProduction common;
     std::vector<Episode> episodes;
     WorkPlan plan;
@@ -169,7 +176,7 @@ struct LedgerEntry {
 };
 
 struct Solvency {
-    std::string state = "normal";   // normal / crisis
+    std::string state = "normal";   // 当前仅 normal；crisis 为后续更新预留
     std::optional<int> since_week;
     std::optional<int> deadline_week;
     int64_t gap = 0;
@@ -179,8 +186,50 @@ struct Finance {
     int64_t opening_funds = 0;
     int64_t balance = 0;
     std::vector<LedgerEntry> entries;
-    Json loans = Json::array();     // M2.5
+    Json loans = Json::array();     // 后续更新预留，当前必须为空
     Solvency solvency;
+};
+
+// ---- 事件（M2，M0 §14.1：pending 是数组，不是全局单槽）----
+// 待处理事件按项目保留；同一项目同时最多一条。选项与效果快照随事件冻结，
+// 内容卡后续改版不会改变已经在盘上的选择（DEC-EVENT-001 / #50 审查）。
+struct EffectView {
+    std::string scope;    // instant / stage / project
+    std::string target;   // quality / work_done / fatigue / morale / funds
+    std::string stage;    // scope=stage 时的阶段；空表示当前阶段
+    int value = 0;
+};
+
+struct EventOptionView {
+    std::string id;
+    std::string label;
+    std::string kind;         // accept/abandon/overtime/decline（outsource/extension 预留但当前不可用）
+    std::string risk_hint;
+    int cost = 0;
+    std::vector<EffectView> effects;
+};
+
+struct PendingEvent {
+    std::string event_id;
+    std::string name;         // 快照：结算回执不依赖可能变化的内容目录
+    std::string work_id;
+    int triggered_week = 0;
+    std::optional<int> expires_week;
+    int cooldown_weeks = 0;
+    bool once_per_project = false;
+    bool viewed = false;      // INV-23：未查看阻塞周推进，查看不等于处理
+    std::vector<EventOptionView> options;
+};
+
+struct WorkEventState {
+    std::map<std::string, int> cooldowns;   // event_id -> 解锁周
+    std::vector<std::string> major_seen;    // 本项目已触发的重大事件 id
+};
+
+struct EventState {
+    std::vector<PendingEvent> pending;
+    std::optional<int> last_event_week;
+    std::map<std::string, WorkEventState> per_work;
 };
 
 struct GameState {
@@ -194,7 +243,7 @@ struct GameState {
     Json partners = Json::array();
     Json committees = Json::array();
     Json market = Json::object();
-    Json events = Json::object();
+    EventState events;
     Finance finance;
     Json archive = Json::object();
 };
@@ -210,6 +259,8 @@ void to_json(Json& j, const Project& value);
 void from_json(const Json& j, Project& value);
 void to_json(Json& j, const Finance& value);
 void from_json(const Json& j, Finance& value);
+void to_json(Json& j, const EventState& value);
+void from_json(const Json& j, EventState& value);
 void to_json(Json& j, const GameState& value);
 void from_json(const Json& j, GameState& value);
 

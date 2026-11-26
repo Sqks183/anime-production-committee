@@ -3,11 +3,11 @@
 // 用法: node scripts/check-market-cases.mjs [用例文件]
 //
 // 与 check-handover-cases.mjs 同定位：规则样本，不是运行时。
-// C++ 领域实现必须给出同一结论；改规则先改用例与 M0 §14.7，再改实现。
+// C++ 领域实现必须给出同一结论；改规则先改用例与 M0 §14.13，再改实现。
 import { readFileSync } from 'node:fs'
 import {
   initialMarket, topUpMarket, expireOffers, releaseExpiredLocks,
-  lockOffer, startWorkCash, isIdReuse, generateOffer, heatLevel, HEAT_LEVELS,
+  lockOffer, depositAmount, startWorkCash, isIdReuse, generateOffer, heatLevel, HEAT_LEVELS,
 } from './lib/market-oracle.mjs'
 
 const path = process.argv[2] || 'docs/fixtures/market_cases.json'
@@ -49,7 +49,9 @@ function actual(testCase) {
       }
     }
     case 'deduct':
-      return startWorkCash(input.offer, input.totalPayable)
+      return startWorkCash(input.offer, input.totalPayable, input.week)
+    case 'deposit':
+      return { deposit: depositAmount(input.offer) }
     case 'id_reuse':
       return { reuse: isIdReuse(input.id, input.historyIds) }
     case 'determinism': {

@@ -1,11 +1,15 @@
 // v4 市场规则参考实现（oracle，纯函数）。
 //
 // 定位同 scripts/check-handover-cases.mjs / recruit-oracle.mjs：规则样本，不是运行时。
-// C++ 领域实现必须给出与本模块一致的结论；改规则先改用例与 M0 §14.7，再改实现。
+// C++ 领域实现必须给出与本模块一致的结论；改规则先改用例与 M0 §14.13，再改实现。
 //
-// 契约依据：M0_CONTRACT_FREEZE §14.7.2（#53 裁决）、DECISION_LOG §17 Q4、
-// DESIGN_BACKLOG STATUS-49/51（初始 4/上限 10、每周自然补充、有效期 1–3 周、锁定保护）。
-// 数值全部 [PLACEHOLDER]（DEFAULT_PARAMS），由 #59 标定；锁定期两周为 Q4 已确认语义。
+// 契约依据：M0_CONTRACT_FREEZE §14.13.2（#53 裁决，PR #97 合入）、DECISION_LOG §17 Q4、
+// DATA_DICTIONARY_V4 §3.12、DESIGN_BACKLOG STATUS-49/51。
+// 已冻结语义：初始 4/上限 10、锁定期两周（W/W+1 有效，W+2 开局失效）、终身一次锁定、
+// 定金普通 5%/IP 上门 10% × deposit_basis（生成时固定，后续预算调整不追溯）、
+// 签约 100% 抵扣（仅锁定期内）、到期定金不退。
+// 生成参数（weekly_add、有效期分布等）仍为 [PLACEHOLDER]，由 #59 标定。
+// 危机机制已废除：守卫不含危机分支，CRISIS_COMMITMENT_BLOCKED 为废弃占位码。
 //
 // 随机原语与 kernel.cpp / recruit-oracle.mjs 同一算法（逐行 BigInt 镜像）。
 // 自包含一份以避免跨未合并 PR 依赖；#99 合入后可抽共享 lib。
@@ -67,6 +71,8 @@ export const DEFAULT_PARAMS = Object.freeze({
   expiry_min: 1,         // [PLACEHOLDER] 有效期范围 1–3 周（STATUS-49 确认范围）
   expiry_max: 3,
   lock_weeks: 2,         // Q4 已确认：锁定期两周，非待标定参数
+  deposit_rate_regular_permille: 50,   // §14.13.2 已冻结：普通企划 5%
+  deposit_rate_ip_permille: 100,       // §14.13.2 已冻结：IP 上门企划 10%
 })
 
 // ---- 企划生成 ----
@@ -80,6 +86,7 @@ export function generateOffer(seed, week, index, opts = {}) {
   const scale = SCALES[subBelow(1, SCALES.length)]
   const episodeCount = { short: 1, ova: 2, tv: 12, movie: 1 }[scale]
   const budget = (500 + subBelow(2, 1500)) * 10000
+  const sourceType = opts.sourceType ?? 'market'
 
   return {
     id: `offer_${PURPOSE.offer_gen.toString(16)}_${week}_${index}`,
@@ -104,6 +111,9 @@ export function generateOffer(seed, week, index, opts = {}) {
     workload_scale_permille: 1000,
     origin: 'market',
     style: 'standard',
+    offer_source_type: sourceType,
+    // §14.13.2：定金基数在生成时固定，后续预算调整不得追溯改变定金。
+    deposit_basis: budget,
     expires_week: week + params.expiry_min + subBelow(8, params.expiry_max - params.expiry_min + 1),
     locked_until: null,
     lock_used: false,
@@ -120,15 +130,16 @@ export function initialMarket(seed, opts = {}) {
 
 // ---- 自然过期与锁定保护 ----
 
-// 自然过期：week > expires_week 移除；锁定期内（week <= locked_until）不受自然过期影响。
+// 自然过期（§14.13.2）：expires_week 是自然失效周，到达该周开局槽位释放（week < expires_week 存活）；
+// 锁定保护：week < locked_until 期间不受自然过期影响（STATUS-49/51）。
 export function expireOffers(slots, week) {
-  return slots.filter((o) => week <= o.expires_week || (o.locked_until != null && week <= o.locked_until))
+  return slots.filter((o) => week < o.expires_week || (o.locked_until != null && week < o.locked_until))
 }
 
-// 锁定到期未接单：锁定失效、释放市场槽位、定金不退（Q4）。
-// 退款与否是 Finance 语义；oracle 只表达槽位释放，不产生任何退款流水。
+// 锁定到期未接单：第 W 周锁定覆盖 W/W+1，W+2 周开局（week >= locked_until）失效、
+// 释放市场槽位、定金不退（Q4）。退款与否是 Finance 语义；oracle 不产生任何退款流水。
 export function releaseExpiredLocks(slots, week) {
-  return slots.filter((o) => !(o.locked_until != null && week > o.locked_until))
+  return slots.filter((o) => !(o.locked_until != null && week >= o.locked_until))
 }
 
 // ---- 每周自然补充（不是清空重抽）----
@@ -150,24 +161,37 @@ export function weeklyMarketStep(slots, seed, week, opts = {}) {
 }
 
 // ---- 定金锁定（lock_offer 的企划侧效果；现金走 Finance，不在 oracle）----
+// 命令级守卫（running ∧ pending 空 ∧ 现金 ≥ 定金）在运行时；此处覆盖企划侧：
+// 终身一次（lock_used）与自然失效（week >= expires_week 的企划已不存在）。
 
 export function lockOffer(offer, week, deposit) {
   if (offer.lock_used) return { error: 'INVALID_INPUT' }
-  if (week > offer.expires_week) return { error: 'NOT_FOUND' }
+  if (week >= offer.expires_week) return { error: 'NOT_FOUND' }
   return {
     error: null,
     offer: { ...offer, locked_until: week + DEFAULT_PARAMS.lock_weeks, lock_used: true, deposit_paid: deposit },
   }
 }
 
-// 定金计算基数提案：企划生成时已确定的基础立项费用（Q4 优先评估方向，比例待标定）。
+// 定金基数（§14.13.2 已冻结）：企划生成时固定的 deposit_basis，不随后续预算调整变化。
 export function depositBase(offer) {
-  return offer.contract_budget
+  return offer.deposit_basis
 }
 
-// 正式接单抵扣：定金 100% 抵扣（预付款），现金守卫按差额；不得重复计成本。
-export function startWorkCash(offer, totalPayable) {
-  const applied = Math.min(offer.deposit_paid, totalPayable)
+// 定金档位（§14.13.2 已冻结）：普通 5%、IP 上门 10%，来源类型决定档位，玩家不可切换。
+// 整数千分比计算；非整除时的取整规则待标定（CATALOG §11.3），当前向下取整。
+export function depositAmount(offer, params = DEFAULT_PARAMS) {
+  const rate = offer.offer_source_type === 'ip_visit'
+    ? params.deposit_rate_ip_permille
+    : params.deposit_rate_regular_permille
+  return Math.floor(depositBase(offer) * rate / 1000)
+}
+
+// 正式接单抵扣：仅锁定期内（week < locked_until）定金 100% 抵扣（预付款），
+// 现金守卫按差额；不得重复计成本。锁定期外不抵扣。
+export function startWorkCash(offer, totalPayable, week) {
+  const inLock = offer.locked_until != null && week < offer.locked_until
+  const applied = inLock ? Math.min(offer.deposit_paid, totalPayable) : 0
   return { cash_due: totalPayable - applied, deposit_applied: applied }
 }
 
