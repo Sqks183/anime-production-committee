@@ -691,8 +691,10 @@ bool archive_add(std::int64_t& total, std::int64_t amount) {
     if (amount < 0 || total > std::numeric_limits<std::int64_t>::max() - amount) return false;
     total += amount;
     return true;
-constexpr int kMarketCap = 10;                // STATUS-49/51 冻结
-constexpr int kWeeklyAdd = 2;                 // [PLACEHOLDER]
+}
+
+constexpr int kMarketCap = 4;                 // DEC-MARKET-001：企划市场固定四槽
+constexpr int kMinimumAcceptableOffers = 2;   // DEC-MARKET-001：至少两个可立即承接
 constexpr int kExpiryMin = 1;                 // [PLACEHOLDER] STATUS-49 确认范围 1–3 周
 constexpr int kExpiryMax = 3;
 constexpr int kLockWeeks = 2;                 // Q4 冻结：W/W+1 有效，W+2 开局失效
@@ -714,7 +716,8 @@ int episode_count_of_scale(const std::string& scale) {
 }
 
 // 候选内子坐标 index*16+k（k=0..15），与 oracle generateOffer 逐位一致。
-Json generate_offer(std::uint32_t seed, int week, int index, const std::string& source_type) {
+Json generate_offer(std::uint32_t seed, int week, int index, const std::string& source_type,
+                    int reputation_cap = 120) {
     const auto sub = [&](int k) {
         return kernel::draw(seed, week, kernel::Stream::market, purpose_offer_gen(),
                             static_cast<std::uint32_t>(index * 16 + k));
@@ -737,7 +740,7 @@ Json generate_offer(std::uint32_t seed, int week, int index, const std::string& 
                 {"channels_baseline", Json::array({"bd"})},
                 {"allowed_modes", Json::array({"contract", "committee"})},
                 {"committee_candidates", Json::array()},
-                {"min_reputation", static_cast<int>(sub(7) % 120)},
+                {"min_reputation", std::min(static_cast<int>(sub(7) % 120), reputation_cap)},
                 {"required_works", Json::array()},
                 {"previous_work_id", nullptr},
                 {"blueprint_id", "tv_standard"},
@@ -785,6 +788,38 @@ std::vector<const LedgerEntry*> offer_deposit_entries(const GameState& state, co
         if (is_offer_deposit_entry(entry, offer_id)) entries.push_back(&entry);
     }
     return entries;
+}
+
+bool offer_in_lock(const Json& offer, int week) {
+    return offer.contains("locked_until") && offer.at("locked_until").is_number_integer() &&
+           week < offer.at("locked_until").get<int>();
+}
+
+Json weekly_market_step(const Json& market, std::uint32_t seed, int week, int reputation) {
+    Json next = market;
+    Json slots = Json::array();
+    if (market.contains("slots") && market.at("slots").is_array()) {
+        for (const auto& offer : market.at("slots")) {
+            if (!offer.is_object()) continue;
+            const bool has_lock = offer.contains("locked_until") && offer.at("locked_until").is_number_integer();
+            if (has_lock && week >= offer.at("locked_until").get<int>()) continue;
+            if (week >= offer.value("expires_week", kMaxWeek) && !offer_in_lock(offer, week)) continue;
+            slots.push_back(offer);
+        }
+    }
+    int acceptable = 0;
+    for (const auto& offer : slots) {
+        if (offer.value("min_reputation", 0) <= reputation) ++acceptable;
+    }
+    const int free = std::max(0, kMarketCap - static_cast<int>(slots.size()));
+    for (int i = 0; i < free; ++i) {
+        const int cap = acceptable < kMinimumAcceptableOffers ? reputation : 120;
+        slots.push_back(generate_offer(seed, week, i, "market", cap));
+        if (cap <= reputation) ++acceptable;
+    }
+    next["slots"] = std::move(slots);
+    next["refresh_week"] = week;
+    return next;
 }
 
 std::string archive_rating_of(int score) {
@@ -1724,7 +1759,7 @@ std::vector<std::string> validate(const GameState& state) {
     } else {
         if (state.market.contains("slots")) {
             if (!state.market.at("slots").is_array()) error("INV-01 market.slots 必须是数组");
-            else if (state.market.at("slots").size() > 4) error("INV-01 market.slots 最多 4 个");
+            else if (state.market.at("slots").size() > static_cast<std::size_t>(kMarketCap)) error("INV-01 market.slots 最多 4 个");
             else {
                 for (const auto& offer : state.market.at("slots")) {
                     const std::string offer_id = offer.value("id", std::string{});
@@ -1972,7 +2007,7 @@ Json make_partner(const char* id, const char* name, const char* type, const char
 Json make_offer(const char* id, const char* name, const char* source, const char* genre, int budget, int weeks,
                 int target_quality, int audience, int commercial, Json potentials, Json channels, Json modes,
                 Json candidates) {
-    return Json{{"id", id},
+    Json offer = Json{{"id", id},
                 {"name", name},
                 {"source", source},
                 {"genre", genre},
@@ -1993,6 +2028,13 @@ Json make_offer(const char* id, const char* name, const char* source, const char
                 {"workload_scale_permille", 1000},
                 {"origin", "publisher"},
                 {"style", "standard"}};
+    offer["offer_source_type"] = "market";
+    offer["deposit_basis"] = budget;
+    offer["expires_week"] = kFixtureExpiresWeek;
+    offer["locked_until"] = nullptr;
+    offer["lock_used"] = false;
+    offer["deposit_paid"] = 0;
+    return offer;
 }
 
 Json initial_market() {
@@ -3360,7 +3402,7 @@ std::string advance_week(const std::string& input) {
         // 招聘池进入新周先清理到期 scout 窗口，再部分轮换常规池。
         // 市场释放到期锁定 → 自然过期 → 自然补充；破产路径已在阶段 2 提前返回。
         state.recruitment.pool = rotate_pool(state.recruitment.pool, state.seed, next_week);
-        state.market = weekly_market_step(state.market, state.seed, next_week);
+        state.market = weekly_market_step(state.market, state.seed, next_week, state.company.reputation);
 
         // ---- 阶段 8：随机事件抽取与周数 +1 ----
         // 每个 producing 项目各自至多一条；已有待处理事件的项目不再追加。
@@ -3459,6 +3501,7 @@ std::string create_custom_offer(const std::string& input) {
                                             {"style", style},
                                             {"genre", "original"},
                                             {"origin", "custom"},
+                                            {"offer_source_type", "custom"},
                                             {"draft_status", "valid"},
                                             {"created_week", state.company.week},
                                             {"contract_budget", budget},
@@ -3773,7 +3816,6 @@ std::string start_work(const std::string& input) {
                                           {"gap", cash_due - state.finance.balance}}}});
         }
 
-        const int week = state.company.week;
         const std::string work_id = next_id(state, "work_", static_cast<int>(state.works.size()));
         Project work;
         std::string error;
@@ -3834,11 +3876,11 @@ std::string start_work(const std::string& input) {
                 budget, std::nullopt, offer_id});
             state.finance.balance += budget;
         }
-        if (paid > 0) {
+        if (cash_due > 0) {
             state.finance.entries.push_back(LedgerEntry{
                 "w" + std::to_string(week) + ".investment." + work_id, week, work_id, "investment_paid",
-                -paid, committee_id.empty() ? std::nullopt : std::optional<std::string>(committee_id), offer_id});
-            state.finance.balance -= paid;
+                -cash_due, committee_id.empty() ? std::nullopt : std::optional<std::string>(committee_id), offer_id});
+            state.finance.balance -= cash_due;
         }
 
         // 消费企划

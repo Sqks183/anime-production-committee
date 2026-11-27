@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { validateCard } from './lib/event-schema.mjs'
 import { generateCandidate, scout as oracleScout, rotatePool, PURPOSE } from './lib/recruit-oracle.mjs'
+import { generateOffer, weeklyMarketStep, startWorkCash, depositAmount } from './lib/market-oracle.mjs'
 
 // v4 M1 契约测试：直接加载 emcc 构建的模块，全部通过 JSON 字符串接口调用。
 // 依赖 build/v4/v4.mjs（npm run build:v4 生成）。
@@ -2901,7 +2902,7 @@ test('advance_week 市场周步骤：释放→过期→补充与 oracle weeklyMa
     state = ok('lock_offer', { state, offer_id: offers[1].id }).state
     const lockedSlots = structuredClone(state.market.slots)
     state = ok('advance_week', { state }).state
-    const expected = weeklyMarketStep(lockedSlots, seed, 1)
+    const expected = weeklyMarketStep(lockedSlots, seed, 1, base.company.reputation)
     assert.deepEqual(state.market.slots, expected.slots)
     assert.equal(state.market.refresh_week, 1)
   }
@@ -3115,26 +3116,41 @@ test('start_work：自然到期边界与 W+2 锁定开局均拒绝开工', () =>
   assert.equal(state.finance.entries.length, entriesBefore)
 })
 
-test('市场上限 10：自然补充只填空缺，存活企划逐字段不变', () => {
+test('市场固定四槽：自然补满空槽，存活企划逐字段不变', () => {
   const seed = 42
   const base = ok('initialize', { seed }).state
-  const offers = Array.from({ length: 9 }, (_, i) => {
+  const offers = Array.from({ length: 3 }, (_, i) => {
     const offer = generateOffer(seed, 0, i)
     offer.expires_week = 10
     return offer
   })
+  const expected = weeklyMarketStep(offers, seed, 1, base.company.reputation)
   const advanced = ok('advance_week', { state: withOffers(base, offers) }).state
-  assert.equal(advanced.market.slots.length, 10)
-  assert.deepEqual(advanced.market.slots.slice(0, 9), offers)
-  assert.deepEqual(advanced.market.slots[9], generateOffer(seed, 1, 0))
-  const full = Array.from({ length: 10 }, (_, i) => {
+  assert.equal(advanced.market.slots.length, 4)
+  assert.deepEqual(advanced.market.slots.slice(0, 3), offers)
+  assert.deepEqual(advanced.market.slots, expected.slots)
+  const full = Array.from({ length: 4 }, (_, i) => {
     const offer = generateOffer(seed, 0, i)
     offer.expires_week = 10
     return offer
   })
   const advancedFull = ok('advance_week', { state: withOffers(base, full) }).state
-  assert.equal(advancedFull.market.slots.length, 10)
+  assert.equal(advancedFull.market.slots.length, 4)
   assert.deepEqual(advancedFull.market.slots, full)
+})
+
+test('市场补位保证至少两个可立即承接的企划', () => {
+  const base = ok('initialize', { seed: 42 }).state
+  const offers = [0, 1].map((i) => {
+    const offer = generateOffer(42, 0, i)
+    offer.expires_week = 10
+    offer.min_reputation = base.company.reputation + 100
+    return offer
+  })
+  const advanced = ok('advance_week', { state: withOffers(base, offers) }).state
+  assert.equal(advanced.market.slots.length, 4)
+  assert.deepEqual(advanced.market.slots.slice(0, 2), offers)
+  assert.equal(advanced.market.slots.filter((o) => o.min_reputation <= base.company.reputation).length, 2)
 })
 
 test('advance_week：fixture 目录按 PLACEHOLDER 窗口到期，补充企划与 oracle 逐位一致', () => {
@@ -3145,18 +3161,18 @@ test('advance_week：fixture 目录按 PLACEHOLDER 窗口到期，补充企划�
   const prior = state.market.slots
   state = ok('advance_week', { state }).state
   assert.ok(!state.market.slots.some((o) => o.id.startsWith('offer_0')))
-  assert.deepEqual(state.market.slots, weeklyMarketStep(prior, seed, 3).slots)
+  assert.deepEqual(state.market.slots, weeklyMarketStep(prior, seed, 3, state.company.reputation).slots)
 })
 
-test('validate：槽位超 10 与生命周期快照篡改被拒绝', () => {
+test('validate：槽位超 4 与生命周期快照篡改被拒绝', () => {
   const seed = 42
   const base = ok('initialize', { seed }).state
-  const eleven = Array.from({ length: 11 }, (_, i) => {
+  const five = Array.from({ length: 5 }, (_, i) => {
     const offer = generateOffer(seed, 0, i)
     offer.expires_week = 10
     return offer
   })
-  assert.equal(call('advance_week', { state: withOffers(base, eleven) }).error.code, 'INVALID_STATE')
+  assert.equal(call('advance_week', { state: withOffers(base, five) }).error.code, 'INVALID_STATE')
   const inconsistent = generateOffer(seed, 0, 0)
   inconsistent.lock_used = false
   inconsistent.deposit_paid = 50000

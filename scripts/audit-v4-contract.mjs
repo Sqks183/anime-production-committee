@@ -172,12 +172,15 @@ for (const term of ['100% 抵扣', '定金不退', '锁定一次', '每周至多
     fail(`Q3/Q4 产品语义未在四份权威文档同步：${term}`)
   }
 }
-if (shape.future_contract.market_slots.initial !== 4 || shape.future_contract.market_slots.maximum !== 10) {
-  fail('市场槽位基线必须为初始 4、最大 10')
+if (shape.future_contract.market_slots.initial !== 4 || shape.future_contract.market_slots.maximum !== 4) {
+  fail('企划市场槽位基线必须为固定 4 槽（DEC-MARKET-001）')
 }
-if (!m0Source.includes('slots ≤ 10，初始 4')) fail('docs/M0_CONTRACT_FREEZE.md 市场槽位仍为旧 4 槽上限')
-if (!architectureSource.includes('slots: Offer[4]') || !/上限\s*10/.test(architectureSource)) {
-  fail('docs/DOMAIN_ARCHITECTURE.md 市场槽位必须同时说明初始 4 与上限 10')
+if (!m0Source.includes('market.slots ≤ 4') || !m0Source.includes('初始生成 4 个企划')) {
+  fail('docs/M0_CONTRACT_FREEZE.md 未登记企划市场固定四槽与初始四企划')
+}
+if (!architectureSource.includes('slots: Offer[4]') || !architectureSource.includes('每周只补空槽') ||
+    !architectureSource.includes('至少 2 个企划')) {
+  fail('docs/DOMAIN_ARCHITECTURE.md 未同步企划市场固定四槽、补空槽与最低可承接数')
 }
 if (!shape.future_contract.lock_offer.once_per_proposal_lifetime ||
     shape.future_contract.lock_offer.deposit_refund_on_expiry !== false ||
@@ -333,6 +336,10 @@ collect(adoptReceipt.state, 'state', observed)
 rejectReceipt = unwrap('reject_proposal', { state: proposalBase })
 collect(rejectReceipt.state, 'state', observed)
 
+const lockBase = fundedInitialize()
+const lockReceipt = unwrap('lock_offer', { state: lockBase, offer_id: lockBase.market.slots[0].id })
+collect(lockReceipt.state, 'state', observed)
+
 // 招聘闭环（M0 命令 5/6/7）：独立状态走 scout → hire_core → dismiss_staff，
 // 不污染主审计状态（第 7 节断言主状态名册 signing_fee 恒为 0）。
 const recruitBase = fundedInitialize()
@@ -467,6 +474,7 @@ const receipts = {
   create_custom_offer: Object.keys(customOfferReceipt).filter((key) => key !== 'error'),
   adopt_proposal: Object.keys(adoptReceipt).filter((key) => key !== 'error'),
   reject_proposal: Object.keys(rejectReceipt).filter((key) => key !== 'error'),
+  lock_offer: Object.keys(lockReceipt).filter((key) => key !== 'error'),
   scout: Object.keys(scoutReceipt).filter((key) => key !== 'error'),
   hire_core: Object.keys(hireReceipt).filter((key) => key !== 'error'),
   dismiss_staff: Object.keys(dismissReceipt).filter((key) => key !== 'error'),

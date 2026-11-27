@@ -835,11 +835,13 @@ Committee { id, work_id, members[{partner_id, channel}], formed_week, status: ac
 
 MarketState {
   heat: {genre: {level: boom|high|mid|low, changed_week}}
-  slots: Offer[4]                  // 初始 4 槽，后续扩展上限 10
+  slots: Offer[4]                  // 固定四槽；初始生成 4 个，每周只补空槽
   custom_offer: Offer|null, proposal: Offer|null
   refresh_week, last_competition_round
   competitors: Competitor[]        // 由 seed 派生，见 §12.3
 }
+
+企划市场与招聘市场完全独立。企划市场每周只补空槽，未过期企划保留，已锁定企划继续占原槽；补位后至少 2 个企划可立即承接。IP 上门企划占企划槽，自定企划走独立入口。招聘市场另有固定 4 个候选人展示槽，四槽全部属于 Recruitment；项目临时员工不进入招聘候选池。
 
 Offer { id, name, source, genre, scale, contract_budget, duration_weeks, target_quality,
         audience_base, commercial_potential, channel_potentials{}, channels_baseline[],
