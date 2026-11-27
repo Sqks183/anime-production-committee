@@ -71,7 +71,8 @@ GameState {
 | `works` | Project[] | **是** | `INVALID_INPUT` | `实现` |
 | `finance` | Finance | **是** | `INVALID_INPUT` | `实现`；含 reserved fields |
 | `events` | EventState | **是**（且 `events.pending` 必须是数组） | `INVALID_INPUT` | `实现` |
-| `suppliers` `contracts` `partners` `committees` `market` `archive` | Json | 否 | 缺失取默认（数组 `[]`、对象 `{}`），内容零校验 | `待实现`（见 §3.10 与 §3.11） |
+| `suppliers` `contracts` `partners` `committees` | Supplier[] / OutsourceContract[] / Partner[] / Committee[] | **是** | `INVALID_INPUT` | `实现`（见 §3.10） |
+| `market` `archive` | Json | `archive` **是**；`market` 否 | `archive` 缺失为 `INVALID_INPUT`；`market` 缺失取 `{}` | `market` 部分实现；`archive` 已实现（见 §3.9/§3.11） |
 
 `recruitment` 是 M0 §14.13 已冻结的目标根字段，但当前 runtime 尚未实现。审计同时检查文档包含该字段、机器基线将其登记为 `future_contract`，并禁止它悄悄进入当前 `paths`。
 
@@ -244,10 +245,12 @@ v4 固定九字段：`reason/weeks/final_funds/net_cash_change/total_projects/be
 | --- | --- | --- | --- |
 | `Supplier` | DA §7.4 + M0 §3 | `Json` 强形状校验 | 9 字段精确载荷、专业枚举/唯一性、数值边界与全局 id 已校验；目录初始化与命令 9 未实现 |
 | `OutsourceContract` | DA §7.4 | `Json` 强形状校验 | 15 字段精确载荷、供应商/项目/工作项/单集/能力引用、费用与生命周期已校验；INV-19/20 已断言；签约、周交付、费用与可靠性失败未实现 |
-| `Partner` / `Committee` | DA §7.4 + M0 §3 | `Json` 透传 | 委员会立项/交付已使用；INV-13 未完整断言 |
+| `Partner` / `Committee` | DA §7.4 + M0 §3 | `Json` 强形状校验 | Partner 8 字段、history 4 字段、Committee 6 字段与成员 2 字段已精确校验；INV-13 已断言，覆盖渠道归属、项目双向引用、active/closed 生命周期与 Archive 一致性 |
 | `MarketState` | M0 §3；初始 4 槽、最大 10 槽 | **已初始化槽位/热度/合作方候选** | INV-24/Q3/Q4 尚未完整实现 |
 
-`suppliers` / `contracts` 根数组是解析必填项；两类元素分别精确包含 9 / 15 个字段，未知字段与缺失字段均拒绝。active 合同必须指向 producing 项目；终态合同仍保留可校验的项目与工作项引用。规范化哈希按 id 排序 suppliers / contracts，并按集合语义排序 specialties，因此目录遍历顺序不改变状态哈希。状态校验通过不等于签约玩法开放：`weekly_cap` 推导、付款节奏、可靠性失败和项目终止释放仍未实现。
+`suppliers` / `contracts` / `partners` / `committees` 根数组是解析必填项；四类元素分别精确包含 9 / 15 / 8 / 6 个字段，未知字段与缺失字段均拒绝。active 合同必须指向 producing 项目；终态合同仍保留可校验的项目与工作项引用。规范化哈希按 id 排序 suppliers / contracts / partners / committees，并按集合语义排序 specialties、Partner.channels 与 Committee.members，因此目录遍历顺序不改变状态哈希。状态校验通过不等于签约玩法开放：`weekly_cap` 推导、付款节奏、可靠性失败和项目终止释放仍未实现。
+
+**Partnership 运行时现状（2026-11-27）**：`Partner.history[]` 固定为 `{week, work_id, delta, reason}`，只能引用已归档作品且 `week` 必须等于对应 WorkRecord 的 `end_week`；`Committee.members[]` 固定为 `{partner_id, channel}`，成员与渠道均不得重复，渠道必须属于该伙伴，`bd_dvd` 不挂成员。active Committee 必须与同一 `mode=committee` 项目双向引用，项目可处于 `producing` 或 `delivering`（公司关闭后等待结清），且 `formed_week=opened_week`；closed Committee 不得继续引用活动项目，其 `formed_week/closed_week` 必须与对应 Archive WorkRecord 的 `start_week/end_week` 一致。以上均纳入 INV-13；单状态校验不能证明 history 历史前缀从未被改写，追加顺序由命令前后快照测试约束。
 
 ### 3.11 未冻结的形状
 

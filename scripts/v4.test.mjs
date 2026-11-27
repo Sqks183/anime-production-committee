@@ -2100,6 +2100,126 @@ test('供应商、合同与专业数组顺序不影响规范化哈希', () => {
   assert.equal(ok('hash_state', { state }).hash, ok('hash_state', { state: reordered }).hash)
 })
 
+function committeeFixture() {
+  return ok('start_work', {
+    state: ok('initialize', { seed: 7 }).state,
+    offer_id: 'offer_01',
+    mode: 'committee',
+    percent: 50,
+    committee_partner_ids: ['partner_tv', 'partner_stream']
+  }).state
+}
+
+function rejectPartnershipState(state, invariant) {
+  const result = call('advance_week', { state })
+  assert.equal(result.error?.code, 'INVALID_STATE', `expected ${invariant}, got ${JSON.stringify(result)}`)
+  assert.match(result.error.message, invariant)
+  assert.equal('state' in result, false)
+}
+
+test('INV-13：伙伴与委员会严格载荷、成员渠道和生命周期校验', () => {
+  const state = committeeFixture()
+  const probes = [
+    [(probe) => { delete probe.partners[0].history }, /Partner 根字段/],
+    [(probe) => { probe.partners[0].unknown = true }, /Partner 根字段/],
+    [(probe) => { probe.partners[0].channels = ['tv', 'tv'] }, /INV-13 Partner.channels/],
+    [(probe) => { probe.partners[0].channels = ['bd_dvd'] }, /INV-13 Partner.channels/],
+    [(probe) => { probe.partners[0].relationship = 101 }, /Partner.relationship/],
+    [(probe) => { probe.partners[0].history = [{}] }, /Partner.history/],
+    [(probe) => { delete probe.committees[0].closed_week }, /Committee 根字段/],
+    [(probe) => { probe.committees[0].unknown = true }, /Committee 根字段/],
+    [(probe) => { probe.committees[0].members[0].unknown = true }, /Committee.members/],
+    [(probe) => { probe.committees[0].members[1].partner_id = probe.committees[0].members[0].partner_id }, /委员会成员重复/],
+    [(probe) => { probe.committees[0].members[1].channel = probe.committees[0].members[0].channel }, /委员会渠道重复/],
+    [(probe) => { probe.committees[0].members[1].channel = 'overseas' }, /渠道不属于该伙伴/],
+    [(probe) => { probe.committees[0].members[1].channel = 'bd_dvd' }, /BD 不挂成员/],
+    [(probe) => { probe.committees[0].closed_week = 0 }, /活跃委员会不能有 closed_week/],
+    [(probe) => { probe.committees[0].work_id = 'work_missing' }, /活跃委员会的项目不存在/],
+    [(probe) => { probe.works[0].committee_id = 'committee_missing' }, /活跃委员会与项目引用不一致|未指向同一作品的活跃委员会/],
+    [(probe) => {
+      probe.company.week = 1
+      probe.committees[0].formed_week = 1
+    }, /成立周必须与项目立项周一致/]
+  ]
+  for (const [mutate, invariant] of probes) {
+    const probe = structuredClone(state)
+    mutate(probe)
+    rejectPartnershipState(probe, invariant)
+  }
+
+  const delivering = ok('end_company', { state }).state
+  assert.equal(delivering.works[0].status, 'delivering')
+  assert.equal(delivering.committees[0].status, 'active')
+  assert.ok(ok('hash_state', { state: delivering }).hash)
+})
+
+test('INV-13：关闭委员会与 Archive、伙伴 history 必须同源一致', () => {
+  let state = committeeFixture()
+  state = completeWork(state, 'work_01', 80)
+  state = ok('deliver_work', { state, work_id: 'work_01' }).state
+  assert.equal(state.committees[0].status, 'closed')
+  assert.ok(state.partners.some((partner) => partner.history.length === 1))
+
+  const probes = [
+    [(probe) => {
+      probe.archive.works = []
+      for (const partner of probe.partners) partner.history = []
+    }, /已关闭委员会缺少归档作品/],
+    [(probe) => {
+      probe.company.week = 1
+      probe.archive.works[0].end_week = 1
+      for (const partner of probe.partners) {
+        for (const entry of partner.history) entry.week = 1
+      }
+    }, /已关闭委员会与归档作品不一致/],
+    [(probe) => {
+      probe.company.week = 1
+      probe.committees[0].closed_week = 1
+    }, /已关闭委员会与归档作品不一致/],
+    [(probe) => {
+      probe.partners[0].history = [{ week: 0, work_id: 'work_missing', delta: 2, reason: '合作' }]
+    }, /引用未归档作品/],
+    [(probe) => {
+      probe.company.week = 1
+      probe.partners[0].history[0].week = 1
+    }, /周必须与作品交付周一致/]
+  ]
+  for (const [mutate, invariant] of probes) {
+    const probe = structuredClone(state)
+    mutate(probe)
+    rejectPartnershipState(probe, invariant)
+  }
+})
+
+test('伙伴、委员会与成员数组顺序不影响规范化哈希', () => {
+  let state = committeeFixture()
+  state = addIdleSupervisor(state)
+  state = ok('start_work', {
+    state,
+    offer_id: 'offer_02',
+    mode: 'committee',
+    percent: 50,
+    committee_partner_ids: ['partner_stream', 'partner_pub']
+  }).state
+  const reordered = structuredClone(state)
+  reordered.partners.reverse()
+  reordered.committees.reverse()
+  for (const committee of reordered.committees) committee.members.reverse()
+  assert.equal(ok('hash_state', { state }).hash, ok('hash_state', { state: reordered }).hash)
+})
+
+test('伙伴与委员会根数组缺失或类型错误时拒绝输入', () => {
+  const state = committeeFixture()
+  for (const field of ['partners', 'committees']) {
+    const missing = structuredClone(state)
+    delete missing[field]
+    assert.equal(call('hash_state', { state: missing }).error?.code, 'INVALID_INPUT')
+    const wrongType = structuredClone(state)
+    wrongType[field] = {}
+    assert.equal(call('hash_state', { state: wrongType }).error?.code, 'INVALID_INPUT')
+  }
+})
+
 function gatesOf(state, workId) {
   const work = state.works.find((entry) => entry.id === workId)
   const gates = []

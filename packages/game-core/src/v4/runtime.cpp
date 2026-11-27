@@ -238,6 +238,8 @@ GameState decode_state(const Json& request) {
     require(state, "works", "state");
     require(state, "suppliers", "state");
     require(state, "contracts", "state");
+    require(state, "partners", "state");
+    require(state, "committees", "state");
     require(state, "finance", "state");
     require(state, "events", "state");
     require(state, "archive", "state");
@@ -279,8 +281,13 @@ GameState decode_state(const Json& request) {
     require(state.at("finance").at("solvency"), "deadline_week", "finance.solvency");
     require(state.at("finance").at("solvency"), "gap", "finance.solvency");
     if (!state.at("staff").is_array() || !state.at("works").is_array() ||
-        !state.at("suppliers").is_array() || !state.at("contracts").is_array()) {
-        throw Json::type_error::create(302, "staff / works / suppliers / contracts 必须是数组", nullptr);
+        !state.at("suppliers").is_array() || !state.at("contracts").is_array() ||
+        !state.at("partners").is_array() || !state.at("committees").is_array()) {
+        throw Json::type_error::create(
+            302,
+            "staff / works / suppliers / contracts / partners / committees 必须是数组",
+            nullptr
+        );
     }
     for (const auto& member : state.at("staff")) {
         require(member, "id", "staff[]");
@@ -952,6 +959,201 @@ void validate_vendors(const GameState& state,
     }
 }
 
+bool partnership_channel(const std::string& channel) {
+    return one_of_text(channel, {"domestic_streaming", "overseas", "merchandise", "music", "tv", "publishing"});
+}
+
+void validate_partnerships(const GameState& state,
+                           const std::function<void(const std::string&, const char*)>& claim_id,
+                           const std::function<void(const std::string&)>& error) {
+    std::map<std::string, const Json*> partners;
+    std::map<std::string, const Json*> committees;
+    std::map<std::string, const Json*> archived_works;
+    if (state.archive.is_object() && state.archive.contains("works") && state.archive.at("works").is_array()) {
+        for (const auto& record : state.archive.at("works")) {
+            if (record.is_object() && archive_text(record.value("id", Json{}))) {
+                archived_works.emplace(record.at("id").get<std::string>(), &record);
+            }
+        }
+    }
+
+    for (const auto& partner : state.partners) {
+        if (!archive_exact_fields(partner, {"id", "name", "type", "channels", "prestige", "relationship", "history", "status"})) {
+            error("INV-01 Partner 根字段缺失或含未知字段");
+            continue;
+        }
+        if (!archive_text(partner.at("id")) || !archive_text(partner.at("name"))) {
+            error("INV-01 Partner id/name 必须是非空字符串");
+            continue;
+        }
+        const std::string id = partner.at("id").get<std::string>();
+        claim_id(id, "partner");
+        partners.emplace(id, &partner);
+        if (!archive_text(partner.at("type")) || !one_of_text(partner.at("type").get<std::string>(),
+            {"tv", "publisher", "toy", "music", "streaming", "studio"})) {
+            error("INV-01 Partner.type 非法: " + id);
+        }
+        if (!archive_integer(partner.at("prestige"), 0)) {
+            error("INV-01 Partner.prestige 必须为非负整数: " + id);
+        }
+        if (!archive_integer(partner.at("relationship"), 0, 100)) {
+            error("INV-01 Partner.relationship 越界: " + id);
+        }
+        if (!archive_text(partner.at("status")) || !one_of_text(partner.at("status").get<std::string>(), {"known", "unavailable"})) {
+            error("INV-01 Partner.status 非法: " + id);
+        }
+        if (!partner.at("channels").is_array() || partner.at("channels").empty()) {
+            error("INV-01 Partner.channels 必须是非空数组: " + id);
+        } else {
+            std::set<std::string> channels;
+            for (const auto& channel : partner.at("channels")) {
+                if (!channel.is_string() || !partnership_channel(channel.get<std::string>()) ||
+                    !channels.insert(channel.get<std::string>()).second) {
+                    error("INV-13 Partner.channels 非法、重复或包含 BD: " + id);
+                }
+            }
+        }
+        if (!partner.at("history").is_array()) {
+            error("INV-13 Partner.history 必须是数组: " + id);
+            continue;
+        }
+        std::int64_t previous_week = 0;
+        for (const auto& entry : partner.at("history")) {
+            if (!archive_exact_fields(entry, {"week", "work_id", "delta", "reason"}) ||
+                !archive_integer(entry.at("week"), 0, state.company.week) ||
+                !archive_text(entry.at("work_id")) || !archive_integer(entry.at("delta"), -100, 100) ||
+                !archive_text(entry.at("reason"))) {
+                error("INV-13 Partner.history[] 字段或数值非法: " + id);
+                continue;
+            }
+            const std::string work_id = entry.at("work_id").get<std::string>();
+            const auto record = archived_works.find(work_id);
+            if (record == archived_works.end()) {
+                error("INV-13 Partner.history 引用未归档作品: " + id + "/" + work_id);
+            } else if (!record->second->contains("end_week") ||
+                       !archive_integer(record->second->at("end_week"), 0, state.company.week)) {
+                error("INV-13 Partner.history 作品交付周非法: " + id + "/" + work_id);
+            } else if (record->second->at("end_week").get<std::int64_t>() != entry.at("week").get<std::int64_t>()) {
+                error("INV-13 Partner.history 周必须与作品交付周一致: " + id + "/" + work_id);
+            }
+            if (entry.at("week").get<std::int64_t>() < previous_week) {
+                error("INV-13 Partner.history 必须按合作周追加: " + id);
+            }
+            previous_week = std::max(previous_week, entry.at("week").get<std::int64_t>());
+        }
+    }
+
+    std::set<std::string> committee_works;
+    for (const auto& committee : state.committees) {
+        if (!archive_exact_fields(committee, {"id", "work_id", "members", "formed_week", "status", "closed_week"})) {
+            error("INV-01 Committee 根字段缺失或含未知字段");
+            continue;
+        }
+        if (!archive_text(committee.at("id")) || !archive_text(committee.at("work_id"))) {
+            error("INV-01 Committee id/work_id 必须是非空字符串");
+            continue;
+        }
+        const std::string id = committee.at("id").get<std::string>();
+        const std::string work_id = committee.at("work_id").get<std::string>();
+        claim_id(id, "committee");
+        committees.emplace(id, &committee);
+        if (!committee_works.insert(work_id).second) {
+            error("INV-13 同一作品存在多个委员会: " + work_id);
+        }
+        if (!committee.at("members").is_array() || committee.at("members").empty()) {
+            error("INV-13 Committee.members 必须是非空数组: " + id);
+        } else {
+            std::set<std::string> member_ids;
+            std::set<std::string> member_channels;
+            for (const auto& member : committee.at("members")) {
+                if (!archive_exact_fields(member, {"partner_id", "channel"}) ||
+                    !archive_text(member.at("partner_id")) || !archive_text(member.at("channel"))) {
+                    error("INV-13 Committee.members[] 字段非法: " + id);
+                    continue;
+                }
+                const std::string partner_id = member.at("partner_id").get<std::string>();
+                const std::string channel = member.at("channel").get<std::string>();
+                if (!member_ids.insert(partner_id).second) error("INV-13 委员会成员重复: " + id);
+                if (!member_channels.insert(channel).second) error("INV-13 委员会渠道重复: " + id);
+                if (!partnership_channel(channel) || channel == kWindowBd) {
+                    error("INV-13 委员会渠道非法或 BD 不挂成员: " + id);
+                }
+                const auto partner = partners.find(partner_id);
+                if (partner == partners.end()) {
+                    error("INV-13 委员会成员不存在: " + partner_id);
+                } else if (!partner->second->at("channels").is_array() ||
+                           std::none_of(partner->second->at("channels").begin(), partner->second->at("channels").end(),
+                                        [&channel](const Json& value) { return value == channel; })) {
+                    error("INV-13 委员会渠道不属于该伙伴: " + partner_id + "/" + channel);
+                }
+            }
+        }
+        const Json& formed_week = committee.at("formed_week");
+        const bool formed_valid = archive_integer(formed_week, 0, state.company.week);
+        if (!formed_valid) {
+            error("INV-01 Committee.formed_week 越界: " + id);
+        }
+        const Json& status_value = committee.at("status");
+        const std::string status = status_value.is_string() ? status_value.get<std::string>() : std::string{};
+        if (status != "active" && status != "closed") {
+            error("INV-01 Committee.status 非法: " + id);
+        }
+        const Json& closed_week = committee.at("closed_week");
+        if (status == "active" && !closed_week.is_null()) {
+            error("INV-13 活跃委员会不能有 closed_week: " + id);
+        }
+        if (status == "closed" && (!archive_integer(closed_week, formed_valid ? formed_week.get<std::int64_t>() : 0,
+                                                    state.company.week) ||
+                                   closed_week.get<std::int64_t>() > state.company.week)) {
+            error("INV-13 已关闭委员会缺少合法 closed_week: " + id);
+        }
+
+        const Project* work = find_work(state, work_id);
+        const auto record = archived_works.find(work_id);
+        if (status == "active") {
+            if (work == nullptr) {
+                error("INV-13 活跃委员会的项目不存在: " + id);
+            } else {
+                if (work->mode != "committee" || work->committee_id != id ||
+                    (work->status != "producing" && work->status != "delivering")) {
+                    error("INV-13 活跃委员会与项目引用不一致: " + id);
+                }
+                if (formed_valid && work->opened_week != formed_week.get<std::int64_t>()) {
+                    error("INV-13 委员会成立周必须与项目立项周一致: " + id);
+                }
+            }
+        } else if (status == "closed" && archive_integer(closed_week, 0, state.company.week)) {
+            if (record == archived_works.end()) {
+                error("INV-13 已关闭委员会缺少归档作品: " + id);
+            } else if (!record->second->contains("mode") || !record->second->at("mode").is_string() ||
+                       !record->second->contains("start_week") ||
+                       !archive_integer(record->second->at("start_week"), 0, state.company.week) ||
+                       !record->second->contains("end_week") ||
+                       !archive_integer(record->second->at("end_week"), 0, state.company.week)) {
+                error("INV-13 已关闭委员会与归档作品不一致: " + id);
+            } else if (record->second->at("mode").get<std::string>() != "committee" ||
+                       !formed_valid ||
+                       record->second->at("start_week").get<std::int64_t>() != formed_week.get<std::int64_t>() ||
+                       record->second->at("end_week").get<std::int64_t>() != closed_week.get<std::int64_t>()) {
+                error("INV-13 已关闭委员会与归档作品不一致: " + id);
+            }
+            if (work != nullptr) error("INV-13 已关闭委员会不得继续引用活动项目: " + id);
+        }
+    }
+
+    for (const auto& work : state.works) {
+        if (!work.committee_id) continue;
+        const auto committee = committees.find(*work.committee_id);
+        if (committee == committees.end() ||
+            !committee->second->contains("work_id") || !committee->second->at("work_id").is_string() ||
+            committee->second->at("work_id").get<std::string>() != work.id ||
+            !committee->second->contains("status") || !committee->second->at("status").is_string() ||
+            committee->second->at("status").get<std::string>() != "active") {
+            error("INV-13 项目 committee_id 未指向同一作品的活跃委员会: " + work.id);
+        }
+    }
+}
+
 // ---------------- 校验 ----------------
 std::vector<std::string> validate(const GameState& state) {
     std::vector<std::string> errors;
@@ -1163,66 +1365,13 @@ std::vector<std::string> validate(const GameState& state) {
         }
     }
 
-    // 伙伴：渠道唯一、关系值范围、状态合法
-    for (const auto& partner : state.partners) {
-        if (!partner.is_object()) { error("INV-01 partner 必须是对象"); continue; }
-        const std::string id = partner.value("id", std::string{});
-        claim_id(id, "partner");
-        if (partner.value("name", std::string{}).empty()) error("INV-01 partner.name 缺失: " + id);
-        if (!one_of_text(partner.value("type", std::string{}), {"tv", "publisher", "toy", "music", "streaming", "studio"})) {
-            error("INV-01 partner.type 非法: " + id);
-        }
-        if (!partner.contains("channels") || !partner.at("channels").is_array() || partner.at("channels").empty()) {
-            error("INV-01 partner.channels 必须非空: " + id);
-        } else {
-            std::set<std::string> channels;
-            for (const auto& channel : partner.at("channels")) {
-                if (!channel.is_string() || !channels.insert(channel.get<std::string>()).second) {
-                    error("INV-01 partner.channels 重复或非法: " + id);
-                }
-            }
-        }
-        const int relationship = partner.value("relationship", 50);
-        if (relationship < 0 || relationship > 100) error("INV-01 partner.relationship 越界: " + id);
-        if (!one_of_text(partner.value("status", std::string{"known"}), {"known", "unavailable"})) {
-            error("INV-01 partner.status 非法: " + id);
-        }
-    }
+    // INV-13：伙伴、委员会及其成员/渠道归属与生命周期。
+    validate_vendors(state, claim_id, error);
 
-    // 委员会：成员/渠道不重复、活跃委员会必须指向在制项目
-    for (const auto& committee : state.committees) {
-        if (!committee.is_object()) { error("INV-01 committee 必须是对象"); continue; }
-        const std::string id = committee.value("id", std::string{});
-        claim_id(id, "committee");
-        const std::string work_id = committee.value("work_id", std::string{});
-        if (work_id.empty()) error("INV-01 committee.work_id 缺失: " + id);
-        if (!committee.contains("members") || !committee.at("members").is_array() || committee.at("members").empty()) {
-            error("INV-01 committee.members 必须非空: " + id);
-        } else {
-            std::set<std::string> partners;
-            std::set<std::string> channels;
-            for (const auto& member : committee.at("members")) {
-                const std::string partner_id = member.value("partner_id", std::string{});
-                const std::string channel = member.value("channel", std::string{});
-                if (!partners.insert(partner_id).second) error("INV-01 委员会成员重复: " + id);
-                if (!channels.insert(channel).second) error("INV-01 委员会渠道重复: " + id);
-                if (find_partner(state, partner_id) == nullptr) error("INV-01 委员会成员不存在: " + partner_id);
-            }
-        }
-        const std::string status = committee.value("status", std::string{"active"});
-        if (status != "active" && status != "closed") error("INV-01 committee.status 非法: " + id);
-        if (status == "active" && find_work(state, work_id) == nullptr) {
-            error("INV-01 活跃委员会的项目不存在: " + work_id);
-        }
-        const int formed = committee.value("formed_week", 0);
-        if (formed < 0 || formed > state.company.week) error("INV-01 committee.formed_week 越界: " + id);
-        if (committee.contains("closed_week") && committee.at("closed_week").is_number_integer()) {
-            const int closed = committee.at("closed_week").get<int>();
-            if (closed < formed) error("INV-01 committee.closed_week 早于成立周: " + id);
-        }
-    }
+    // INV-22：WorkRecord 全量载荷、系列引用与终局统计一起校验。
+    validate_archive(state, claim_id, error);
+    validate_partnerships(state, claim_id, error);
 
-    // 市场：槽位上限、企划必填字段
     if (!state.market.is_object()) {
         error("INV-01 market 必须是对象");
     } else {
@@ -1257,11 +1406,6 @@ std::vector<std::string> validate(const GameState& state) {
             }
         }
     }
-
-    validate_vendors(state, claim_id, error);
-
-    // INV-22：WorkRecord 全量载荷、系列引用与终局统计一起校验。
-    validate_archive(state, claim_id, error);
 
     // INV-23：待处理事件按项目保留；同一项目最多一条；事件必须归属有效项目。
     if (state.events.last_event_week && (*state.events.last_event_week < 0 ||
@@ -1337,6 +1481,32 @@ std::string state_hash(const GameState& state) {
     std::sort(copy.contracts.begin(), copy.contracts.end(), [&json_id](const Json& a, const Json& b) {
         return json_id(a) < json_id(b);
     });
+    std::sort(copy.partners.begin(), copy.partners.end(), [&json_id](const Json& a, const Json& b) {
+        return json_id(a) < json_id(b);
+    });
+    std::sort(copy.committees.begin(), copy.committees.end(), [&json_id](const Json& a, const Json& b) {
+        return json_id(a) < json_id(b);
+    });
+    for (auto& partner : copy.partners) {
+        if (partner.is_object() && partner.contains("channels") && partner.at("channels").is_array()) {
+            auto& channels = partner.at("channels");
+            std::sort(channels.begin(), channels.end(), [](const Json& a, const Json& b) { return a.dump() < b.dump(); });
+        }
+    }
+    for (auto& committee : copy.committees) {
+        if (!committee.is_object() || !committee.contains("members") || !committee.at("members").is_array()) continue;
+        auto& members = committee.at("members");
+        auto member_key = [](const Json& member) {
+            const std::string partner_id = member.is_object() && member.contains("partner_id") && member.at("partner_id").is_string()
+                ? member.at("partner_id").get<std::string>() : std::string{};
+            const std::string channel = member.is_object() && member.contains("channel") && member.at("channel").is_string()
+                ? member.at("channel").get<std::string>() : std::string{};
+            return partner_id + "\n" + channel;
+        };
+        std::sort(members.begin(), members.end(), [&member_key](const Json& a, const Json& b) {
+            return member_key(a) < member_key(b);
+        });
+    }
     for (auto& supplier : copy.suppliers) {
         if (supplier.is_object() && supplier.contains("specialties") && supplier.at("specialties").is_array()) {
             auto& specialties = supplier.at("specialties");

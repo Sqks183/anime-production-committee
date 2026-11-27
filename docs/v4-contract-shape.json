@@ -130,6 +130,34 @@
       "work_done",
       "work_id",
       "work_total"
+    ],
+    "state.partners[]": [
+      "channels",
+      "history",
+      "id",
+      "name",
+      "prestige",
+      "relationship",
+      "status",
+      "type"
+    ],
+    "state.partners[].history[]": [
+      "delta",
+      "reason",
+      "week",
+      "work_id"
+    ],
+    "state.committees[]": [
+      "closed_week",
+      "formed_week",
+      "id",
+      "members",
+      "status",
+      "work_id"
+    ],
+    "state.committees[].members[]": [
+      "channel",
+      "partner_id"
     ]
   },
   "reserved_fields": [
@@ -448,6 +476,7 @@
       "INV-09",
       "INV-11",
       "INV-12",
+      "INV-13",
       "INV-16",
       "INV-18",
       "INV-19",
@@ -627,8 +656,6 @@
     "state.archive.works[].quality.dims": [
       "animation", "art", "direction", "drawing", "sound", "story"
     ],
-    "state.committees[]": ["closed_week", "formed_week", "id", "members", "status", "work_id"],
-    "state.committees[].members[]": ["channel", "partner_id"],
     "state.company.reputation_log[]": [
       "after",
       "delta",
@@ -665,7 +692,6 @@
     "state.market.custom_offer.channel_potentials": [
       "bd_dvd", "domestic_streaming", "merchandise", "music", "overseas", "tv"
     ],
-    "state.partners[].history[]": ["delta", "reason", "week", "work_id"],
     "state.staff[].last_participation": [
       "item_id",
       "week",
@@ -937,6 +963,18 @@
       "work_id",
       "work_total"
     ],
+    "state.committees[]": [
+      "closed_week",
+      "formed_week",
+      "id",
+      "members",
+      "status",
+      "work_id"
+    ],
+    "state.committees[].members[]": [
+      "channel",
+      "partner_id"
+    ],
     "state.partners[]": [
       "channels",
       "history",
@@ -946,6 +984,12 @@
       "relationship",
       "status",
       "type"
+    ],
+    "state.partners[].history[]": [
+      "delta",
+      "reason",
+      "week",
+      "work_id"
     ],
     "state.staff[]": [
       "abilities",
@@ -1119,6 +1163,8 @@
     "state.staff",
     "state.suppliers",
     "state.contracts",
+    "state.partners",
+    "state.committees",
     "state.works",
     "state.works[].supervisor_staff_id",
     "state.finance",
@@ -1164,6 +1210,17 @@
     "reliability_failure_implemented": false,
     "capacity_invariant": "sum(active weekly_cap by supplier_id) <= capacity_per_week",
     "delivery_invariant": "sum(work_done by item_id across contracts) <= work_item.work_total"
+  },
+  "partnership_contract": {
+    "status_validation_implemented": true,
+    "partner_exact_fields": 8,
+    "committee_exact_fields": 6,
+    "history_exact_fields": 4,
+    "inv13_asserted": true,
+    "active_committee_allows_delivering": true,
+    "closed_committee_requires_archive": true,
+    "history_requires_archived_work": true,
+    "hash_normalizes_partner_and_committee_order": true
   },
   "archive_contract": {
     "work_record_root_field_count": 28,

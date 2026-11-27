@@ -372,6 +372,8 @@ const requiredProbes = {
   'state.staff': (s) => delete s.staff,
   'state.suppliers': (s) => delete s.suppliers,
   'state.contracts': (s) => delete s.contracts,
+  'state.partners': (s) => delete s.partners,
+  'state.committees': (s) => delete s.committees,
   'state.works': (s) => delete s.works,
   'state.works[].supervisor_staff_id': (s) => delete s.works[0].supervisor_staff_id,
   'state.finance': (s) => delete s.finance,
@@ -410,7 +412,8 @@ for (const path of shape.required_on_parse) {
   }
   const base = structuredClone(path.startsWith('state.archive') ? deliveryReceipt.state
     : path === 'state.suppliers' || path === 'state.contracts' ? vendorState
-      : path.includes('pending') ? pendingState : state)
+      : path === 'state.partners' || path === 'state.committees' ? startReceipt.state
+        : path.includes('pending') ? pendingState : state)
   if (path.includes('pending[]') && !base.events.pending.length) {
     fail('探针需要含 pending 事件的样例状态，但本次运行没有')
     continue
@@ -611,6 +614,54 @@ vendorReordered.suppliers.reverse()
 vendorReordered.contracts.reverse()
 if (call('hash_state', { state: vendorState }).hash !== call('hash_state', { state: vendorReordered }).hash) {
   fail('suppliers/contracts 数组顺序影响了规范化哈希')
+}
+if (!shape.partnership_contract.status_validation_implemented ||
+    shape.partnership_contract.partner_exact_fields !== 8 ||
+    shape.partnership_contract.committee_exact_fields !== 6 ||
+    shape.partnership_contract.history_exact_fields !== 4 ||
+    !shape.partnership_contract.inv13_asserted ||
+    !shape.partnership_contract.active_committee_allows_delivering ||
+    !shape.partnership_contract.closed_committee_requires_archive ||
+    !shape.partnership_contract.history_requires_archived_work ||
+    !shape.partnership_contract.hash_normalizes_partner_and_committee_order) {
+  fail('Partner/Committee 强契约、INV-13 或生命周期边界未完整冻结')
+}
+for (const path of ['state.partners[]', 'state.partners[].history[]', 'state.committees[]', 'state.committees[].members[]']) {
+  if (!shape.paths[path] || JSON.stringify(shape.paths[path]) !== JSON.stringify(shape.contract_fields[path])) {
+    fail(`${path} 未同步登记到 paths 与 contract_fields`)
+  }
+}
+const partnershipProbes = [
+  ['Partner 未知字段', startReceipt.state, (probe) => { probe.partners[0].unknown = true }, 'INV-01'],
+  ['Partner history 未知字段', startReceipt.state, (probe) => {
+    probe.partners[0].history = [{ week: 0, work_id: 'work_missing', delta: 2, reason: '审计', unknown: true }]
+  }, 'INV-13'],
+  ['Committee 未知字段', startReceipt.state, (probe) => { probe.committees[0].unknown = true }, 'INV-01'],
+  ['委员会渠道不属于伙伴', startReceipt.state, (probe) => { probe.committees[0].members[1].channel = 'overseas' }, 'INV-13'],
+  ['BD 不得挂成员', startReceipt.state, (probe) => { probe.committees[0].members[1].channel = 'bd_dvd' }, 'INV-13'],
+  ['活跃委员会项目错引', startReceipt.state, (probe) => { probe.works[0].committee_id = 'committee_missing' }, 'INV-13'],
+  ['关闭委员会缺少 Archive', deliveryReceipt.state, (probe) => {
+    probe.archive.works = []
+    probe.archive.series = []
+    for (const partner of probe.partners) partner.history = []
+  }, 'INV-13'],
+  ['Partner history 引用未归档作品', deliveryReceipt.state, (probe) => {
+    probe.partners[0].history = [{ week: 0, work_id: 'work_missing', delta: 2, reason: '审计' }]
+  }, 'INV-13']
+]
+for (const [label, base, mutate, invariant] of partnershipProbes) {
+  const probe = structuredClone(base)
+  mutate(probe)
+  const result = call('advance_week', { state: probe })
+  if (result.error?.code !== 'INVALID_STATE' || !result.error.message.includes(invariant) || 'state' in result) {
+    fail(`${label} 应以 ${invariant}/INVALID_STATE 原子拒绝，实际 ${result.error ? `${result.error.code}: ${result.error.message}` : '成功返回'}`)
+  }
+}
+const partnershipReordered = structuredClone(startReceipt.state)
+partnershipReordered.partners.reverse()
+for (const committee of partnershipReordered.committees) committee.members.reverse()
+if (call('hash_state', { state: startReceipt.state }).hash !== call('hash_state', { state: partnershipReordered }).hash) {
+  fail('partners/committees/members 数组顺序影响了规范化哈希')
 }
 expectInvalidState('正常状态负余额', (probe) => {
   probe.finance.opening_funds = 0

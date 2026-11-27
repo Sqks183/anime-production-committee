@@ -853,12 +853,17 @@ Offer { id, name, source, genre, scale, contract_budget, duration_weeks, target_
 - `OutsourceContract.weekly_cap` 之和（同一供应商、active）≤ `Supplier.capacity_per_week`。
 - 合同的 `item_id` 必须属于同一 `work_id`；`episode_id` 与该工作项所在容器一致。
 - 同一工作项可同时接受内部产能与多个外包合同，但累计交付不得超过其 `work_total`（超出部分不出产、不退款）。
-- `Committee.members` 中成员不重复、渠道不重复（一个成员一个渠道，`bd` 不挂成员）。
+- `Committee.members` 中成员不重复、渠道不重复（一个成员一个渠道，`bd_dvd` 不挂成员），且成员渠道必须属于该 Partner。
+- active `Committee` 必须与同一 `mode=committee` 项目双向引用；项目允许 `producing/delivering`，`formed_week=opened_week`。
+- closed `Committee` 不得引用活动项目，且成立/关闭周必须与对应 Archive WorkRecord 的 `start_week/end_week` 一致。
+- `Partner.history[]` 只能引用已归档作品，且合作周必须等于该作品的 `end_week`。
 - `mode=contract ⇒ committee_id=null ∧ investment.percent=0 ∧ investment.paid=0`。
 - `mode=committee ⇒ investment.percent ∈ {10,20,…,100} ∧ committee_id≠null`。
 - `Offer.allowed_modes`：普通企划必含 contract 与 committee；原创只含 committee。
 
 **Vendor 运行时现状（2026-11-27）**：`suppliers` / `contracts` 仍以 `Json` 存储，但解析要求根数组必填，`validate` 已精确校验 Supplier 9 字段与 OutsourceContract 15 字段，并落实 INV-19/20、全局 id、供应商解锁/专业匹配、active 项目状态、episode 容器、能力一致性、费用/周期边界和 int64 汇总保护。active 合同计入共享容量；delivered/failed 合同不计入，但所有终态合同仍必须保留可校验的项目与工作项引用。`state_hash` 按 id 规范化 suppliers / contracts，并排序 specialties。
+
+**Partnership 运行时现状（2026-11-27）**：`partners` / `committees` 根数组解析必填；Partner 精确 8 字段、history 精确 4 字段、Committee 精确 6 字段、member 精确 2 字段。INV-13 已断言成员/渠道唯一、伙伴渠道归属、BD 不挂成员、项目双向引用、active/closed 生命周期、关闭后 Archive 一致性及 history 归档引用。active Committee 允许指向 `delivering`，以覆盖 `end_company → finalize_delivery` 的合法中间态。`state_hash` 按 id 规范化 partners / committees，并排序 Partner.channels 与 Committee.members；history 保持追加顺序，不用排序掩盖乱序。
 
 上述状态约束不等于外包玩法已开放：`sign_outsourcing`、供应商默认目录、`weekly_cap` 推导、按周交付、费用支付、可靠性失败以及交付/中止时自动把未完成合同置 `failed` 均尚未实现。§6.4 / §7.3 中“未完成合同置 failed”是目标结算规则，当前 runtime 不得伪报已执行。
 

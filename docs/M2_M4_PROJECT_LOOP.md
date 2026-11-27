@@ -1,6 +1,6 @@
 # M2 项目全链路 + M4 商业结算（实现说明）
 
-> 状态：**分支实现，未完成里程碑验收**。M2 主链路（立项 → 制作 → 正常/到期交付 → 公司关闭 → Archive → 财务）与 M4 商业结算核心（委员会、投资、六窗口、分成、伙伴关系）已落地；INV-27 监督岗位、§14.7 八阶段周结算与 INV-29 到期默认分支已接入。中止处罚/履历、终局 pending 转移/归档、事件升级载荷仍待契约裁决；融资、M3 供应商/市场刷新仍是缺口。
+> 状态：**分支实现，未完成里程碑验收**。M2 主链路（立项 → 制作 → 正常/到期交付 → 公司关闭 → Archive → 财务）与 M4 商业结算核心（委员会、投资、六窗口、分成、伙伴关系）已落地；M4-A 的 Partner/Committee 强契约、INV-13 生命周期与顺序无关哈希已接入。INV-27 监督岗位、§14.7 八阶段周结算与 INV-29 到期默认分支已接入。中止处罚/履历、终局 pending 转移/归档、事件升级载荷仍待契约裁决；融资、M3 供应商/市场刷新仍是缺口。
 > 契约依据：[M0_CONTRACT_FREEZE.md](M0_CONTRACT_FREEZE.md) 命令 2/10/15/16/20/21/22、§7；[DOMAIN_ARCHITECTURE.md](DOMAIN_ARCHITECTURE.md) §7.3.6/§9.3/§10.1/§10.3/§10.6；[DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md) M2/M4。
 
 ## 1. 已实现命令
@@ -96,8 +96,8 @@ BD 公司所得 = BD 毛收入 × 50%；另 50% 为综合成本，不进入池�
 - Staff：`signing_fee`（≥0）+ `weekly_salary`（>0），不再有 `project_fee`；employment 枚举。
 - Finance：`loans` 与 `solvency.state` 必填；缺字段返回 `INVALID_INPUT`，不静默补 0。
 - Project：`mode` 枚举；`status` 枚举（planning/producing/delivering/settled）；`deadline > opened`；真实项目渠道非空；承制 `committee_id=null` 且投资全 0；委员会项目必须有 `committee_id` 且比例 10..100/10。
-- Committee：成员/渠道不重复、成员必须是已知伙伴、活跃委员会必须指向在制项目、成立/关闭周合法。
-- Partner：类型枚举、渠道非空且唯一、关系 0..100、状态枚举。
+- Committee：精确 6 字段；成员/渠道不重复、成员必须是已知伙伴且渠道归属一致、`bd_dvd` 不挂成员；active 必须与同一委员会项目双向引用并允许 `producing/delivering`；closed 不得引用活动项目，且成立/关闭周与 Archive 一致（INV-13）。
+- Partner：精确 8 字段；类型/渠道/关系/状态合法；history 精确 4 字段，只引用已归档作品且合作周与 `end_week` 一致（INV-13）。partners / committees / members 顺序不影响规范化哈希。
 - Market：槽位 ≤4、企划预算/工期/蓝图/渠道/模式必填、热度档位合法。
 - Archive：记录 id 全局唯一、评级与 `end_reason` 枚举、`gate_completion_permille` 0..1000、结束周不晚于当前周。
 - 待处理事件：同项目至多一条；`expires_week=null` 表示非限期，限期必须落在 `triggered_week..triggered_week+7` 且带 `abandon` 默认分支；阶段 7 按 `(work_id,event_id)` 顺序只处理目标事件。升级载荷/已升级标记未冻结，当前不实现升级。交付/主动关闭前必须先处理，不得清空（DEC-EVENT-001）。
@@ -106,7 +106,7 @@ BD 公司所得 = BD 毛收入 × 50%；另 50% 为综合成本，不进入池�
 
 ## 7. 测试
 
-`scripts/v4.test.mjs` 共 81 条；本轮与项目闭环相关的关键用例：
+`scripts/v4.test.mjs` 共 100 条；本轮与项目闭环相关的关键用例：
 
 1. 到期强制交付：未达门槛在结算周自动交付，`deadline`、按完成度扣罚、归档并移除项目；
 2. 到期交付：门槛达成按 `completed` 正常计价，不扣罚；
@@ -128,8 +128,9 @@ BD 公司所得 = BD 毛收入 × 50%；另 50% 为综合成本，不进入池�
 18. 临时员工：周结算不积累长期经验，结项退出名册且贡献保留在团队快照；
 19. 企划 ID：活动项目占用期间跳过草稿号，归档后凭 `offer_id` 仍不复用；
 20. 周回执：`funds.delta` 等于整周实际现金净变化，阶段 8 事件以次周为时间基。
+21. M4-A 强契约：Partner/Committee 精确载荷、成员渠道归属、active/closed 与 Archive 一致性、history 归档引用，以及 partners / committees / members 顺序无关哈希。
 
-本机 `.tools/emsdk` 可执行真实 WASM 构建；`npm run test:v4` 结果 **81/81**。
+本机 `.tools/emsdk` 可执行真实 WASM 构建；`npm run test:v4` 结果 **100/100**。
 
 ## 8. 里程碑判定（如实）
 
@@ -138,7 +139,7 @@ BD 公司所得 = BD 毛收入 × 50%；另 50% 为综合成本，不进入池�
 | M2 | 立项（含原创草稿准入）、蓝图实例化、制作、正常交付、到期强制交付、公司关闭/结清/结局、Archive、成本归因、事件处理、INV-27 监督岗位、INV-29 到期默认分支 | 中止处罚/履历、终局 pending 归档/转移、事件升级载荷、真实市场来源、12 集完整人工试玩 |
 | M2.5 | 预检失败整周回滚并直接破产终局（§14.7，无 pending 场景）、交付结算负余额原子拒绝 | 破产/520 周携带 pending 的合法终局、融资/贷款与终局展开 |
 | M3 | 多项目并存、人员单项目归属、遍历顺序无关 | 企划槽刷新/竞争、供应商目录与外包、520 周长跑 |
-| M4 | 委员会、投资比例、六窗口、BD 归属、净池分成、电视倍率、伙伴关系与 history | 更多伙伴/渠道类型、合作关系玩法、特殊商业机会、完整对账报表 |
+| M4 | 委员会、投资比例、六窗口、BD 归属、净池分成、电视倍率、伙伴关系与 history、Partner/Committee 强契约与 INV-13、顺序无关哈希 | 更多伙伴/渠道类型、合作关系玩法、特殊商业机会、完整对账报表 |
 
 **结论：不能宣称 M4 已验收。** 当前是把 M4 的商业结算核心接在 M2 主链路上；M2.5/M3 的缺口不补，M4 的“产业关系”只是一条单项目结算路径。
 
