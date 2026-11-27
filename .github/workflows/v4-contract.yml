@@ -10,6 +10,9 @@ on:
       - "content/events/**"
       - "packages/game-core/**"
       - "scripts/lib/**"
+      - "scripts/market.test.mjs"
+      - "scripts/check-market-cases.mjs"
+      - "docs/fixtures/market_cases.json"
       - "scripts/v4.test.mjs"
       - "scripts/audit-v4-contract.mjs"
       - "docs/v4-contract-shape.json"
@@ -30,6 +33,9 @@ on:
       - "content/events/**"
       - "packages/game-core/**"
       - "scripts/lib/**"
+      - "scripts/market.test.mjs"
+      - "scripts/check-market-cases.mjs"
+      - "docs/fixtures/market_cases.json"
       - "scripts/v4.test.mjs"
       - "scripts/audit-v4-contract.mjs"
       - "docs/v4-contract-shape.json"
@@ -68,6 +74,22 @@ jobs:
         run: |
           node scripts/build-event-catalog.mjs
           git diff --exit-code packages/game-core/src/v4/event_catalog_generated.cpp
+
+  market-oracle:
+    name: 市场规则 Oracle 与契约用例
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate market contract cases
+        run: npm run validate:market
+      - name: Run market oracle and shared random tests
+        run: npm run test:market
 
   v4-contract:
     name: v4 契约测试（WASM）

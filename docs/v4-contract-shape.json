@@ -72,6 +72,11 @@
     }
   },
   "contract_fields": {
+    "state.archive": [
+      "company_result",
+      "series",
+      "works"
+    ],
     "state.staff[]": [
       "abilities",
       "assignment_work_id",
@@ -97,6 +102,62 @@
       "loans",
       "opening_funds",
       "solvency"
+    ],
+    "state.suppliers[]": [
+      "capacity_per_week",
+      "id",
+      "name",
+      "price_per_unit",
+      "quality",
+      "reliability",
+      "speed",
+      "specialties",
+      "unlocked_week"
+    ],
+    "state.contracts[]": [
+      "ability",
+      "due_week",
+      "episode_id",
+      "fee_paid",
+      "fee_total",
+      "id",
+      "item_id",
+      "mode",
+      "signed_week",
+      "status",
+      "supplier_id",
+      "weekly_cap",
+      "work_done",
+      "work_id",
+      "work_total"
+    ],
+    "state.partners[]": [
+      "channels",
+      "history",
+      "id",
+      "name",
+      "prestige",
+      "relationship",
+      "status",
+      "type"
+    ],
+    "state.partners[].history[]": [
+      "delta",
+      "reason",
+      "week",
+      "work_id"
+    ],
+    "state.committees[]": [
+      "closed_week",
+      "formed_week",
+      "id",
+      "members",
+      "status",
+      "work_id"
+    ],
+    "state.committees[].members[]": [
+      "channel",
+      "partner_id"
     ]
   },
   "reserved_fields": [
@@ -170,6 +231,7 @@
     ]
   },
   "dynamic_key_maps": [
+    "state.archive.works[].finance_summary.costs",
     "state.events.per_work",
     "state.events.per_work.*.cooldowns"
   ],
@@ -469,9 +531,13 @@
       "INV-09",
       "INV-11",
       "INV-12",
+      "INV-13",
       "INV-16",
       "INV-18",
+      "INV-19",
+      "INV-20",
       "INV-21",
+      "INV-22",
       "INV-23",
       "INV-24",
       "INV-25",
@@ -538,6 +604,7 @@
       "investor_share",
       "net_received",
       "penalty",
+      "penalty_waived",
       "quality_score",
       "rating",
       "rules_status",
@@ -570,6 +637,12 @@
       "total_projects",
       "weeks"
     ],
+    "state.archive.series[]": [
+      "ip_id",
+      "last_week",
+      "title",
+      "works"
+    ],
     "state.archive.works[]": [
       "bd_gross",
       "bd_revenue",
@@ -587,6 +660,7 @@
       "id",
       "investment_percent",
       "investor_share",
+      "ip_id",
       "mode",
       "name",
       "offer_id",
@@ -628,6 +702,11 @@
       "drawing",
       "sound",
       "story"
+    ],
+    "state.archive.works[].team[]": [
+      "id",
+      "name",
+      "role"
     ],
     "state.archive.works[].finance_summary": [
       "bd_revenue",
@@ -757,6 +836,7 @@
       "expires_week",
       "genre",
       "id",
+      "ip_id",
       "lock_used",
       "locked_until",
       "min_reputation",
@@ -1012,6 +1092,35 @@
       "overseas",
       "tv"
     ],
+    "state.contracts[]": [
+      "ability",
+      "due_week",
+      "episode_id",
+      "fee_paid",
+      "fee_total",
+      "id",
+      "item_id",
+      "mode",
+      "signed_week",
+      "status",
+      "supplier_id",
+      "weekly_cap",
+      "work_done",
+      "work_id",
+      "work_total"
+    ],
+    "state.committees[]": [
+      "closed_week",
+      "formed_week",
+      "id",
+      "members",
+      "status",
+      "work_id"
+    ],
+    "state.committees[].members[]": [
+      "channel",
+      "partner_id"
+    ],
     "state.partners[]": [
       "channels",
       "history",
@@ -1021,6 +1130,12 @@
       "relationship",
       "status",
       "type"
+    ],
+    "state.partners[].history[]": [
+      "delta",
+      "reason",
+      "week",
+      "work_id"
     ],
     "state.staff[]": [
       "abilities",
@@ -1072,6 +1187,17 @@
       "management",
       "planning",
       "postproduction"
+    ],
+    "state.suppliers[]": [
+      "capacity_per_week",
+      "id",
+      "name",
+      "price_per_unit",
+      "quality",
+      "reliability",
+      "speed",
+      "specialties",
+      "unlocked_week"
     ],
     "state.works[]": [
       "channels",
@@ -1311,8 +1437,16 @@
   },
   "required_on_parse": [
     "state",
+    "state.archive",
+    "state.archive.works",
+    "state.archive.series",
+    "state.archive.company_result",
     "state.company",
     "state.staff",
+    "state.suppliers",
+    "state.contracts",
+    "state.partners",
+    "state.committees",
     "state.works",
     "state.works[].supervisor_staff_id",
     "state.finance",
@@ -1360,6 +1494,46 @@
     "nondefault_solvency_fields_allowed": false,
     "future_ledger_categories_allowed": false,
     "arrange_financing_export_allowed": false
+  },
+  "vendor_contract": {
+    "status_validation_implemented": true,
+    "sign_outsourcing_implemented": false,
+    "weekly_delivery_implemented": false,
+    "fee_settlement_implemented": false,
+    "reliability_failure_implemented": false,
+    "capacity_invariant": "sum(active weekly_cap by supplier_id) <= capacity_per_week",
+    "delivery_invariant": "sum(work_done by item_id across contracts) <= work_item.work_total"
+  },
+  "partnership_contract": {
+    "status_validation_implemented": true,
+    "partner_exact_fields": 8,
+    "committee_exact_fields": 6,
+    "history_exact_fields": 4,
+    "inv13_asserted": true,
+    "active_committee_allows_delivering": true,
+    "closed_committee_requires_archive": true,
+    "history_requires_archived_work": true,
+    "hash_normalizes_partner_and_committee_order": true
+  },
+  "archive_contract": {
+    "work_record_root_field_count": 28,
+    "work_record_shape": "state.archive.works[]",
+    "series_source": "OfferSnapshot.ip_id -> Project.ip_id -> WorkRecord.ip_id -> Archive.series",
+    "series_write": "completed/deadline/company_closed 交付结算与 WorkRecord 同次原子提交；aborted 不归档",
+    "series_title": "首次交付冻结；同 IP 续作只追加 works 并更新 last_week",
+    "profit_formula": "contract_received + commercial_share + success_reward - investment_paid - total_costs",
+    "cost_categories_are_dynamic_subset": true,
+    "allowed_cost_categories": [
+      "salary",
+      "production",
+      "temporary",
+      "outsourcing",
+      "events",
+      "extension",
+      "distribution",
+      "penalty",
+      "development"
+    ]
   },
   "schema_version": 1,
   "source": "docs/DATA_DICTIONARY_V4.md"

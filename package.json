@@ -35,10 +35,10 @@
     "build:blueprints": "node scripts/build-blueprint-catalog.mjs",
     "audit:v4": "node scripts/audit-v4-contract.mjs",
     "check:docs": "python scripts/check_docs.py",
-    "validate:recruit": "node scripts/check-recruit-cases.mjs docs/fixtures/recruit_cases.json",
-    "test:recruit": "node --test scripts/recruit.test.mjs",
     "validate:market": "node scripts/check-market-cases.mjs docs/fixtures/market_cases.json",
-    "test:market": "node --test scripts/lib/coordinate-random.test.mjs scripts/market.test.mjs"
+    "test:market": "node --test scripts/lib/coordinate-random.test.mjs scripts/market.test.mjs",
+    "validate:recruit": "node scripts/check-recruit-cases.mjs docs/fixtures/recruit_cases.json",
+    "test:recruit": "node --test scripts/recruit.test.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.65.1"
