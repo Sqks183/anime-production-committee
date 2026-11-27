@@ -1433,6 +1433,11 @@
     ],
     "dismiss_staff": [
       "state"
+    ],
+    "lock_offer": [
+      "deposit_paid",
+      "offer_id",
+      "state"
     ]
   },
   "required_on_parse": [

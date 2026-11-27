@@ -336,10 +336,6 @@ collect(adoptReceipt.state, 'state', observed)
 rejectReceipt = unwrap('reject_proposal', { state: proposalBase })
 collect(rejectReceipt.state, 'state', observed)
 
-const lockBase = fundedInitialize()
-const lockReceipt = unwrap('lock_offer', { state: lockBase, offer_id: lockBase.market.slots[0].id })
-collect(lockReceipt.state, 'state', observed)
-
 // 招聘闭环（M0 命令 5/6/7）：独立状态走 scout → hire_core → dismiss_staff，
 // 不污染主审计状态（第 7 节断言主状态名册 signing_fee 恒为 0）。
 const recruitBase = fundedInitialize()
@@ -349,6 +345,22 @@ const hireReceipt = unwrap('hire_core', { state: scoutReceipt.state, staff_id: s
 collect(hireReceipt.state, 'state', observed)
 const dismissReceipt = unwrap('dismiss_staff', { state: hireReceipt.state, staff_id: hireReceipt.staff_id })
 collect(dismissReceipt.state, 'state', observed)
+
+// 市场闭环（M0 命令 23/2）：独立状态走 lock_offer → start_work（锁定期内定金抵扣），
+// 再对未锁定状态 advance_week 一次，观察坐标生成企划与周补充形状。
+const marketBase = fundedInitialize()
+const lockReceipt = unwrap('lock_offer', { state: marketBase, offer_id: marketBase.market.slots[0].id })
+collect(lockReceipt.state, 'state', observed)
+const lockedStartReceipt = unwrap('start_work', {
+  state: lockReceipt.state,
+  offer_id: lockReceipt.offer_id,
+  mode: 'committee',
+  percent: 50,
+  committee_partner_ids: ['partner_tv', 'partner_stream']
+})
+collect(lockedStartReceipt.state, 'state', observed)
+const marketWeekReceipt = unwrap('advance_week', { state: marketBase })
+collect(marketWeekReceipt.state, 'state', observed)
 
 collect(state, 'state', observed)
 collect(vendorState, 'state', observed)
@@ -474,10 +486,10 @@ const receipts = {
   create_custom_offer: Object.keys(customOfferReceipt).filter((key) => key !== 'error'),
   adopt_proposal: Object.keys(adoptReceipt).filter((key) => key !== 'error'),
   reject_proposal: Object.keys(rejectReceipt).filter((key) => key !== 'error'),
-  lock_offer: Object.keys(lockReceipt).filter((key) => key !== 'error'),
   scout: Object.keys(scoutReceipt).filter((key) => key !== 'error'),
   hire_core: Object.keys(hireReceipt).filter((key) => key !== 'error'),
   dismiss_staff: Object.keys(dismissReceipt).filter((key) => key !== 'error'),
+  lock_offer: Object.keys(lockReceipt).filter((key) => key !== 'error'),
   hash_state: Object.keys(unwrap('hash_state', { state })).filter((key) => key !== 'error')
 }
 if (viewReceipt) receipts.view_event = Object.keys(viewReceipt).filter((key) => key !== 'error')

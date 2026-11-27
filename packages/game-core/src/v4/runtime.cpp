@@ -668,30 +668,13 @@ const PoolCandidate* find_candidate(const GameState& state, const std::string& s
     return nullptr;
 }
 
-}  // namespace
-
-bool archive_exact_fields(const Json& value, std::initializer_list<const char*> fields) {
-    if (!value.is_object() || value.size() != fields.size()) return false;
-    return std::all_of(fields.begin(), fields.end(), [&value](const char* field) { return value.contains(field); });
-}
-
-bool archive_text(const Json& value) { return value.is_string() && !value.get_ref<const std::string&>().empty(); }
-
-bool archive_integer(const Json& value, std::int64_t low, std::int64_t high = std::numeric_limits<std::int64_t>::max()) {
-    if (!value.is_number_integer()) return false;
-    if (value.is_number_unsigned()) {
-        const auto number = value.get<std::uint64_t>();
-        return number <= static_cast<std::uint64_t>(high) && static_cast<std::int64_t>(number) >= low;
-    }
-    const auto number = value.get<std::int64_t>();
-    return number >= low && number <= high;
-}
-
-bool archive_add(std::int64_t& total, std::int64_t amount) {
-    if (amount < 0 || total > std::numeric_limits<std::int64_t>::max() - amount) return false;
-    total += amount;
-    return true;
-}
+// ---------------- 市场生命周期（M0 §14.13.2 / Q4）----------------
+// 企划市场固定四槽、每周只补空槽，并保障至少两个可立即承接的企划。
+// 锁定期两周、定金 5%/10% × deposit_basis（生成时固定）、锁定期内签约 100% 抵扣、
+// 到期定金不退为冻结语义；有效期分布为 [PLACEHOLDER]（#59/M7）。
+// 初始 4 槽沿用 M1 fixture 目录（内容待 #59 标定，现有验收用例依赖），生命周期字段按冻结契约补齐；
+// 每周自然补充走坐标生成，与 scripts/lib/market-oracle.mjs generateOffer 逐位一致。
+// 企划 id 含 week+index 坐标，终身唯一由构造保证；锁定历史不得被槽位刷新洗掉（M0 §14.13.2）。
 
 constexpr int kMarketCap = 4;                 // DEC-MARKET-001：企划市场固定四槽
 constexpr int kMinimumAcceptableOffers = 2;   // DEC-MARKET-001：至少两个可立即承接
@@ -795,6 +778,8 @@ bool offer_in_lock(const Json& offer, int week) {
            week < offer.at("locked_until").get<int>();
 }
 
+// 周结算市场步（开局边界）：先释放到期锁定（定金不退），再自然过期（锁定期内受保护），
+// 最后补满空槽——不是清空重抽，存活企划逐字段不变。
 Json weekly_market_step(const Json& market, std::uint32_t seed, int week, int reputation) {
     Json next = market;
     Json slots = Json::array();
@@ -820,6 +805,32 @@ Json weekly_market_step(const Json& market, std::uint32_t seed, int week, int re
     next["slots"] = std::move(slots);
     next["refresh_week"] = week;
     return next;
+}
+
+
+}  // namespace
+
+bool archive_exact_fields(const Json& value, std::initializer_list<const char*> fields) {
+    if (!value.is_object() || value.size() != fields.size()) return false;
+    return std::all_of(fields.begin(), fields.end(), [&value](const char* field) { return value.contains(field); });
+}
+
+bool archive_text(const Json& value) { return value.is_string() && !value.get_ref<const std::string&>().empty(); }
+
+bool archive_integer(const Json& value, std::int64_t low, std::int64_t high = std::numeric_limits<std::int64_t>::max()) {
+    if (!value.is_number_integer()) return false;
+    if (value.is_number_unsigned()) {
+        const auto number = value.get<std::uint64_t>();
+        return number <= static_cast<std::uint64_t>(high) && static_cast<std::int64_t>(number) >= low;
+    }
+    const auto number = value.get<std::int64_t>();
+    return number >= low && number <= high;
+}
+
+bool archive_add(std::int64_t& total, std::int64_t amount) {
+    if (amount < 0 || total > std::numeric_limits<std::int64_t>::max() - amount) return false;
+    total += amount;
+    return true;
 }
 
 std::string archive_rating_of(int score) {
@@ -2028,6 +2039,8 @@ Json make_offer(const char* id, const char* name, const char* source, const char
                 {"workload_scale_permille", 1000},
                 {"origin", "publisher"},
                 {"style", "standard"}};
+    // §14.13.2 生命周期字段：fixture 目录的到期窗口为 [PLACEHOLDER]，
+    // 定金基数按生成时固定的基础立项费用快照。
     offer["offer_source_type"] = "market";
     offer["deposit_basis"] = budget;
     offer["expires_week"] = kFixtureExpiresWeek;
@@ -3669,9 +3682,6 @@ std::string start_work(const std::string& input) {
         const Json* offer = find_offer(state, offer_id);
         if (offer == nullptr) return encode(error_body("NOT_FOUND", "企划不存在或已被消费"));
         const Json& snapshot = *offer;
-        if (snapshot.contains("ip_id") && !snapshot.at("ip_id").is_null() && !archive_text(snapshot.at("ip_id"))) {
-            return encode(error_body("INVALID_STATE", "企划 ip_id 必须是非空字符串或 null"));
-        }
         const int week = state.company.week;
         bool market_slot = false;
         if (state.market.contains("slots") && state.market.at("slots").is_array()) {
@@ -3690,6 +3700,9 @@ std::string start_work(const std::string& input) {
             if (lock_expired || naturally_expired) {
                 return encode(error_body("NOT_FOUND", "企划不存在或已过期"));
             }
+        }
+        if (snapshot.contains("ip_id") && !snapshot.at("ip_id").is_null() && !archive_text(snapshot.at("ip_id"))) {
+            return encode(error_body("INVALID_STATE", "企划 ip_id 必须是非空字符串或 null"));
         }
         // DEC-PLAN-001 两级准入：普通企划看声望/履历；原创草稿只看草稿是否有效，
         // 草稿资格在 create_custom_offer 阶段检查，正式开工才检查全部应付款。
@@ -3815,7 +3828,6 @@ std::string start_work(const std::string& input) {
                                           {"message", "现金不足以支付投资额"},
                                           {"gap", cash_due - state.finance.balance}}}});
         }
-
         const std::string work_id = next_id(state, "work_", static_cast<int>(state.works.size()));
         Project work;
         std::string error;
