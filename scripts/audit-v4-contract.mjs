@@ -333,6 +333,16 @@ collect(adoptReceipt.state, 'state', observed)
 rejectReceipt = unwrap('reject_proposal', { state: proposalBase })
 collect(rejectReceipt.state, 'state', observed)
 
+// 招聘闭环（M0 命令 5/6/7）：独立状态走 scout → hire_core → dismiss_staff，
+// 不污染主审计状态（第 7 节断言主状态名册 signing_fee 恒为 0）。
+const recruitBase = fundedInitialize()
+const scoutReceipt = unwrap('scout', { state: recruitBase })
+collect(scoutReceipt.state, 'state', observed)
+const hireReceipt = unwrap('hire_core', { state: scoutReceipt.state, staff_id: scoutReceipt.added_ids[0] })
+collect(hireReceipt.state, 'state', observed)
+const dismissReceipt = unwrap('dismiss_staff', { state: hireReceipt.state, staff_id: hireReceipt.staff_id })
+collect(dismissReceipt.state, 'state', observed)
+
 collect(state, 'state', observed)
 collect(vendorState, 'state', observed)
 collect(pendingState, 'state', observed)
@@ -395,7 +405,18 @@ const requiredProbes = {
   'state.archive.company_result': (s) => delete s.archive.company_result,
   'state.events': (s) => delete s.events,
   'state.events.pending': (s) => delete s.events.pending,
-  'state.events.pending[].viewed': (s) => delete s.events.pending[0].viewed
+  'state.events.pending[].viewed': (s) => delete s.events.pending[0].viewed,
+  'state.recruitment': (s) => delete s.recruitment,
+  'state.recruitment.pool': (s) => delete s.recruitment.pool,
+  'state.recruitment.pity': (s) => delete s.recruitment.pity,
+  'state.recruitment.last_scout_week': (s) => delete s.recruitment.last_scout_week,
+  'state.recruitment.pity.since_sr': (s) => delete s.recruitment.pity.since_sr,
+  'state.recruitment.pity.since_ssr': (s) => delete s.recruitment.pity.since_ssr,
+  'state.recruitment.pool[].staff': (s) => delete s.recruitment.pool[0].staff,
+  'state.recruitment.pool[].expires_week': (s) => delete s.recruitment.pool[0].expires_week,
+  'state.recruitment.pool[].origin': (s) => delete s.recruitment.pool[0].origin,
+  'state.recruitment.pool[].staff.signing_fee': (s) => delete s.recruitment.pool[0].staff.signing_fee,
+  'state.recruitment.pool[].staff.weekly_salary': (s) => delete s.recruitment.pool[0].staff.weekly_salary
 }
 for (const path of shape.required_on_parse) {
   const mutate = requiredProbes[path]
@@ -446,6 +467,9 @@ const receipts = {
   create_custom_offer: Object.keys(customOfferReceipt).filter((key) => key !== 'error'),
   adopt_proposal: Object.keys(adoptReceipt).filter((key) => key !== 'error'),
   reject_proposal: Object.keys(rejectReceipt).filter((key) => key !== 'error'),
+  scout: Object.keys(scoutReceipt).filter((key) => key !== 'error'),
+  hire_core: Object.keys(hireReceipt).filter((key) => key !== 'error'),
+  dismiss_staff: Object.keys(dismissReceipt).filter((key) => key !== 'error'),
   hash_state: Object.keys(unwrap('hash_state', { state })).filter((key) => key !== 'error')
 }
 if (viewReceipt) receipts.view_event = Object.keys(viewReceipt).filter((key) => key !== 'error')
@@ -697,7 +721,7 @@ for (const category of categories) {
   if (!shape.ledger.categories_frozen.includes(category)) fail(`未冻结的账本类目：${category}`)
 }
 const badIds = state.finance.entries.filter(
-  (entry) => !/^w\d+\.(salary\.|operations$|production\.|event\.)/.test(entry.id)
+  (entry) => !/^w\d+\.(salary\.|operations(?:\.|$)|production\.|event\.)/.test(entry.id)
 )
 if (badIds.length) fail(`账本 id 不符合约定前缀：${badIds.slice(0, 3).map((entry) => entry.id).join(', ')}`)
 const ids = state.finance.entries.map((entry) => entry.id)

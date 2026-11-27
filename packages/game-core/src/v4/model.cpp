@@ -449,6 +449,42 @@ void from_json(const Json& j, EventState& value) {
     }
 }
 
+// ---------------- Recruitment ----------------
+void to_json(Json& j, const Recruitment& value) {
+    Json pool = Json::array();
+    for (const auto& candidate : value.pool) {
+        pool.push_back(Json{{"staff", candidate.staff},
+                            {"expires_week", candidate.expires_week ? Json(*candidate.expires_week) : Json(nullptr)},
+                            {"origin", candidate.origin}});
+    }
+    j = Json{{"pool", pool},
+             {"pity", Json{{"since_sr", value.pity.since_sr}, {"since_ssr", value.pity.since_ssr}}},
+             {"last_scout_week", value.last_scout_week ? Json(*value.last_scout_week) : Json(nullptr)}};
+}
+
+void from_json(const Json& j, Recruitment& value) {
+    value = Recruitment{};
+    if (j.contains("pool") && j.at("pool").is_array()) {
+        for (const auto& raw : j.at("pool")) {
+            if (!raw.is_object()) continue;
+            PoolCandidate candidate;
+            candidate.staff = raw.at("staff").get<Staff>();
+            candidate.origin = raw.value("origin", std::string{"regular"});
+            if (raw.contains("expires_week") && raw.at("expires_week").is_number_integer()) {
+                candidate.expires_week = raw.at("expires_week").get<int>();
+            }
+            value.pool.push_back(std::move(candidate));
+        }
+    }
+    if (j.contains("pity") && j.at("pity").is_object()) {
+        value.pity.since_sr = j.at("pity").value("since_sr", 0);
+        value.pity.since_ssr = j.at("pity").value("since_ssr", 0);
+    }
+    if (j.contains("last_scout_week") && j.at("last_scout_week").is_number_integer()) {
+        value.last_scout_week = j.at("last_scout_week").get<int>();
+    }
+}
+
 // ---------------- GameState ----------------
 void to_json(Json& j, const GameState& value) {
     Json staff = Json::array();
@@ -459,6 +495,7 @@ void to_json(Json& j, const GameState& value) {
              {"seed", value.seed},
              {"company", value.company},
              {"staff", staff},
+             {"recruitment", value.recruitment},
              {"works", works},
              {"suppliers", value.suppliers},
              {"contracts", value.contracts},
@@ -476,6 +513,7 @@ void from_json(const Json& j, GameState& value) {
     value.company = j.at("company").get<Company>();
     value.staff.clear();
     for (const auto& member : j.value("staff", Json::array())) value.staff.push_back(member.get<Staff>());
+    value.recruitment = j.contains("recruitment") ? j.at("recruitment").get<Recruitment>() : Recruitment{};
     value.works.clear();
     for (const auto& work : j.value("works", Json::array())) value.works.push_back(work.get<Project>());
     value.suppliers = j.value("suppliers", Json::array());

@@ -34,9 +34,6 @@
       "set_plan"
     ],
     "documented_not_exported": [
-      "hire_core",
-      "scout",
-      "dismiss_staff",
       "hire_temporary",
       "sign_outsourcing",
       "lock_offer"
@@ -49,17 +46,20 @@
       "buy_tv_service",
       "create_custom_offer",
       "deliver_work",
+      "dismiss_staff",
       "end_company",
       "event_catalog_info",
       "finalize_company",
       "finalize_delivery",
       "hash_state",
+      "hire_core",
       "initialize",
       "initialize_game",
       "instantiate_work",
       "reject_proposal",
       "request_extension",
       "resolve_event",
+      "scout",
       "set_plan",
       "set_work_plan",
       "start_work",
@@ -200,20 +200,6 @@
     "source": "M0 §14.13 / DECISION_LOG §17 Q3/Q4",
     "status": "frozen_target_not_implemented",
     "fields": {
-      "state.recruitment": [
-        "last_scout_week",
-        "pity",
-        "pool"
-      ],
-      "state.recruitment.pity": [
-        "since_sr",
-        "since_ssr"
-      ],
-      "state.recruitment.pool[]": [
-        "expires_week",
-        "origin",
-        "staff"
-      ],
       "state.market.slots[]": [
         "deposit_paid",
         "expires_week",
@@ -264,17 +250,32 @@
       "competitors": [],
       "custom_offer": null,
       "heat": {
-        "drama": {"changed_week": 0, "level": "mid"},
-        "family": {"changed_week": 0, "level": "mid"},
-        "romance": {"changed_week": 0, "level": "low"},
-        "sf": {"changed_week": 0, "level": "high"}
+        "drama": {
+          "changed_week": 0,
+          "level": "mid"
+        },
+        "family": {
+          "changed_week": 0,
+          "level": "mid"
+        },
+        "romance": {
+          "changed_week": 0,
+          "level": "low"
+        },
+        "sf": {
+          "changed_week": 0,
+          "level": "high"
+        }
       },
       "last_competition_round": 0,
       "proposal": null,
       "refresh_week": 0,
       "slots": [
         {
-          "allowed_modes": ["contract", "committee"],
+          "allowed_modes": [
+            "contract",
+            "committee"
+          ],
           "audience_base": 600,
           "blueprint_id": "tv_standard",
           "channel_potentials": {
@@ -285,9 +286,15 @@
             "overseas": 1400000,
             "tv": 600000
           },
-          "channels_baseline": ["domestic_streaming", "tv"],
+          "channels_baseline": [
+            "domestic_streaming",
+            "tv"
+          ],
           "commercial_potential": 700,
-          "committee_candidates": ["partner_tv", "partner_stream"],
+          "committee_candidates": [
+            "partner_tv",
+            "partner_stream"
+          ],
           "contract_budget": 1200000,
           "duration_weeks": 26,
           "episode_count": 12,
@@ -304,7 +311,10 @@
           "workload_scale_permille": 1000
         },
         {
-          "allowed_modes": ["contract", "committee"],
+          "allowed_modes": [
+            "contract",
+            "committee"
+          ],
           "audience_base": 520,
           "blueprint_id": "tv_standard",
           "channel_potentials": {
@@ -315,9 +325,14 @@
             "overseas": 800000,
             "tv": 500000
           },
-          "channels_baseline": ["domestic_streaming"],
+          "channels_baseline": [
+            "domestic_streaming"
+          ],
           "commercial_potential": 620,
-          "committee_candidates": ["partner_stream", "partner_pub"],
+          "committee_candidates": [
+            "partner_stream",
+            "partner_pub"
+          ],
           "contract_budget": 900000,
           "duration_weeks": 24,
           "episode_count": 12,
@@ -334,7 +349,9 @@
           "workload_scale_permille": 1000
         },
         {
-          "allowed_modes": ["committee"],
+          "allowed_modes": [
+            "committee"
+          ],
           "audience_base": 700,
           "blueprint_id": "tv_standard",
           "channel_potentials": {
@@ -345,9 +362,16 @@
             "overseas": 1200000,
             "tv": 700000
           },
-          "channels_baseline": ["domestic_streaming", "merchandise", "tv"],
+          "channels_baseline": [
+            "domestic_streaming",
+            "merchandise",
+            "tv"
+          ],
           "commercial_potential": 760,
-          "committee_candidates": ["partner_tv", "partner_pub"],
+          "committee_candidates": [
+            "partner_tv",
+            "partner_pub"
+          ],
           "contract_budget": 1500000,
           "duration_weeks": 30,
           "episode_count": 12,
@@ -364,7 +388,10 @@
           "workload_scale_permille": 1000
         },
         {
-          "allowed_modes": ["contract", "committee"],
+          "allowed_modes": [
+            "contract",
+            "committee"
+          ],
           "audience_base": 420,
           "blueprint_id": "tv_standard",
           "channel_potentials": {
@@ -375,9 +402,13 @@
             "overseas": 600000,
             "tv": 400000
           },
-          "channels_baseline": ["domestic_streaming"],
+          "channels_baseline": [
+            "domestic_streaming"
+          ],
           "commercial_potential": 520,
-          "committee_candidates": ["partner_stream"],
+          "committee_candidates": [
+            "partner_stream"
+          ],
           "contract_budget": 700000,
           "duration_weeks": 20,
           "episode_count": 12,
@@ -397,7 +428,9 @@
     },
     "state.partners": [
       {
-        "channels": ["tv"],
+        "channels": [
+          "tv"
+        ],
         "history": [],
         "id": "partner_tv",
         "name": "东都电视台",
@@ -407,7 +440,9 @@
         "type": "tv"
       },
       {
-        "channels": ["domestic_streaming"],
+        "channels": [
+          "domestic_streaming"
+        ],
         "history": [],
         "id": "partner_stream",
         "name": "海流配信",
@@ -417,7 +452,9 @@
         "type": "streaming"
       },
       {
-        "channels": ["publishing"],
+        "channels": [
+          "publishing"
+        ],
         "history": [],
         "id": "partner_pub",
         "name": "白鹭出版",
@@ -454,6 +491,7 @@
       "STAGE_LOCKED"
     ],
     "produced_by_v4_source": [
+      "CAPACITY_EXCEEDED",
       "COMPANY_ENDED",
       "INSUFFICIENT_FUNDS",
       "INTERNAL_ERROR",
@@ -631,10 +669,21 @@
       "tv_multiplier",
       "window"
     ],
-    "state.archive.works[].episodes[]": ["id", "quality"],
-    "state.archive.works[].episodes[].quality": ["dims", "mean"],
+    "state.archive.works[].episodes[]": [
+      "id",
+      "quality"
+    ],
+    "state.archive.works[].episodes[].quality": [
+      "dims",
+      "mean"
+    ],
     "state.archive.works[].episodes[].quality.dims": [
-      "animation", "art", "direction", "drawing", "sound", "story"
+      "animation",
+      "art",
+      "direction",
+      "drawing",
+      "sound",
+      "story"
     ],
     "state.archive.works[].team[]": [
       "id",
@@ -652,9 +701,33 @@
       "success_reward",
       "total_costs"
     ],
-    "state.archive.works[].quality": ["dims", "mean"],
+    "state.archive.works[].finance_summary.costs": [
+      "distribution",
+      "production"
+    ],
+    "state.archive.works[].quality": [
+      "dims",
+      "mean"
+    ],
     "state.archive.works[].quality.dims": [
-      "animation", "art", "direction", "drawing", "sound", "story"
+      "animation",
+      "art",
+      "direction",
+      "drawing",
+      "sound",
+      "story"
+    ],
+    "state.committees[]": [
+      "closed_week",
+      "formed_week",
+      "id",
+      "members",
+      "status",
+      "work_id"
+    ],
+    "state.committees[].members[]": [
+      "channel",
+      "partner_id"
     ],
     "state.company.reputation_log[]": [
       "after",
@@ -690,16 +763,39 @@
       "workload_scale_permille"
     ],
     "state.market.custom_offer.channel_potentials": [
-      "bd_dvd", "domestic_streaming", "merchandise", "music", "overseas", "tv"
+      "bd_dvd",
+      "domestic_streaming",
+      "merchandise",
+      "music",
+      "overseas",
+      "tv"
+    ],
+    "state.partners[].history[]": [
+      "delta",
+      "reason",
+      "week",
+      "work_id"
     ],
     "state.staff[].last_participation": [
       "item_id",
       "week",
       "work_id"
     ],
-    "state.works[].delivery": ["at_week", "reason"],
-    "state.works[].extension": ["fee", "used", "week", "weeks"],
-    "state.works[].investment": ["paid", "percent", "total"],
+    "state.works[].delivery": [
+      "at_week",
+      "reason"
+    ],
+    "state.works[].extension": [
+      "fee",
+      "used",
+      "week",
+      "weeks"
+    ],
+    "state.works[].investment": [
+      "paid",
+      "percent",
+      "total"
+    ],
     "state.works[].offer": [
       "allowed_modes",
       "audience_base",
@@ -725,9 +821,21 @@
       "workload_scale_permille"
     ],
     "state.works[].offer.channel_potentials": [
-      "bd_dvd", "domestic_streaming", "merchandise", "music", "overseas", "tv"
+      "bd_dvd",
+      "domestic_streaming",
+      "merchandise",
+      "music",
+      "overseas",
+      "tv"
     ],
-    "state.works[].tv_service": ["channel", "fee_total", "multiplier", "paid", "paid_week", "purchased"],
+    "state.works[].tv_service": [
+      "channel",
+      "fee_total",
+      "multiplier",
+      "paid",
+      "paid_week",
+      "purchased"
+    ],
     "result": [
       "best_work_id",
       "final_funds",
@@ -807,6 +915,7 @@
       "finance",
       "market",
       "partners",
+      "recruitment",
       "seed",
       "staff",
       "suppliers",
@@ -1131,27 +1240,158 @@
       "outsourcing",
       "overtime",
       "target"
+    ],
+    "state.recruitment": [
+      "last_scout_week",
+      "pity",
+      "pool"
+    ],
+    "state.recruitment.pity": [
+      "since_sr",
+      "since_ssr"
+    ],
+    "state.recruitment.pool[]": [
+      "expires_week",
+      "origin",
+      "staff"
+    ],
+    "state.recruitment.pool[].staff": [
+      "abilities",
+      "assignment_work_id",
+      "departure_warning",
+      "employment",
+      "experience",
+      "fatigue",
+      "id",
+      "last_participation",
+      "morale",
+      "name",
+      "potential",
+      "revealed_potential",
+      "role",
+      "signing_fee",
+      "talent_type",
+      "temporary_contract",
+      "weekly_salary"
+    ],
+    "state.recruitment.pool[].staff.abilities": [
+      "animation",
+      "direction",
+      "drawing",
+      "management",
+      "planning",
+      "postproduction"
+    ],
+    "state.recruitment.pool[].staff.experience": [
+      "animation",
+      "direction",
+      "drawing",
+      "management",
+      "planning",
+      "postproduction"
+    ],
+    "state.recruitment.pool[].staff.potential": [
+      "animation",
+      "direction",
+      "drawing",
+      "management",
+      "planning",
+      "postproduction"
+    ],
+    "state.recruitment.pool[].staff.revealed_potential": [
+      "animation",
+      "direction",
+      "drawing",
+      "management",
+      "planning",
+      "postproduction"
     ]
   },
   "receipt_keys": {
-    "adopt_proposal": ["offer_id", "state"],
-    "advance_week": ["report", "state"],
-    "assign_staff": ["state"],
-    "buy_tv_service": ["multiplier", "paid", "state"],
-    "create_custom_offer": ["contract_budget", "offer_id", "rules_status", "state"],
-    "deliver_work": ["report", "state"],
-    "end_company": ["report", "state"],
-    "finalize_company": ["result", "state"],
-    "finalize_delivery": ["company_status", "report", "state"],
-    "hash_state": ["hash"],
-    "initialize_game": ["state"],
-    "instantiate_work": ["state", "work_id"],
-    "reject_proposal": ["state"],
-    "request_extension": ["deadline_week", "state"],
-    "resolve_event": ["message", "state"],
-    "set_work_plan": ["state"],
-    "start_work": ["committee_id", "state", "work_id"],
-    "view_event": ["already_viewed", "state", "viewed"]
+    "adopt_proposal": [
+      "offer_id",
+      "state"
+    ],
+    "advance_week": [
+      "report",
+      "state"
+    ],
+    "assign_staff": [
+      "state"
+    ],
+    "buy_tv_service": [
+      "multiplier",
+      "paid",
+      "state"
+    ],
+    "create_custom_offer": [
+      "contract_budget",
+      "offer_id",
+      "rules_status",
+      "state"
+    ],
+    "deliver_work": [
+      "report",
+      "state"
+    ],
+    "end_company": [
+      "report",
+      "state"
+    ],
+    "finalize_company": [
+      "result",
+      "state"
+    ],
+    "finalize_delivery": [
+      "company_status",
+      "report",
+      "state"
+    ],
+    "hash_state": [
+      "hash"
+    ],
+    "initialize_game": [
+      "state"
+    ],
+    "instantiate_work": [
+      "state",
+      "work_id"
+    ],
+    "reject_proposal": [
+      "state"
+    ],
+    "request_extension": [
+      "deadline_week",
+      "state"
+    ],
+    "resolve_event": [
+      "message",
+      "state"
+    ],
+    "set_work_plan": [
+      "state"
+    ],
+    "start_work": [
+      "committee_id",
+      "state",
+      "work_id"
+    ],
+    "view_event": [
+      "already_viewed",
+      "state",
+      "viewed"
+    ],
+    "scout": [
+      "added_ids",
+      "state"
+    ],
+    "hire_core": [
+      "staff_id",
+      "state"
+    ],
+    "dismiss_staff": [
+      "state"
+    ]
   },
   "required_on_parse": [
     "state",
@@ -1182,7 +1422,18 @@
     "state.staff[].assignment_work_id",
     "state.events",
     "state.events.pending",
-    "state.events.pending[].viewed"
+    "state.events.pending[].viewed",
+    "state.recruitment",
+    "state.recruitment.pool",
+    "state.recruitment.pity",
+    "state.recruitment.last_scout_week",
+    "state.recruitment.pity.since_sr",
+    "state.recruitment.pity.since_ssr",
+    "state.recruitment.pool[].staff",
+    "state.recruitment.pool[].expires_week",
+    "state.recruitment.pool[].origin",
+    "state.recruitment.pool[].staff.signing_fee",
+    "state.recruitment.pool[].staff.weekly_salary"
   ],
   "reserved_defaults": {
     "state.finance.loans": [],

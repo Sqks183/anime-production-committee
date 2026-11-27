@@ -19,6 +19,9 @@ EMSCRIPTEN_BINDINGS(apc_v4) {
     emscripten::function("adopt_proposal", &apc::v4::adopt_proposal);
     emscripten::function("reject_proposal", &apc::v4::reject_proposal);
     emscripten::function("assign_staff", &apc::v4::assign_staff);
+    emscripten::function("hire_core", &apc::v4::hire_core);
+    emscripten::function("scout", &apc::v4::scout);
+    emscripten::function("dismiss_staff", &apc::v4::dismiss_staff);
     emscripten::function("deliver_work", &apc::v4::deliver_work);
     emscripten::function("abort_work", &apc::v4::abort_work);
     emscripten::function("buy_tv_service", &apc::v4::buy_tv_service);
