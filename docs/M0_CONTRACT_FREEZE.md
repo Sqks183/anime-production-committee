@@ -90,7 +90,9 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | `Recruitment` | pool, pity, last_scout_week | — | Staff 唯一持有；pool 候选包装 `{staff, expires_week, origin}`；详见 §14.13 |
 | `Finance` | opening_funds, balance, entries, loans, solvency | — | balance = opening + Σentries ≥ 0；当前 `loans=[]`、`solvency.state="normal"`；两字段仅作后续更新预留，不授权危机或融资 |
 | `EventState` | pending[], last_event_week, per_work | pending 数组可为空 | 每条待处理事件带 work_id/event_id/triggered_week/viewed；viewed 缺失即非法输入，不静默当未查看（§14.12）；pending 中每项目至多一条；不同项目可同周各有事件；last_event_week 不得充当全局单槽 |
-| `Archive` | works, series | company_result | 只追加 |
+| `Archive` | works: WorkRecord[], series: Series[] | company_result | WorkRecord 只追加；系列按 IP 追加作品并单调推进 last_week |
+
+**Archive 当前冻结口径**：`WorkRecord` 的 28 个根字段及其嵌套 `quality/channel_breakdown/finance_summary/episodes/team` 形状以 `docs/v4-contract-shape.json` 与 `docs/DATA_DICTIONARY_V4.md` §3.9 为准。系列来源链为 `OfferSnapshot.ip_id → Project.ip_id → WorkRecord.ip_id → Archive.series`；仅在 `completed/deadline/company_closed` 交付结算时与 WorkRecord 同次原子写入，`aborted` 不归档。首次交付冻结系列标题，后续同 IP 交付只追加 `works` 并更新 `last_week`；不同 IP 不按标题合并。`finance_summary.profit = contract_received + commercial_share + success_reward - investment_paid - total_costs`，不重复扣除已计入 `costs.penalty` 的扣罚。
 
 ---
 
@@ -119,7 +121,7 @@ SaveRecord { version: 4, savedAt: ISO8601, rules_version: string, state: GameSta
 | INV-19 | 同一供应商 `Σ active 合同 weekly_cap ≤ capacity_per_week` | CAPACITY_EXCEEDED |
 | INV-20 | 合同 `item_id` 属于同一 `work_id`；累计交付不超过该项 `work_total` | INVALID_STATE |
 | INV-21 | `running ⇒ week < 520`；`week` 只由 `advance_week` 改变 | INVALID_PHASE |
-| INV-22 | Archive 只追加；`WorkRecord.id` 唯一；`previous_work_id` 指向更早记录 | INVALID_STATE |
+| INV-22 | Archive 根字段齐全；WorkRecord 28 字段载荷、质量/评级、渠道与财务对账合法且按交付周追加、id 唯一；Series 的 ip_id 唯一，作品引用存在且 IP 一致、仅归属一个系列、按交付周追加，last_week 等于最后交付周；带 ip_id 的作品必须归属系列；company_result 与公司状态及 Archive 统计一致 | INVALID_STATE |
 | INV-23 | `events.pending[]` 可同时包含多个项目事件；每条带 `work_id/event_id/triggered_week/viewed`，pending 中每项目至多一条；同一项目每周最多触发一个；未查看事件阻塞推进，已查看未处理事件不阻塞；`last_event_week` 不得全局限流；事件不得覆盖/丢弃 | INVALID_STATE |
 | INV-24 | `market.slots ≤ 10`，初始 4；自定/提案槽与市场槽、历史 id 互斥；同一企划 id 终身唯一，不得删除后再生成绕过锁定历史 | INVALID_STATE |
 | INV-25 | `Finance.balance ≥ 0`；刚性支出预检不足时回滚并直接破产，不记录负现金欠付，不得以 `solvency.state="crisis"` 绕过 | INVALID_STATE |

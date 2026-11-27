@@ -199,7 +199,42 @@ GameState {
 
 ### 3.9 `Archive`
 
-实测：`{company_result: null, series: [], works: []}`。交付结算已写入 `works`，关闭路径可生成 `company_result`；INV-22 的完整追加约束仍未独立断言。`WorkRecord.channel_breakdown[]` 按 DA §7.6 满足 `Σrevenue=commercial_revenue`、`Σcompany_received=finance_summary.commercial_share`；后者包含非 BD 公司分配与 BD 公司所得，`success_reward` 仍单列。
+初始化实测：`{company_result: null, series: [], works: []}`。`archive/works/series/company_result` 均为解析必填；交付结算写入 `works` 与可选 `series`，关闭路径可生成 `company_result`。INV-22 已独立断言完整载荷、系列引用、追加顺序和终局统计。
+
+#### 3.9.1 当前冻结的 `WorkRecord`（28 个根字段）
+
+| 分组 | 字段 | 约束 |
+| --- | --- | --- |
+| 身份与企划 | `id, ip_id, offer_id, name, source, genre, scale, mode, investment_percent` | `ip_id` 为非空字符串或 null；source 为 publisher/studio/manga/light_novel/game/original；scale 为 ova/short/tv/movie；contract 投资比例为 0，committee 为 10..100 的 10 倍数 |
+| 时间与结论 | `start_week, end_week, end_reason, forced, gate_completion_permille` | 0..520 且不倒退；end_reason 为 completed/deadline/company_closed；completed 必须 forced=false 且完成度=1000 |
+| 质量 | `quality, quality_score, rating` | quality 为 `{dims{六维}, mean}`，六维与均值均为 0..100 整数，均值四舍五入；rating 按 S≥85/A≥75/B≥65/C≥50/D 分档 |
+| 商业汇总 | `commercial_revenue, bd_gross, bd_revenue, committee_pool, investor_share, company_received` | 非负整数；由 `channel_breakdown` 精确对账 |
+| 财务 | `finance_summary` | 根字段为 contract_received/investment_paid/commercial_share/bd_revenue/success_reward/penalty/costs/total_costs/profit；costs 是允许类目的动态子集 |
+| 明细与快照 | `channel_breakdown, episodes, team, rules_status` | channel 窗口不重复；episodes 非空且 id 不重复；team 的 id/name/role 快照 id 不重复；rules_status 当前固定 placeholder |
+
+`channel_breakdown[]` 固定为 `window/potential/quality_factor/heat_factor/reputation_factor/tv_multiplier/agency_fee_permille/gross/net/revenue/company_received/owner`。窗口为 domestic_streaming/overseas/merchandise/music/tv/bd_dvd；BD 的 owner=company，其余 owner=committee_pool。`revenue=gross`、`0≤net≤gross`、`0≤company_received≤net`，且：
+
+- `Σrevenue = commercial_revenue`，`Σcompany_received = finance_summary.commercial_share`。
+- BD 的 `Σgross=bd_gross`、`Σnet=bd_revenue`；非 BD 的 `Σnet=committee_pool`。
+- `investor_share = committee_pool - (commercial_share - bd_revenue)`。
+- `company_received = commercial_share + success_reward`。
+- `Σcosts = total_costs`；允许类目为 salary/production/temporary/outsourcing/events/extension/distribution/penalty/development，不要求全部出现。
+- `profit = contract_received + commercial_share + success_reward - investment_paid - total_costs`。penalty 已计入 costs 时不再重复扣除。
+
+`episodes[]` 当前固定为 `{id, quality}`；`team[]` 当前固定为 `{id, name, role}`，角色枚举与项目岗位快照一致。完整键树见 `docs/v4-contract-shape.json`，TypeScript 守卫见 `apps/web/src/types/gameV4.ts`，不得用 v3 WorkRecord 代替。
+
+#### 3.9.2 系列写入时机与来源
+
+- 唯一来源链：`OfferSnapshot.ip_id → Project.ip_id → WorkRecord.ip_id → Archive.series`；不按标题猜测续作，不恢复 v3 的线性 `previous_work_id`。
+- `Series = {ip_id, title, works[], last_week}`。仅在 completed/deadline/company_closed 交付结算时与 WorkRecord 同次原子提交；aborted 不写 Archive。
+- 首次带 IP 的交付创建系列，`title` 冻结为该作品名，`works=[work_id]`，`last_week=end_week`。
+- 后续同 IP 交付只向 `works` 追加并推进 `last_week`，不改标题和既有 WorkRecord；不同 IP 即使同名也各自成系列。
+- 系列 ip_id 唯一；works 引用必须存在、IP 一致、按交付周追加且不重复归属；last_week 等于系列最后交付周。无 IP 作品不创建系列。
+- 单状态校验不能证明历史前缀从未被改写；命令前后快照回归测试负责证明既有 WorkRecord 与系列标题不变。
+
+#### 3.9.3 `CompanyResult` 与 v3 隔离
+
+v4 固定九字段：`reason/weeks/final_funds/net_cash_change/total_projects/best_work_id/rating/highlights/negatives`。reason 为 time_limit/bankrupt/voluntary，rating 为 S/A/B/C/D；time_limit 的 weeks 必须为 520。项目数、评级和最佳作品与 Archive.works 一致；评分并列时取 Archive 中首条。v3 的七字段结果与 renowned/stable/small/failed 评级只保留在 `gameV3.ts`，v4 使用独立 `gameV4.ts` 子契约。
 
 ### 3.10 `Supplier` / `OutsourceContract` / `Partner` / `Committee` / `MarketState`
 
@@ -207,14 +242,16 @@ GameState {
 
 | 聚合 | 契约形状 | 代码 | 缺口影响 |
 | --- | --- | --- | --- |
-| `Supplier` | DA §7.4 + M0 §3 | `Json` 透传 | 命令 9 无数据前提；INV-19 无法断言 |
-| `OutsourceContract` | DA §7.4 | `Json` 透传 | INV-20 无法断言 |
+| `Supplier` | DA §7.4 + M0 §3 | `Json` 强形状校验 | 9 字段精确载荷、专业枚举/唯一性、数值边界与全局 id 已校验；目录初始化与命令 9 未实现 |
+| `OutsourceContract` | DA §7.4 | `Json` 强形状校验 | 15 字段精确载荷、供应商/项目/工作项/单集/能力引用、费用与生命周期已校验；INV-19/20 已断言；签约、周交付、费用与可靠性失败未实现 |
 | `Partner` / `Committee` | DA §7.4 + M0 §3 | `Json` 透传 | 委员会立项/交付已使用；INV-13 未完整断言 |
 | `MarketState` | M0 §3；初始 4 槽、最大 10 槽 | **已初始化槽位/热度/合作方候选** | INV-24/Q3/Q4 尚未完整实现 |
 
+`suppliers` / `contracts` 根数组是解析必填项；两类元素分别精确包含 9 / 15 个字段，未知字段与缺失字段均拒绝。active 合同必须指向 producing 项目；终态合同仍保留可校验的项目与工作项引用。规范化哈希按 id 排序 suppliers / contracts，并按集合语义排序 specialties，因此目录遍历顺序不改变状态哈希。状态校验通过不等于签约玩法开放：`weekly_cap` 推导、付款节奏、可靠性失败和项目终止释放仍未实现。
+
 ### 3.11 未冻结的形状
 
-`Facility`、`temporary_contract` 内部字段与 `WorkRecord` 全量字段的载荷尚未在 M0 冻结，按 D-07/D-10 跟踪。`Project.investment{percent,total,paid}`、`Project.extension`、`Project.delivery` 已由当前命令写入并实际使用，但其完整长期契约仍随对应批次收敛，不再标记为“命令未实现”。
+`WorkRecord` 当前 28 字段载荷已于 §3.9 冻结；`episode_count/occurrence_issues/commercial_rank/episode_summary/committee_snapshot/major_events` 等未来扩展字段尚未实现，不得提前写入当前载荷。`Facility`、`temporary_contract` 内部字段按 D-07/D-10 跟踪。`Project.investment{percent,total,paid}`、`Project.extension`、`Project.delivery` 已由当前命令写入并实际使用，但其完整长期契约仍随对应批次收敛，不再标记为“命令未实现”。
 
 ### 3.12 Q3/Q4 `future_contract`
 
@@ -323,7 +360,7 @@ report {
 - `funds.costs` 只有 3 个键，与 14 类 category 不对应，登记 D-13。
 - `report` 不是 DA §9.4 的 `WeekReceipt`；后者是前端派生读模型，边界见 D-14。
 - 交付/结清的 `report.settlements[]` 同时记录 `bd_gross`（BD/DVD 毛收入）与 `bd_revenue`（公司 50% 所得）；`commercial_revenue` 为全部开放窗口毛收入，`committee_pool` 为非 BD 净池，`commercial_share + investor_share = committee_pool`。
-- 外部代理按 DEC-COMM-001 使用 450/400/350‰；当前“同类成功合作”从 Archive 中 `end_reason=completed` 且对应渠道 `net>0` 的已完成作品派生，不新增持久化计数字段。
+- 外部代理按 DEC-COMM-001 使用 450/400/350‰；当前“同类成功合作”从 Archive 中 `end_reason=completed` 且 `channel_breakdown[]` 对应渠道 `net>0` 的已完成作品派生，不新增持久化计数字段。
 - 非整除净池分配的取整顺序与余数归属尚未冻结，出现时原子返回 `NOT_IMPLEMENTED`；通用前置商业成本输入字段亦未冻结，登记 D-16。
 
 ### 5.2 其余命令回执
@@ -388,10 +425,10 @@ M0 §4 共 **29 条**。当前 `validate()` 实际断言 **16 条**：`INV-01/02
 | 16 余额恒等式 | ✅ | |
 | 17 单笔单 category / 收入边界 | 🔶 部分 | 交付收入已走 Finance；完整类别边界未独立断言 |
 | 18 reserved loans/solvency 默认值与禁用状态 | ✅ | `loans=[]`、`solvency.state="normal"`、时间字段为 null、`gap=0`；crisis/非空 loans/非默认 reserved 子字段拒绝 |
-| 19 供应商周承诺 | ❌ | 命令 9 未实现 |
-| 20 合同项归属/累计交付 | ❌ | 同上 |
+| 19 供应商周承诺 | ✅ | validate 按 supplier_id 汇总 active weekly_cap，超过容量或 int64 汇总溢出即拒绝；命令 9 未实现 |
+| 20 合同项归属/累计交付 | ✅ | validate 校验供应商、项目、工作项、episode 容器与能力引用；按 item_id 汇总全部合同 work_done，不得超过工作项 work_total；终态释放容量 |
 | 21 week 只由 advance_week 改 | ✅ | |
-| 22 Archive 只追加 | 🔶 部分 | 交付/结局已写入；完整追加约束未独立断言 |
+| 22 Archive 载荷/系列/终局一致性 | ✅ | INV-22 校验 28 字段 WorkRecord、渠道财务对账、IP 系列引用与追加顺序；命令前后快照测试验证历史前缀不变 |
 | 23 事件仲裁 | ✅ | |
 | 24 市场槽初始 4/上限 10/终身唯一 | 🔶 部分 | 初始 4 槽已实现；上限/锁定历史未完整断言 |
 | 25 balance ≥0 / 预检失败破产 | 🔶 部分 | 非负余额与无 pending 破产已实现；pending 终局语义未冻结 |
@@ -531,7 +568,7 @@ npm run test:v4 && npm run audit:v4
 | `committees` | start_work 成立；交付后关闭 | 当前仅单项目委员会主链 |
 | `market` | 初始化；原创草稿、采纳/拒绝、start_work 消费企划 | 刷新/竞争仍属 M3 缺口 |
 | `archive` | 交付/结清追加 works；finalize_company 写 company_result | 只追加；中止履历与终局 pending 未冻结 |
-| `suppliers/contracts` | 初始化空聚合 | 供应商目录/外包尚未实现 |
+| `suppliers/contracts` | 初始化空聚合；解析与 validate 读取 | 强形状、INV-19/20 与规范化哈希已实现；供应商目录、签约、周交付、费用、可靠性失败和项目终止释放尚未实现 |
 
 ### 10.8 跨模块共享值
 
@@ -558,7 +595,7 @@ npm run test:v4 && npm run audit:v4
 | P0 | initialize 原子范围不足；report/WeekReceipt 边界；未实现命令无 NOT_IMPLEMENTED |
 | P1 | 事件效果代写 Staff/Project/Finance；终局 pending 转移/归档；abort_work 扣罚与履历；事件升级载荷 |
 | P2 | market 刷新/竞争；Archive 中止与扩展履历；前置商业成本输入；非整除净池取整；更多伙伴/关系玩法 |
-| P3 | 供应商/外包；Facility；系列续作；Q3/Q4 运行时实现；其余未冻结载荷 |
+| P3 | 供应商/外包；Facility；系列续作玩法（Archive 系列写入已完成）；Q3/Q4 运行时实现；其余未冻结载荷 |
 
 `loans/solvency` 不再列入删除阻塞；其当前约束由 INV-18/INV-25 与 reserved 审计保证。`project_fee` 不再列入 V4 待改名项；历史 v3 字段保留，V4 统一使用 `signing_fee`。
 

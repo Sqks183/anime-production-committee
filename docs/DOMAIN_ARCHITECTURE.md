@@ -403,7 +403,7 @@ v1.0 只给了骨架，并把"公共制作 + 单集 + 工作项"和"资金预检
 | 公司结局评价结果 | 公司当前声望（Company） |
 | 历史名次、渠道对账、团队快照、重大事件 | 竞争作品记录（不保存） |
 
-**为什么单独成域**：它是唯一"写入即冻结"的数据。与可变状态混放会导致两种错误——历史被结算逻辑意外修改，或为了"防止修改"而在各处加守卫。物理隔离后，规则可以简化为一句话：Archive 只有 `append`，没有 `update`。
+**为什么单独成域**：作品履历是"写入即冻结"的数据，与可变状态混放会导致历史被结算逻辑意外修改。物理隔离后，WorkRecord 只有 append、没有 update；Series 仅允许追加作品引用并单调推进 last_week，首次标题与既有作品引用不得改写。
 
 ---
 
@@ -440,7 +440,7 @@ v1.0 只给了骨架，并把"公共制作 + 单集 + 工作项"和"资金预检
 | 待处理事件 | Event | Event | UI | 数组多实例；逐项处理，全部清空后才可推进 |
 | 事件冷却/已见重大事件 | Event | Event | 触发评估 | 随项目，结算后归档 |
 | 作品档案 | Archive | Archive（只追加） | 商业/系列/结局/UI | 永久 |
-| 系列关系 | Archive | Archive（追加） | 企划生成、商业 | 永久 |
+| 系列关系 | Archive | Archive（追加作品；last_week 单调推进） | 企划生成、商业 | 永久 |
 | 公司结局评价 | Archive | Archive（终局一次） | UI | 终局后 |
 
 ### 6.2 项目生命周期与数据迁移
@@ -844,7 +844,7 @@ MarketState {
 Offer { id, name, source, genre, scale, contract_budget, duration_weeks, target_quality,
         audience_base, commercial_potential, channel_potentials{}, channels_baseline[],
         allowed_modes[], committee_candidates[], min_reputation, required_works[],
-        previous_work_id: null|work_id,
+        ip_id: null|series_id,               // 可选 IP；立项时冻结，不按标题推断续作
         blueprint_id, episode_count>0, workload_scale_permille>0,   // 立项时实例化为具体工作项
         origin, style }
 ```
@@ -857,6 +857,10 @@ Offer { id, name, source, genre, scale, contract_budget, duration_weeks, target_
 - `mode=contract ⇒ committee_id=null ∧ investment.percent=0 ∧ investment.paid=0`。
 - `mode=committee ⇒ investment.percent ∈ {10,20,…,100} ∧ committee_id≠null`。
 - `Offer.allowed_modes`：普通企划必含 contract 与 committee；原创只含 committee。
+
+**Vendor 运行时现状（2026-11-27）**：`suppliers` / `contracts` 仍以 `Json` 存储，但解析要求根数组必填，`validate` 已精确校验 Supplier 9 字段与 OutsourceContract 15 字段，并落实 INV-19/20、全局 id、供应商解锁/专业匹配、active 项目状态、episode 容器、能力一致性、费用/周期边界和 int64 汇总保护。active 合同计入共享容量；delivered/failed 合同不计入，但所有终态合同仍必须保留可校验的项目与工作项引用。`state_hash` 按 id 规范化 suppliers / contracts，并排序 specialties。
+
+上述状态约束不等于外包玩法已开放：`sign_outsourcing`、供应商默认目录、`weekly_cap` 推导、按周交付、费用支付、可靠性失败以及交付/中止时自动把未完成合同置 `failed` 均尚未实现。§6.4 / §7.3 中“未完成合同置 failed”是目标结算规则，当前 runtime 不得伪报已执行。
 
 ### 7.5 Finance
 
@@ -915,23 +919,28 @@ Archive {
                            best_work_id, rating, highlights[], negatives[] }
 }
 
-WorkRecord { id, name, ip_id, source, genre, scale, mode, investment_percent,
-             start_week, end_week, end_reason, episode_count, gate_completion_permille,
-             quality{六维}, quality_score, rating, occurrence_issues[],
-             commercial_revenue, channel_breakdown[], commercial_rank,
-             finance_summary{contract_received, investment_paid, commercial_share,
-                             success_reward, costs{}, profit},
-             team[], episode_summary[{index, quality, completed_week}],
-             committee_snapshot[], major_events[] }
+WorkRecord { id, ip_id, offer_id, name, source, genre, scale, mode, investment_percent,
+             start_week, end_week, end_reason, forced, gate_completion_permille,
+             quality{dims{六维}, mean}, quality_score, rating,
+             commercial_revenue, bd_gross, bd_revenue, committee_pool, investor_share, company_received,
+             finance_summary{contract_received, investment_paid, commercial_share, bd_revenue,
+                             success_reward, penalty, costs{}, total_costs, profit},
+             channel_breakdown[], episodes[{id, quality}], team[{id, name, role}], rules_status }
 ```
 
-**为什么履历只存"单集摘要"而不存全部工作项**：作品结束后没人会查看 230 个工作项的历史；保留 `episode_summary` + 六维质量 + 团队快照，足以支撑"复盘哪一集拖了后腿"，同时避免存档随作品数线性膨胀。
+以上是当前 runtime 已冻结并输出的 28 字段载荷。`episode_count/occurrence_issues/commercial_rank/episode_summary/committee_snapshot/major_events` 属于未来扩展，尚未实现，不得伪装成当前字段。履历保留单集质量摘要而不保留全部工作项：`episodes[{id, quality}]` + 六维质量 + 团队快照足以支持分集复盘，同时避免存档随工作项数量线性膨胀。
+
+**写入时机与来源**
+- 来源链固定为 `OfferSnapshot.ip_id → Project.ip_id → WorkRecord.ip_id → Archive.series`；不按标题猜测续作，不恢复线性 `previous_work_id`。
+- completed/deadline/company_closed 交付结算时，WorkRecord 与 Series 在同一次状态提交中写入；aborted 不归档。
+- 首次带 IP 交付创建 Series 并冻结 title；同 IP 续作只追加 works 并推进 last_week。不同 IP 即使同名也不合并。
 
 **不变式**
-- `Archive` 只提供 `append`；任何领域不得修改已有 `WorkRecord`。
-- `WorkRecord.id` 全局唯一；`previous_work_id` 必须指向更早记录，禁止自指、循环、未来引用。
-- `series.works` 允许分支（一部作品可有多个后继），不要求线性。
-- `channel_breakdown` 满足 Σrevenue = commercial_revenue、Σcompany_received = commercial_share（[已确认]）。
+- WorkRecord 只追加，任何领域不得修改已有记录；单状态校验之外，还用命令前后快照测试验证历史前缀不变。
+- WorkRecord.id 全局唯一、作品按交付周追加；Series.ip_id 唯一，works 引用存在且 IP 一致、仅归属一个系列、按交付周追加，last_week 等于最后交付周。
+- 带 ip_id 的作品必须且只能归属一个系列；series.works 允许分支，不要求线性。
+- channel_breakdown 满足 Σrevenue=commercial_revenue、Σcompany_received=commercial_share，并精确对账 BD、委员会池与投资者所得。
+- finance_summary.profit=contract_received+commercial_share+success_reward-investment_paid-total_costs；penalty 已计入 costs 时不重复扣除。
 
 ### 7.7 跨领域引用规则
 
@@ -953,7 +962,7 @@ WorkRecord { id, name, ip_id, source, genre, scale, mode, investment_percent,
 | D3 | 依赖方向固定：UI → API → Application → Domain → Kernel；不得反向或横向 |
 | D4 | Finance 被所有领域调用（记账端口），但 Finance 不依赖任何领域，只接收已算好的交易 |
 | D5 | Company 不依赖任何领域；其他领域可只读 `week`/`reputation` |
-| D6 | Archive 只有 `append`，不提供 update/delete |
+| D6 | WorkRecord 只有 append；Series 仅可追加作品并单调推进 last_week；均不提供 delete 或历史改写 |
 | D7 | 只有 Finance 能写 `balance`；只有 Company 能写 `week`/`reputation`；只有 Project 能写阶段进度 |
 | D8 | 应用层不得包含任何财务、生产、商业公式；只能调用领域命令与内核函数 |
 | D9 | 领域命令必须满足：给定（状态快照, 命令）→ 新状态 + 交易列表 + 领域事件；不得中途读取外部可变状态 |
@@ -1246,7 +1255,7 @@ advance_week → §22 八阶段原子结算
 3. 评价：S/A/B/C/D（固定分数线）；重大事故独立影响
 4. 商业：按渠道计算毛收入 → 汇总 → 应用热度/声望/系列系数 → 分账
 5. 财务：commercial_share_received（+承制成功奖励）入账；扣罚入账；刚性支出预检不足时按 §22.2 整周回滚并直接进入破产终局，不进入危机状态
-6. Archive：追加 WorkRecord（单集摘要、六维质量、团队快照、渠道对账、名次）
+6. Archive：同次原子追加 WorkRecord（单集质量摘要、团队快照、渠道对账）与 Series 作品引用
 7. Partnership：委员会 closed，关系值更新
 8. Company：声望变更（唯一入口，写日志）
 9. Project：status=settled，清空员工归属，释放临时人员，未完成外包置 failed
@@ -1266,7 +1275,7 @@ advance_week → §22 八阶段原子结算
 输入：Archive.works、Company（周数/声望/现金）、Staff 最终状态
 输出：CompanyResult（reason, weeks, final_funds, net_cash_change, total_projects,
                      best_work_id, rating, highlights[], negatives[]）
-规则：破产优先判定失败；十年期满与主动结束同标准；单项突出可跨档；负面评价只记录不降档
+当前规则：三种结束原因使用同一九字段接口；评级按 Archive 作品 quality_score 均值分档，最佳作品取首条最高分；highlights/negatives 只记录评价，不额外改档。破产优先标记失败。单项突出跨档是未来目标，当前未实现。
 ```
 
 ### 10.6 委员会联动（商业分账）

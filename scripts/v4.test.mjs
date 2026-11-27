@@ -1561,13 +1561,33 @@ test('DEC-BD-001/COMM-002：电视倍率按成员/购买分档，BD 公司所得
 })
 
 function completedChannelHistory(id, windows) {
+  const dims = { story: 70, direction: 70, drawing: 70, animation: 70, art: 70, sound: 70 }
+  const channelBreakdown = windows.map((window) => {
+    const bd = window === 'bd_dvd'
+    return {
+      window, potential: 100, quality_factor: 760, heat_factor: 1000, reputation_factor: 800,
+      tv_multiplier: 1000, agency_fee_permille: 0, gross: 100, net: bd ? 50 : 100,
+      revenue: 100, company_received: bd ? 50 : 100, owner: bd ? 'company' : 'committee_pool'
+    }
+  })
+  const commercialShare = channelBreakdown.reduce((sum, line) => sum + line.company_received, 0)
   return {
-    id,
-    rating: 'B',
-    end_reason: 'completed',
-    gate_completion_permille: 1000,
-    end_week: 0,
-    channels: windows.map((window) => ({ window, gross: 100, net: 100 }))
+    id, ip_id: null, offer_id: `${id}_offer`, name: id, source: 'publisher', genre: 'sf', scale: 'tv',
+    mode: 'committee', investment_percent: 100, start_week: 0, end_week: 0, end_reason: 'completed',
+    forced: false, gate_completion_permille: 1000, quality: { dims, mean: 70 }, quality_score: 70, rating: 'B',
+    commercial_revenue: channelBreakdown.reduce((sum, line) => sum + line.revenue, 0),
+    bd_gross: channelBreakdown.filter((line) => line.window === 'bd_dvd').reduce((sum, line) => sum + line.gross, 0),
+    bd_revenue: channelBreakdown.filter((line) => line.window === 'bd_dvd').reduce((sum, line) => sum + line.net, 0),
+    committee_pool: channelBreakdown.filter((line) => line.window !== 'bd_dvd').reduce((sum, line) => sum + line.net, 0),
+    investor_share: 0, company_received: commercialShare,
+    finance_summary: {
+      contract_received: 0, investment_paid: 0, commercial_share: commercialShare,
+      bd_revenue: channelBreakdown.filter((line) => line.window === 'bd_dvd').reduce((sum, line) => sum + line.net, 0),
+      success_reward: 0, penalty: 0, costs: {}, total_costs: 0, profit: commercialShare
+    },
+    channel_breakdown: channelBreakdown,
+    episodes: [{ id: 'ep01', quality: { dims, mean: 70 } }],
+    team: [{ id: 'staff_dir', name: '导演', role: 'director' }], rules_status: 'placeholder'
   }
 }
 
@@ -1811,6 +1831,273 @@ test('M2 归档后新立项不复用已归档作品 id', () => {
   const next = ok('start_work', { state, offer_id: 'offer_02', mode: 'contract' })
   assert.equal(next.work_id, 'work_02')
   assert.equal(next.state.works[0].id, 'work_02')
+})
+
+test('INV-22：交付冻结完整 WorkRecord，财务口径不重复扣罚', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state = ok('start_work', { state, offer_id: 'offer_02', mode: 'contract' }).state
+  state.works[0].deadline_week = 1
+  for (const item of gatesOf(state, 'work_01')) item.work_done = Math.floor(item.work_total * 4 / 10)
+  state = ok('advance_week', { state }).state
+  state.events.pending = []
+  state = ok('advance_week', { state }).state
+  const record = state.archive.works[0]
+  assert.deepEqual(Object.keys(record).sort(), [
+    'bd_gross', 'bd_revenue', 'channel_breakdown', 'commercial_revenue', 'committee_pool', 'company_received', 'end_reason', 'end_week',
+    'episodes', 'finance_summary', 'forced', 'gate_completion_permille', 'genre', 'id', 'investment_percent',
+    'investor_share', 'ip_id', 'mode', 'name', 'offer_id', 'quality', 'quality_score', 'rating', 'rules_status',
+    'scale', 'source', 'start_week', 'team'
+  ].sort())
+  const finance = record.finance_summary
+  assert.ok(finance.penalty > 0)
+  assert.equal(finance.profit, finance.contract_received + finance.commercial_share + finance.success_reward
+    - finance.investment_paid - finance.total_costs)
+  assert.equal(record.channel_breakdown.reduce((sum, line) => sum + line.revenue, 0), record.commercial_revenue)
+  assert.equal(record.channel_breakdown.reduce((sum, line) => sum + line.company_received, 0), finance.commercial_share)
+})
+
+test('INV-22：无 IP 的交付不创建系列', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state = ok('start_work', { state, offer_id: 'offer_01', mode: 'contract' }).state
+  state = completeWork(state, 'work_01', 70)
+  state = ok('deliver_work', { state, work_id: 'work_01' }).state
+  assert.equal(state.archive.works[0].ip_id, null)
+  assert.deepEqual(state.archive.series, [])
+})
+
+test('INV-22：同 IP 续作只追加作品和最后周，历史载荷与系列标题冻结', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state.market.slots[0].ip_id = 'ip_series'
+  state.market.slots[1].ip_id = 'ip_series'
+  state.market.slots[1].name = '星海邮差 续篇'
+  state = ok('start_work', { state, offer_id: 'offer_01', mode: 'contract' }).state
+  state = completeWork(state, 'work_01', 70)
+  state = ok('deliver_work', { state, work_id: 'work_01' }).state
+  const firstRecord = structuredClone(state.archive.works[0])
+  const firstSeries = structuredClone(state.archive.series[0])
+  assert.deepEqual(firstSeries, { ip_id: 'ip_series', title: '星海邮差', works: ['work_01'], last_week: 0 })
+
+  state = ok('start_work', { state, offer_id: 'offer_02', mode: 'contract' }).state
+  assert.equal(state.works[0].offer.ip_id, 'ip_series')
+  assert.equal(state.works[0].ip_id, 'ip_series')
+  state = ok('advance_week', { state }).state
+  state.events.pending = []
+  state = completeWork(state, 'work_02', 75)
+  state = ok('deliver_work', { state, work_id: 'work_02' }).state
+  assert.deepEqual(state.archive.works[0], firstRecord)
+  assert.equal(state.archive.works[1].ip_id, 'ip_series')
+  assert.equal(state.archive.works[1].end_week, 1)
+  assert.deepEqual(state.archive.series, [{ ...firstSeries, works: ['work_01', 'work_02'], last_week: 1 }])
+})
+
+test('INV-22：不同 IP 即使同名也保留独立系列', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state.market.slots[0].ip_id = 'ip_a'
+  state.market.slots[1].ip_id = 'ip_b'
+  state.market.slots[1].name = state.market.slots[0].name
+  state = ok('start_work', { state, offer_id: 'offer_01', mode: 'contract' }).state
+  state = completeWork(state, 'work_01', 70)
+  state = ok('deliver_work', { state, work_id: 'work_01' }).state
+  state = ok('start_work', { state, offer_id: 'offer_02', mode: 'contract' }).state
+  state = completeWork(state, 'work_02', 70)
+  state = ok('deliver_work', { state, work_id: 'work_02' }).state
+  assert.deepEqual(state.archive.series.map((series) => series.ip_id), ['ip_a', 'ip_b'])
+  assert.deepEqual(state.archive.series.map((series) => series.works), [['work_01'], ['work_02']])
+})
+
+test('INV-22：Archive 载荷、系列引用和追加顺序损坏时整周拒绝', () => {
+  let state = ok('initialize', { seed: 7 }).state
+  state.market.slots[0].ip_id = 'ip_series'
+  state = ok('start_work', { state, offer_id: 'offer_01', mode: 'contract' }).state
+  state = completeWork(state, 'work_01', 70)
+  state = ok('deliver_work', { state, work_id: 'work_01' }).state
+  const probes = [
+    (archive) => { delete archive.works[0].team },
+    (archive) => { archive.works[0].channel_breakdown[0].revenue += 1 },
+    (archive) => { archive.works[0].finance_summary.profit -= 1 },
+    (archive) => { archive.works[0].ip_id = 'ip_other' },
+    (archive) => { archive.series[0].works.push('missing') },
+    (archive) => { archive.series[0].last_week += 1 },
+    (archive) => { archive.series.push({ ...archive.series[0] }) }
+  ]
+  for (const mutate of probes) {
+    const probe = structuredClone(state)
+    mutate(probe.archive)
+    const result = call('advance_week', { state: probe })
+    assert.equal(result.error?.code, 'INVALID_STATE')
+    assert.match(result.error.message, /INV-22/)
+    assert.equal('state' in result, false)
+  }
+  const overflow = structuredClone(state)
+  const maxInt64 = JSON.rawJSON('9223372036854775807')
+  overflow.archive.works[0].finance_summary.costs = { production: maxInt64, salary: maxInt64 }
+  overflow.archive.works[0].finance_summary.total_costs = maxInt64
+  const overflowResult = call('advance_week', { state: overflow })
+  assert.equal(overflowResult.error?.code, 'INVALID_STATE')
+  assert.match(overflowResult.error.message, /合计溢出/)
+
+  const mismatched = ok('initialize', { seed: 7 }).state
+  mismatched.market.slots[0].ip_id = 'ip_series'
+  const started = ok('start_work', { state: mismatched, offer_id: 'offer_01', mode: 'contract' }).state
+  started.works[0].ip_id = 'ip_other'
+  const rejected = call('advance_week', { state: started })
+  assert.equal(rejected.error?.code, 'INVALID_STATE')
+  assert.match(rejected.error.message, /INV-22 project.ip_id/)
+})
+
+function vendorFixture() {
+  const state = twoProjectsNearDeadline()
+  state.suppliers = [{
+    id: 'supplier_shared',
+    name: '共享协力供应商',
+    specialties: ['planning'],
+    capacity_per_week: 100,
+    quality: 70,
+    speed: 60,
+    price_per_unit: 40,
+    reliability: 80,
+    unlocked_week: 0
+  }]
+  state.contracts = []
+  return state
+}
+
+function outsourceContract(state, id, workId, weeklyCap = 60, overrides = {}) {
+  const item = findItem(state, workId, 'common.series_comp')
+  return {
+    id,
+    supplier_id: 'supplier_shared',
+    work_id: workId,
+    episode_id: null,
+    item_id: item.id,
+    ability: item.ability,
+    mode: 'normal',
+    work_total: 60,
+    work_done: 0,
+    weekly_cap: weeklyCap,
+    fee_total: 2400,
+    fee_paid: 0,
+    signed_week: 0,
+    due_week: 26,
+    status: 'active',
+    ...overrides
+  }
+}
+
+function rejectVendorState(state, invariant) {
+  const result = call('advance_week', { state })
+  assert.equal(result.error?.code, 'INVALID_STATE')
+  assert.match(result.error.message, invariant)
+  assert.equal('state' in result, false)
+}
+
+test('INV-19：Fixture C 跨项目共享供应商 60+40 容量，终态合同释放产能', () => {
+  const state = vendorFixture()
+  state.contracts = [
+    outsourceContract(state, 'contract_a', 'work_a', 60),
+    outsourceContract(state, 'contract_b', 'work_b', 40)
+  ]
+  assert.ok(ok('advance_week', { state }).state)
+
+  const oversold = structuredClone(state)
+  oversold.contracts.push(outsourceContract(oversold, 'contract_c', 'work_a', 1))
+  rejectVendorState(oversold, /INV-19/)
+
+  const released = structuredClone(state)
+  released.contracts[0].status = 'failed'
+  released.contracts.push(outsourceContract(released, 'contract_c', 'work_a', 60))
+  assert.ok(ok('advance_week', { state: released }).state)
+
+  const delivered = structuredClone(state)
+  delivered.contracts[0].status = 'delivered'
+  delivered.contracts.push(outsourceContract(delivered, 'contract_c', 'work_a', 60))
+  assert.ok(ok('advance_week', { state: delivered }).state)
+})
+
+test('INV-20：合同项目、单集容器、能力与累计交付边界一致', () => {
+  const state = vendorFixture()
+  state.contracts = [outsourceContract(state, 'contract_a', 'work_a')]
+
+  const wrongWork = structuredClone(state)
+  wrongWork.contracts[0].work_id = 'work_b'
+  rejectVendorState(wrongWork, /INV-20/)
+
+  const wrongEpisode = structuredClone(state)
+  const episodeItem = findItem(wrongEpisode, 'work_a', 'ep01.script')
+  Object.assign(wrongEpisode.contracts[0], {
+    item_id: episodeItem.id,
+    episode_id: 'ep02',
+    ability: episodeItem.ability
+  })
+  rejectVendorState(wrongEpisode, /INV-20/)
+
+  const wrongAbility = structuredClone(state)
+  wrongAbility.contracts[0].ability = 'drawing'
+  rejectVendorState(wrongAbility, /INV-20/)
+
+  const wrongSpecialty = structuredClone(state)
+  wrongSpecialty.contracts[0].ability = 'drawing'
+  wrongSpecialty.suppliers[0].specialties = ['planning']
+  rejectVendorState(wrongSpecialty, /INV-20/)
+
+  const cumulative = structuredClone(state)
+  cumulative.contracts[0].work_done = 60
+  cumulative.contracts.push(outsourceContract(cumulative, 'contract_b', 'work_a', 40, { work_done: 41 }))
+  rejectVendorState(cumulative, /INV-20/)
+
+  const split = structuredClone(state)
+  split.contracts[0].work_done = 60
+  split.contracts.push(outsourceContract(split, 'contract_b', 'work_a', 40, { work_done: 40 }))
+  assert.ok(ok('advance_week', { state: split }).state)
+})
+
+test('INV-19/20：供应商与合同严格载荷、引用、ID 和溢出检查', () => {
+  const state = vendorFixture()
+  state.contracts = [outsourceContract(state, 'contract_a', 'work_a')]
+  const probes = [
+    [(probe) => { delete probe.suppliers[0].reliability }, /INV-01 Supplier/],
+    [(probe) => { probe.suppliers[0].unknown = true }, /INV-01 Supplier/],
+    [(probe) => { probe.suppliers[0].specialties = ['planning', 'planning'] }, /INV-01 Supplier/],
+    [(probe) => { probe.suppliers[0].capacity_per_week = 0 }, /INV-01 Supplier/],
+    [(probe) => { delete probe.contracts[0].fee_paid }, /INV-01 OutsourceContract/],
+    [(probe) => { probe.contracts[0].unknown = true }, /INV-01 OutsourceContract/],
+    [(probe) => { probe.contracts[0].fee_paid = 2401 }, /INV-01 OutsourceContract/],
+    [(probe) => { probe.contracts[0].supplier_id = 'missing' }, /INV-20/],
+    [(probe) => { probe.contracts[0].id = 'supplier_shared' }, /INV-02/],
+    [(probe) => { probe.contracts[0].weekly_cap = JSON.rawJSON('9223372036854775807') }, /INV-19/],
+    [(probe) => {
+      const maxInt64 = JSON.rawJSON('9223372036854775807')
+      probe.contracts[0].work_total = maxInt64
+      probe.contracts[0].work_done = maxInt64
+      probe.contracts.push(outsourceContract(probe, 'contract_b', 'work_a', 40, { work_total: 1, work_done: 1 }))
+    }, /INV-20/]
+  ]
+  for (const [mutate, invariant] of probes) {
+    const probe = structuredClone(state)
+    mutate(probe)
+    rejectVendorState(probe, invariant)
+  }
+  for (const field of ['suppliers', 'contracts']) {
+    const probe = structuredClone(state)
+    delete probe[field]
+    assert.equal(call('hash_state', { state: probe }).error?.code, 'INVALID_INPUT')
+    probe[field] = {}
+    assert.equal(call('hash_state', { state: probe }).error?.code, 'INVALID_INPUT')
+  }
+})
+
+test('供应商、合同与专业数组顺序不影响规范化哈希', () => {
+  const state = vendorFixture()
+  state.contracts = [
+    outsourceContract(state, 'contract_a', 'work_a', 60),
+    outsourceContract(state, 'contract_b', 'work_b', 40)
+  ]
+  state.suppliers[0].specialties = ['planning', 'drawing']
+  const reordered = structuredClone(state)
+  reordered.suppliers.reverse()
+  reordered.contracts.reverse()
+  reordered.suppliers[0].specialties.reverse()
+  assert.equal(ok('hash_state', { state }).hash, ok('hash_state', { state: reordered }).hash)
 })
 
 function gatesOf(state, workId) {

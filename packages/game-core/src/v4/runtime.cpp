@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -235,8 +236,17 @@ GameState decode_state(const Json& request) {
     require(state, "company", "state");
     require(state, "staff", "state");
     require(state, "works", "state");
+    require(state, "suppliers", "state");
+    require(state, "contracts", "state");
     require(state, "finance", "state");
     require(state, "events", "state");
+    require(state, "archive", "state");
+    require(state.at("archive"), "works", "archive");
+    require(state.at("archive"), "series", "archive");
+    require(state.at("archive"), "company_result", "archive");
+    if (!state.at("archive").at("works").is_array() || !state.at("archive").at("series").is_array()) {
+        throw Json::type_error::create(302, "archive.works/series 必须是数组", nullptr);
+    }
     require(state.at("events"), "pending", "events");
     if (!state.at("events").at("pending").is_array()) {
         throw Json::type_error::create(302, "events.pending 必须是数组", nullptr);
@@ -268,8 +278,9 @@ GameState decode_state(const Json& request) {
     require(state.at("finance").at("solvency"), "since_week", "finance.solvency");
     require(state.at("finance").at("solvency"), "deadline_week", "finance.solvency");
     require(state.at("finance").at("solvency"), "gap", "finance.solvency");
-    if (!state.at("staff").is_array() || !state.at("works").is_array()) {
-        throw Json::type_error::create(302, "staff / works 必须是数组", nullptr);
+    if (!state.at("staff").is_array() || !state.at("works").is_array() ||
+        !state.at("suppliers").is_array() || !state.at("contracts").is_array()) {
+        throw Json::type_error::create(302, "staff / works / suppliers / contracts 必须是数组", nullptr);
     }
     for (const auto& member : state.at("staff")) {
         require(member, "id", "staff[]");
@@ -432,6 +443,515 @@ bool replace_supervisor_post(GameState& state, const std::string& work_id, const
 
 }  // namespace
 
+bool archive_exact_fields(const Json& value, std::initializer_list<const char*> fields) {
+    if (!value.is_object() || value.size() != fields.size()) return false;
+    return std::all_of(fields.begin(), fields.end(), [&value](const char* field) { return value.contains(field); });
+}
+
+bool archive_text(const Json& value) { return value.is_string() && !value.get_ref<const std::string&>().empty(); }
+
+bool archive_integer(const Json& value, std::int64_t low, std::int64_t high = std::numeric_limits<std::int64_t>::max()) {
+    if (!value.is_number_integer()) return false;
+    if (value.is_number_unsigned()) {
+        const auto number = value.get<std::uint64_t>();
+        return number <= static_cast<std::uint64_t>(high) && static_cast<std::int64_t>(number) >= low;
+    }
+    const auto number = value.get<std::int64_t>();
+    return number >= low && number <= high;
+}
+
+bool archive_add(std::int64_t& total, std::int64_t amount) {
+    if (amount < 0 || total > std::numeric_limits<std::int64_t>::max() - amount) return false;
+    total += amount;
+    return true;
+}
+
+std::string archive_rating_of(int score) {
+    if (score >= 85) return "S";
+    if (score >= 75) return "A";
+    if (score >= 65) return "B";
+    if (score >= 50) return "C";
+    return "D";
+}
+
+bool archive_quality(const Json& value, const std::string& path, const std::function<void(const std::string&)>& error) {
+    if (!archive_exact_fields(value, {"dims", "mean"})) {
+        error("INV-22 " + path + " 必须精确包含 dims/mean");
+        return false;
+    }
+    const Json& dims = value.at("dims");
+    if (!archive_exact_fields(dims, {"story", "direction", "drawing", "animation", "art", "sound"})) {
+        error("INV-22 " + path + ".dims 六维字段不完整或含未知字段");
+        return false;
+    }
+    int sum = 0;
+    for (int i = 0; i < kDimensionCount; ++i) {
+        const Json& dimension = dims.at(kDimensions[static_cast<std::size_t>(i)]);
+        if (!archive_integer(dimension, 0, 100)) {
+            error("INV-22 " + path + ".dims 必须是 0..100 整数");
+            return false;
+        }
+        sum += dimension.get<int>();
+    }
+    return archive_integer(value.at("mean"), 0, 100) && value.at("mean").get<int>() == (sum + 3) / 6;
+}
+
+bool archive_string_array(const Json& value, bool nonempty, const std::string& path,
+                          const std::function<void(const std::string&)>& error) {
+    if (!value.is_array() || (nonempty && value.empty())) {
+        error("INV-22 " + path + " 必须是" + std::string(nonempty ? "非空" : "") + "数组");
+        return false;
+    }
+    for (const auto& item : value) {
+        if (!archive_text(item)) {
+            error("INV-22 " + path + " 含空字符串");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool archive_work_record(const Json& record, std::int64_t company_week,
+                         const std::function<void(const std::string&, const char*)>& claim_id,
+                         const std::function<void(const std::string&)>& error) {
+    const std::string path = "archive.works[]";
+    if (!archive_exact_fields(record, {"id", "ip_id", "offer_id", "name", "source", "genre", "scale", "mode",
+                                       "investment_percent", "start_week", "end_week", "end_reason", "forced",
+                                       "gate_completion_permille", "quality", "quality_score", "rating",
+                                       "commercial_revenue", "bd_gross", "bd_revenue", "committee_pool", "investor_share",
+                                       "company_received", "finance_summary", "channel_breakdown", "episodes", "team",
+                                       "rules_status"})) {
+        error("INV-22 " + path + " 根字段缺失或含未知字段");
+        return false;
+    }
+    if (!archive_text(record.at("id"))) {
+        error("INV-22 archive.works[].id 不能为空");
+        return false;
+    }
+    const std::string id = record.at("id").get<std::string>();
+    claim_id(id, "archive");
+    for (const char* key : {"offer_id", "name", "genre"}) {
+        if (!archive_text(record.at(key))) { error("INV-22 " + path + "." + key + " 不能为空"); return false; }
+    }
+    if (!(record.at("ip_id").is_null() || archive_text(record.at("ip_id")))) {
+        error("INV-22 archive.works[].ip_id 必须是非空字符串或 null: " + id);
+        return false;
+    }
+    if (!archive_text(record.at("source")) || !one_of_text(record.at("source").get<std::string>(),
+        {"publisher", "studio", "manga", "light_novel", "game", "original"})) {
+        error("INV-22 archive.works[].source 非法: " + id);
+        return false;
+    }
+    if (!archive_text(record.at("scale")) || !one_of_text(record.at("scale").get<std::string>(), {"ova", "short", "tv", "movie"})
+        || !archive_text(record.at("mode")) || !one_of_text(record.at("mode").get<std::string>(), {"contract", "committee"})) {
+        error("INV-22 archive.works[].scale/mode 非法: " + id);
+        return false;
+    }
+    if (!archive_integer(record.at("investment_percent"), 0, 100)
+        || (record.at("mode") == "contract" ? record.at("investment_percent").get<int>() != 0
+            : record.at("investment_percent").get<int>() < 10 || record.at("investment_percent").get<int>() % 10 != 0)) {
+        error("INV-22 archive.works[].investment_percent 非法: " + id);
+        return false;
+    }
+    if (!archive_integer(record.at("start_week"), 0, company_week) || !archive_integer(record.at("end_week"), 0, company_week)
+        || record.at("end_week").get<std::int64_t>() < record.at("start_week").get<std::int64_t>()) {
+        error("INV-22 archive.works[].周数越界或倒序: " + id);
+        return false;
+    }
+    if (!archive_text(record.at("end_reason")) || !one_of_text(record.at("end_reason").get<std::string>(),
+        {"completed", "deadline", "company_closed"}) || !record.at("forced").is_boolean()
+        || !archive_integer(record.at("gate_completion_permille"), 0, 1000)
+        || (record.at("end_reason") == "completed" && (record.at("forced").get<bool>() || record.at("gate_completion_permille").get<int>() != 1000))) {
+        error("INV-22 archive.works[].结束状态非法: " + id);
+        return false;
+    }
+    if (!archive_quality(record.at("quality"), path + ".quality", error) || !archive_integer(record.at("quality_score"), 0, 100)
+        || !archive_text(record.at("rating")) || record.at("rating").get<std::string>() != archive_rating_of(record.at("quality_score").get<int>())) {
+        error("INV-22 archive.works[].quality/rating 非法: " + id);
+        return false;
+    }
+    for (const char* key : {"commercial_revenue", "bd_gross", "bd_revenue", "committee_pool", "investor_share", "company_received"}) {
+        if (!archive_integer(record.at(key), 0)) { error("INV-22 " + path + "." + key + " 必须为非负整数"); return false; }
+    }
+
+    const Json& finance = record.at("finance_summary");
+    if (!archive_exact_fields(finance, {"contract_received", "investment_paid", "commercial_share", "bd_revenue",
+                                        "success_reward", "penalty", "costs", "total_costs", "profit"})) {
+        error("INV-22 archive.works[].finance_summary 根字段缺失或含未知字段: " + id);
+        return false;
+    }
+    for (const char* key : {"contract_received", "investment_paid", "commercial_share", "bd_revenue", "success_reward", "penalty", "total_costs"}) {
+        if (!archive_integer(finance.at(key), 0)) { error("INV-22 archive.works[].finance_summary." + std::string(key) + " 必须为非负整数"); return false; }
+    }
+    if (!finance.at("profit").is_number_integer() || finance.at("bd_revenue").get<std::int64_t>() > finance.at("commercial_share").get<std::int64_t>()) {
+        error("INV-22 archive.works[].finance_summary.profit/bd_revenue 非法: " + id);
+        return false;
+    }
+    static const std::set<std::string> cost_categories{"salary", "production", "temporary", "outsourcing", "events",
+                                                        "extension", "distribution", "penalty", "development"};
+    if (!finance.at("costs").is_object()) { error("INV-22 archive.works[].finance_summary.costs 必须是对象"); return false; }
+    std::int64_t costs_sum = 0;
+    for (const auto& [category, amount] : finance.at("costs").items()) {
+        if (cost_categories.find(category) == cost_categories.end() || !archive_integer(amount, 0)) {
+            error("INV-22 archive.works[].finance_summary.costs 含未知类目或非法金额: " + id);
+            return false;
+        }
+        if (!archive_add(costs_sum, amount.get<std::int64_t>())) {
+            error("INV-22 archive.works[].finance_summary.costs 合计溢出: " + id);
+            return false;
+        }
+    }
+    auto commercial_share = finance.at("commercial_share").get<std::int64_t>();
+    const auto success_reward = finance.at("success_reward").get<std::int64_t>();
+    const auto total_costs = finance.at("total_costs").get<std::int64_t>();
+    auto investment_paid = finance.at("investment_paid").get<std::int64_t>();
+    auto contract_received = finance.at("contract_received").get<std::int64_t>();
+    if (!archive_add(contract_received, commercial_share) || !archive_add(contract_received, success_reward)
+        || !archive_add(investment_paid, total_costs)) {
+        error("INV-22 archive.works[].finance_summary 对账溢出: " + id);
+        return false;
+    }
+    auto company_total = commercial_share;
+    if (costs_sum != total_costs || finance.at("profit").get<std::int64_t>() != contract_received - investment_paid
+        || !archive_add(company_total, success_reward) || company_total != record.at("company_received").get<std::int64_t>()) {
+        error("INV-22 archive.works[].finance_summary 对账失败: " + id);
+        return false;
+    }
+
+    const Json& channels = record.at("channel_breakdown");
+    if (!channels.is_array()) { error("INV-22 archive.works[].channel_breakdown 必须是数组"); return false; }
+    std::set<std::string> windows;
+    std::int64_t revenue_sum = 0;
+    std::int64_t company_sum = 0;
+    std::int64_t bd_gross = 0;
+    std::int64_t bd_revenue = 0;
+    std::int64_t committee_pool = 0;
+    for (const auto& channel : channels) {
+        if (!archive_exact_fields(channel, {"window", "potential", "quality_factor", "heat_factor", "reputation_factor",
+                                            "tv_multiplier", "agency_fee_permille", "gross", "net", "revenue",
+                                            "company_received", "owner"})) {
+            error("INV-22 archive.works[].channel_breakdown[] 根字段缺失或含未知字段: " + id);
+            return false;
+        }
+        if (!archive_text(channel.at("window")) || !one_of_text(channel.at("window").get<std::string>(),
+            {"domestic_streaming", "overseas", "merchandise", "music", "tv", "bd_dvd"})
+            || !windows.insert(channel.at("window").get<std::string>()).second || !archive_integer(channel.at("potential"), 0)
+            || !archive_integer(channel.at("quality_factor"), 0, 1000) || !archive_integer(channel.at("heat_factor"), 0, 2000)
+            || !archive_integer(channel.at("reputation_factor"), 0, 2000) || !archive_integer(channel.at("tv_multiplier"), 0, 2000)
+            || !archive_integer(channel.at("agency_fee_permille"), 0, 1000) || !archive_integer(channel.at("gross"), 0)
+            || !archive_integer(channel.at("net"), 0, channel.at("gross").get<std::int64_t>())
+            || !archive_integer(channel.at("revenue"), 0) || channel.at("revenue") != channel.at("gross")
+            || !archive_integer(channel.at("company_received"), 0, channel.at("net").get<std::int64_t>())) {
+            error("INV-22 archive.works[].channel_breakdown[] 字段或数值非法: " + id);
+            return false;
+        }
+        const bool bd = channel.at("window") == "bd_dvd";
+        if (!archive_text(channel.at("owner")) || channel.at("owner").get<std::string>() != (bd ? "company" : "committee_pool")) {
+            error("INV-22 archive.works[].channel_breakdown[].owner 非法: " + id);
+            return false;
+        }
+        const auto gross = channel.at("gross").get<std::int64_t>();
+        const auto net = channel.at("net").get<std::int64_t>();
+        if (!archive_add(revenue_sum, gross) || !archive_add(company_sum, channel.at("company_received").get<std::int64_t>())
+            || (bd && (!archive_add(bd_gross, gross) || !archive_add(bd_revenue, net)))
+            || (!bd && !archive_add(committee_pool, net))) {
+            error("INV-22 archive.works[].channel_breakdown 合计溢出: " + id);
+            return false;
+        }
+    }
+    if (revenue_sum != record.at("commercial_revenue").get<std::int64_t>() || company_sum != commercial_share
+        || bd_gross != record.at("bd_gross").get<std::int64_t>() || bd_revenue != record.at("bd_revenue").get<std::int64_t>()
+        || committee_pool != record.at("committee_pool").get<std::int64_t>()
+        || record.at("investor_share").get<std::int64_t>() != committee_pool - (commercial_share - bd_revenue)) {
+        error("INV-22 archive.works[].channel_breakdown 对账失败: " + id);
+        return false;
+    }
+
+    const Json& episodes = record.at("episodes");
+    if (!episodes.is_array() || episodes.empty()) { error("INV-22 archive.works[].episodes 必须是非空数组"); return false; }
+    std::set<std::string> episode_ids;
+    for (const auto& episode : episodes) {
+        if (!archive_exact_fields(episode, {"id", "quality"}) || !archive_text(episode.at("id"))
+            || !episode_ids.insert(episode.at("id").get<std::string>()).second
+            || !archive_quality(episode.at("quality"), path + ".episodes[].quality", error)) {
+            error("INV-22 archive.works[].episodes[] 非法或重复: " + id);
+            return false;
+        }
+    }
+    const Json& team = record.at("team");
+    if (!team.is_array()) { error("INV-22 archive.works[].team 必须是数组"); return false; }
+    std::set<std::string> team_ids;
+    for (const auto& member : team) {
+        if (!archive_exact_fields(member, {"id", "name", "role"}) || !archive_text(member.at("id")) || !archive_text(member.at("name"))
+            || !archive_text(member.at("role")) || !one_of_text(member.at("role").get<std::string>(),
+                {"director", "scriptwriter", "animation_director", "key_animator", "animator", "production_manager", "postproduction"})
+            || !team_ids.insert(member.at("id").get<std::string>()).second) {
+            error("INV-22 archive.works[].team[] 非法或重复: " + id);
+            return false;
+        }
+    }
+    return archive_text(record.at("rules_status")) && record.at("rules_status") == "placeholder";
+}
+
+void validate_archive(const GameState& state, const std::function<void(const std::string&, const char*)>& claim_id,
+                      const std::function<void(const std::string&)>& error) {
+    const Json& archive = state.archive;
+    if (!archive_exact_fields(archive, {"works", "series", "company_result"})) {
+        error("INV-22 archive 必须精确包含 works/series/company_result");
+        return;
+    }
+    if (!archive.at("works").is_array() || !archive.at("series").is_array()) {
+        error("INV-22 archive.works/series 必须是数组");
+        return;
+    }
+    std::map<std::string, const Json*> works;
+    std::int64_t previous_end_week = 0;
+    for (const auto& record : archive.at("works")) {
+        if (!archive_work_record(record, state.company.week, claim_id, error)) continue;
+        const std::string id = record.at("id").get<std::string>();
+        const auto end_week = record.at("end_week").get<std::int64_t>();
+        if (end_week < previous_end_week) error("INV-22 Archive 作品必须按交付周追加: " + id);
+        previous_end_week = std::max(previous_end_week, end_week);
+        works.emplace(id, &record);
+    }
+    std::map<std::string, const Json*> series_by_ip;
+    std::set<std::string> listed_works;
+    for (const auto& series : archive.at("series")) {
+        if (!archive_exact_fields(series, {"ip_id", "title", "works", "last_week"}) || !archive_text(series.at("ip_id"))
+            || !archive_text(series.at("title")) || !archive_integer(series.at("last_week"), 0, state.company.week)
+            || !archive_string_array(series.at("works"), true, "archive.series[].works", error)) {
+            error("INV-22 archive.series[] 根字段或类型非法");
+            continue;
+        }
+        const std::string ip_id = series.at("ip_id").get<std::string>();
+        if (!series_by_ip.emplace(ip_id, &series).second) { error("INV-22 archive.series[].ip_id 重复: " + ip_id); continue; }
+        std::int64_t latest_week = 0;
+        for (const auto& work_id_value : series.at("works")) {
+            const std::string work_id = work_id_value.get<std::string>();
+            const auto found = works.find(work_id);
+            if (found == works.end() || !found->second->contains("ip_id") || found->second->at("ip_id") != ip_id) {
+                error("INV-22 archive.series[].works 引用不存在或 IP 不匹配: " + work_id);
+                continue;
+            }
+            if (!listed_works.insert(work_id).second) { error("INV-22 作品只能归属一个系列: " + work_id); continue; }
+            const auto end_week = found->second->at("end_week").get<std::int64_t>();
+            if (end_week < latest_week) error("INV-22 archive.series[].works 必须按交付周追加: " + work_id);
+            latest_week = std::max(latest_week, end_week);
+        }
+        if (series.at("last_week").get<std::int64_t>() != latest_week) error("INV-22 archive.series[].last_week 不等于最后交付周: " + ip_id);
+    }
+    for (const auto& [id, record] : works) {
+        if (!record->at("ip_id").is_null() && (series_by_ip.find(record->at("ip_id").get<std::string>()) == series_by_ip.end()
+            || listed_works.find(id) == listed_works.end())) {
+            error("INV-22 带 ip_id 的作品必须且只能归属一个系列: " + id);
+        }
+    }
+
+    const Json& result = archive.at("company_result");
+    if (result.is_null()) return;
+    if (!archive_exact_fields(result, {"reason", "weeks", "final_funds", "net_cash_change", "total_projects",
+                                       "best_work_id", "rating", "highlights", "negatives"})) {
+        error("INV-22 archive.company_result 根字段缺失或含未知字段");
+        return;
+    }
+    if (state.company.status != "ended" || !archive_text(result.at("reason"))
+        || !one_of_text(result.at("reason").get<std::string>(), {"time_limit", "bankrupt", "voluntary"})
+        || result.at("reason").get<std::string>() != state.company.end_reason.value_or("")
+        || !archive_integer(result.at("weeks"), 0, kMaxWeek) || result.at("weeks").get<std::int64_t>() != state.company.week
+        || (result.at("reason") == "time_limit" && result.at("weeks").get<std::int64_t>() != kMaxWeek)
+        || !archive_integer(result.at("final_funds"), 0) || result.at("final_funds").get<std::int64_t>() != state.finance.balance
+        || !result.at("net_cash_change").is_number_integer()
+        || result.at("net_cash_change").get<std::int64_t>() != state.finance.balance - state.finance.opening_funds
+        || !archive_integer(result.at("total_projects"), 0) || result.at("total_projects").get<std::int64_t>() != static_cast<std::int64_t>(works.size())
+        || !(result.at("best_work_id").is_null() || archive_text(result.at("best_work_id")))
+        || !archive_text(result.at("rating")) || !archive_string_array(result.at("highlights"), false, "archive.company_result.highlights", error)
+        || !archive_string_array(result.at("negatives"), false, "archive.company_result.negatives", error)) {
+        error("INV-22 archive.company_result 与公司状态或字段类型不一致");
+        return;
+    }
+    std::int64_t quality_sum = 0;
+    int best_score = -1;
+    std::string best_id;
+    for (const auto& record : archive.at("works")) {
+        if (!record.is_object() || works.find(record.value("id", std::string{})) == works.end()) continue;
+        const int score = record.at("quality_score").get<int>();
+        quality_sum += score;
+        if (score > best_score) {
+            best_score = score;
+            best_id = record.at("id").get<std::string>();
+        }
+    }
+    const int average = works.empty() ? 0 : static_cast<int>(quality_sum / static_cast<std::int64_t>(works.size()));
+    if (result.at("rating").get<std::string>() != archive_rating_of(average)
+        || (best_id.empty() ? !result.at("best_work_id").is_null() : result.at("best_work_id") != best_id)) {
+        error("INV-22 archive.company_result 评级或最佳作品与 Archive 不一致");
+    }
+}
+
+void validate_vendors(const GameState& state,
+                      const std::function<void(const std::string&, const char*)>& claim_id,
+                      const std::function<void(const std::string&)>& error) {
+    std::map<std::string, const Json*> suppliers;
+    std::map<std::string, std::int64_t> active_capacity;
+    for (const auto& supplier : state.suppliers) {
+        if (!archive_exact_fields(supplier, {"id", "name", "specialties", "capacity_per_week", "quality", "speed",
+                                             "price_per_unit", "reliability", "unlocked_week"})) {
+            error("INV-01 Supplier 根字段缺失或含未知字段");
+            continue;
+        }
+        if (!archive_text(supplier.at("id")) || !archive_text(supplier.at("name"))) {
+            error("INV-01 Supplier id/name 必须是非空字符串");
+            continue;
+        }
+        const std::string id = supplier.at("id").get<std::string>();
+        claim_id(id, "supplier");
+        suppliers.emplace(id, &supplier);
+        const auto& specialties = supplier.at("specialties");
+        if (!specialties.is_array() || specialties.empty()) {
+            error("INV-01 Supplier.specialties 必须是非空数组: " + id);
+        } else {
+            std::set<std::string> seen;
+            for (const auto& specialty : specialties) {
+                if (!specialty.is_string() || ability_index(specialty.get<std::string>()) < 0 ||
+                    !seen.insert(specialty.get<std::string>()).second) {
+                    error("INV-01 Supplier.specialties 含非法或重复能力: " + id);
+                }
+            }
+        }
+        for (const char* key : {"capacity_per_week", "quality", "speed", "price_per_unit", "reliability", "unlocked_week"}) {
+            if (!supplier.at(key).is_number_integer()) {
+                error("INV-01 Supplier." + std::string(key) + " 必须是整数: " + id);
+            }
+        }
+        if (!archive_integer(supplier.at("capacity_per_week"), 1)) {
+            error("INV-01 Supplier.capacity_per_week 必须为正: " + id);
+        }
+        if (!archive_integer(supplier.at("quality"), 0, 100) || !archive_integer(supplier.at("reliability"), 0, 100)) {
+            error("INV-01 Supplier.quality/reliability 必须在 0..100: " + id);
+        }
+        if (!archive_integer(supplier.at("speed"), 0) || !archive_integer(supplier.at("price_per_unit"), 0)) {
+            error("INV-01 Supplier.speed/price_per_unit 不能为负: " + id);
+        }
+        if (!archive_integer(supplier.at("unlocked_week"), 0, kMaxWeek)) {
+            error("INV-01 Supplier.unlocked_week 越界: " + id);
+        }
+    }
+
+    std::map<std::string, std::int64_t> delivered_by_item;
+    for (const auto& contract : state.contracts) {
+        if (!archive_exact_fields(contract, {"id", "supplier_id", "work_id", "episode_id", "item_id", "ability", "mode",
+                                             "work_total", "work_done", "weekly_cap", "fee_total", "fee_paid",
+                                             "signed_week", "due_week", "status"})) {
+            error("INV-01 OutsourceContract 根字段缺失或含未知字段");
+            continue;
+        }
+        bool valid = true;
+        for (const char* key : {"id", "supplier_id", "work_id", "item_id", "ability", "mode", "status"}) {
+            if (!archive_text(contract.at(key))) {
+                error("INV-01 OutsourceContract." + std::string(key) + " 必须是非空字符串");
+                valid = false;
+            }
+        }
+        if (!contract.at("episode_id").is_null() && !archive_text(contract.at("episode_id"))) {
+            error("INV-01 OutsourceContract.episode_id 必须是非空字符串或 null");
+            valid = false;
+        }
+        for (const char* key : {"work_total", "work_done", "weekly_cap", "fee_total", "fee_paid", "signed_week", "due_week"}) {
+            if (!archive_integer(contract.at(key), 0)) {
+                error("INV-01 OutsourceContract." + std::string(key) + " 必须是非负 int64 整数");
+                valid = false;
+            }
+        }
+        if (!valid) continue;
+        const std::string id = contract.at("id").get<std::string>();
+        claim_id(id, "contract");
+        if (ability_index(contract.at("ability").get<std::string>()) < 0 ||
+            !one_of_text(contract.at("mode").get<std::string>(), {"normal", "emergency"}) ||
+            !one_of_text(contract.at("status").get<std::string>(), {"active", "delivered", "failed"})) {
+            error("INV-01 OutsourceContract ability/mode/status 非法: " + id);
+        }
+        const auto work_total = contract.at("work_total").get<std::int64_t>();
+        const auto work_done = contract.at("work_done").get<std::int64_t>();
+        const auto weekly_cap = contract.at("weekly_cap").get<std::int64_t>();
+        const auto fee_total = contract.at("fee_total").get<std::int64_t>();
+        const auto fee_paid = contract.at("fee_paid").get<std::int64_t>();
+        const auto signed_week = contract.at("signed_week").get<std::int64_t>();
+        const auto due_week = contract.at("due_week").get<std::int64_t>();
+        if (work_total <= 0 || work_done < 0 || work_done > work_total || weekly_cap <= 0 ||
+            fee_total < 0 || fee_paid < 0 || fee_paid > fee_total ||
+            signed_week < 0 || signed_week > state.company.week || due_week < signed_week || due_week > kMaxWeek) {
+            error("INV-01 OutsourceContract 工作量/费用/周期越界: " + id);
+        }
+
+        const std::string supplier_id = contract.at("supplier_id").get<std::string>();
+        const auto supplier = suppliers.find(supplier_id);
+        if (supplier == suppliers.end()) {
+            error("INV-20 OutsourceContract.supplier_id 不存在: " + id + "/" + supplier_id);
+        } else {
+            const auto& specialties = supplier->second->at("specialties");
+            const std::string ability = contract.at("ability").get<std::string>();
+            if (!archive_integer(supplier->second->at("unlocked_week"), 0, kMaxWeek) ||
+                signed_week < supplier->second->at("unlocked_week").get<std::int64_t>() || !specialties.is_array() ||
+                std::none_of(specialties.begin(), specialties.end(), [&ability](const Json& value) {
+                    return value.is_string() && value.get<std::string>() == ability;
+                })) {
+                error("INV-20 OutsourceContract 供应商未解锁或专业不匹配: " + id + "/" + supplier_id);
+            }
+        }
+
+        const Project* owner = find_work(state, contract.at("work_id").get<std::string>());
+        if (owner == nullptr) {
+            error("INV-20 OutsourceContract.work_id 不存在: " + id);
+            continue;
+        }
+        if (contract.at("status").get<std::string>() == "active" && owner->status != "producing") {
+            error("INV-20 active OutsourceContract 必须归属 producing 项目: " + id);
+        }
+        const WorkItem* item = nullptr;
+        const std::string item_id = contract.at("item_id").get<std::string>();
+        for (const auto& common : owner->common.items) {
+            if (common.id == item_id) item = &common;
+        }
+        const bool common_item = item != nullptr;
+        const Json& episode_id = contract.at("episode_id");
+        for (const auto& episode : owner->episodes) {
+            for (const auto& stage : episode.stages) {
+                for (const auto& stage_item : stage.items) {
+                    if (stage_item.id == item_id) {
+                        item = &stage_item;
+                        if (!episode_id.is_string() || episode_id.get<std::string>() != episode.id) {
+                            error("INV-20 OutsourceContract.episode_id 与工作项容器不一致: " + id);
+                        }
+                    }
+                }
+            }
+        }
+        if (item == nullptr) {
+            error("INV-20 OutsourceContract.item_id 不属于同一项目: " + id + "/" + item_id);
+            continue;
+        }
+        if ((common_item && !episode_id.is_null()) || (!common_item && !episode_id.is_string())) {
+            error("INV-20 OutsourceContract.episode_id 与公共/单集工作项不一致: " + id);
+        }
+        if (item->ability != contract.at("ability").get<std::string>()) {
+            error("INV-20 OutsourceContract.ability 与工作项不一致: " + id);
+        }
+        auto& delivered = delivered_by_item[item_id];
+        if (!archive_add(delivered, work_done) || delivered > item->work_total) {
+            error("INV-20 同一工作项累计外包交付超过 work_total 或汇总溢出: " + item_id);
+        }
+        if (contract.at("status").get<std::string>() == "active") {
+            auto& used = active_capacity[supplier_id];
+            if (!archive_add(used, weekly_cap)) {
+                error("INV-19 供应商 active weekly_cap 汇总溢出: " + supplier_id);
+            } else if (supplier != suppliers.end() && archive_integer(supplier->second->at("capacity_per_week"), 1) &&
+                       used > supplier->second->at("capacity_per_week").get<std::int64_t>()) {
+                error("INV-19 供应商 active weekly_cap 总和超过 capacity_per_week: " + supplier_id);
+            }
+        }
+    }
+}
+
 // ---------------- 校验 ----------------
 std::vector<std::string> validate(const GameState& state) {
     std::vector<std::string> errors;
@@ -555,6 +1075,18 @@ std::vector<std::string> validate(const GameState& state) {
                 valid = stage_index(target.id) >= 0;
             }
             if (!valid) error("INV-01 plan.target 未指向本项目单集或合法阶段: " + work.id);
+        }
+
+        // INV-22：系列来源只在 start_work 从企划快照复制，存档不得另行改写。
+        if (work.ip_id && work.ip_id->empty()) error("INV-22 project.ip_id 不能为空: " + work.id);
+        if (work.offer.is_object() && work.offer.contains("ip_id")) {
+            if (!work.offer.at("ip_id").is_null() && !archive_text(work.offer.at("ip_id"))) {
+                error("INV-22 offer.ip_id 必须是非空字符串或 null: " + work.id);
+            } else if ((work.ip_id ? Json(*work.ip_id) : Json(nullptr)) != work.offer.at("ip_id")) {
+                error("INV-22 project.ip_id 必须与立项快照一致: " + work.id);
+            }
+        } else if (work.ip_id) {
+            error("INV-22 project.ip_id 缺少立项快照来源: " + work.id);
         }
 
         // 合作模式与投资一致性（M0 §7.4）
@@ -706,6 +1238,9 @@ std::vector<std::string> validate(const GameState& state) {
                     }
                     if (offer.value("duration_weeks", 0) <= 0) error("INV-01 offer.duration_weeks 必须为正: " + offer_id);
                     if (offer.value("blueprint_id", std::string{}).empty()) error("INV-01 offer.blueprint_id 缺失: " + offer_id);
+                    if (offer.contains("ip_id") && !offer.at("ip_id").is_null() && !archive_text(offer.at("ip_id"))) {
+                        error("INV-22 offer.ip_id 必须是非空字符串或 null: " + offer_id);
+                    }
                     if (!offer.contains("channels_baseline") || offer.at("channels_baseline").empty()) {
                         error("INV-01 offer.channels_baseline 不能为空: " + offer_id);
                     }
@@ -723,25 +1258,10 @@ std::vector<std::string> validate(const GameState& state) {
         }
     }
 
-    // Archive：只追加，记录 id/评级/结束周必须完整
-    if (!state.archive.is_object() || !state.archive.contains("works") || !state.archive.at("works").is_array()) {
-        error("INV-01 archive.works 必须是数组");
-    } else {
-        for (const auto& record : state.archive.at("works")) {
-            const std::string record_id = record.value("id", std::string{});
-            claim_id(record_id, "archive");
-            if (!one_of_text(record.value("rating", std::string{}), {"S", "A", "B", "C", "D"})) {
-                error("INV-01 archive.rating 非法: " + record_id);
-            }
-            if (!one_of_text(record.value("end_reason", std::string{}), {"completed", "deadline", "company_closed"})) {
-                error("INV-01 archive.end_reason 非法: " + record_id);
-            }
-            const int gcp = record.value("gate_completion_permille", 1000);
-            if (gcp < 0 || gcp > 1000) error("INV-01 archive.gate_completion_permille 越界: " + record_id);
-            const int end_week = record.value("end_week", -1);
-            if (end_week < 0 || end_week > state.company.week) error("INV-01 archive.end_week 越界: " + record_id);
-        }
-    }
+    validate_vendors(state, claim_id, error);
+
+    // INV-22：WorkRecord 全量载荷、系列引用与终局统计一起校验。
+    validate_archive(state, claim_id, error);
 
     // INV-23：待处理事件按项目保留；同一项目最多一条；事件必须归属有效项目。
     if (state.events.last_event_week && (*state.events.last_event_week < 0 ||
@@ -807,6 +1327,22 @@ std::string state_hash(const GameState& state) {
     GameState copy = state;
     std::sort(copy.staff.begin(), copy.staff.end(), [](const Staff& a, const Staff& b) { return a.id < b.id; });
     std::sort(copy.works.begin(), copy.works.end(), [](const Project& a, const Project& b) { return a.id < b.id; });
+    auto json_id = [](const Json& value) {
+        return value.is_object() && value.contains("id") && value.at("id").is_string()
+                   ? value.at("id").get<std::string>() : std::string{};
+    };
+    std::sort(copy.suppliers.begin(), copy.suppliers.end(), [&json_id](const Json& a, const Json& b) {
+        return json_id(a) < json_id(b);
+    });
+    std::sort(copy.contracts.begin(), copy.contracts.end(), [&json_id](const Json& a, const Json& b) {
+        return json_id(a) < json_id(b);
+    });
+    for (auto& supplier : copy.suppliers) {
+        if (supplier.is_object() && supplier.contains("specialties") && supplier.at("specialties").is_array()) {
+            auto& specialties = supplier.at("specialties");
+            std::sort(specialties.begin(), specialties.end(), [](const Json& a, const Json& b) { return a.dump() < b.dump(); });
+        }
+    }
     // 规范化：所有"集合语义"的数组都要排序，否则哈希会随追加顺序变化而漂移。
     auto canonicalize = [](WorkItem& item) {
         std::sort(item.deps.begin(), item.deps.end());
@@ -954,10 +1490,10 @@ int successful_channel_cooperations(const GameState& state, const std::string& w
     int count = 0;
     for (const auto& record : state.archive.at("works")) {
         if (!record.is_object() || record.value("end_reason", std::string{}) != "completed" ||
-            !record.contains("channels") || !record.at("channels").is_array()) {
+            !record.contains("channel_breakdown") || !record.at("channel_breakdown").is_array()) {
             continue;
         }
-        for (const auto& channel : record.at("channels")) {
+        for (const auto& channel : record.at("channel_breakdown")) {
             if (channel.is_object() && channel.value("window", std::string{}) == window &&
                 channel.value("net", static_cast<std::int64_t>(0)) > 0) {
                 ++count;
@@ -1123,9 +1659,10 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     const int score = clamp_int(raw_score - correction, 0, 100);
     const std::string rating = rating_of(score);
 
-    // 内部测试夹具可以没有 offer；正式立项一定有快照。
-    const Json empty_offer = Json::object();
-    const Json& offer = work.offer.is_object() ? work.offer : empty_offer;
+    // instantiate_work 是内部夹具入口；没有企划快照时也生成完整的冻结履历载荷。
+    const Json fixture_offer = Json{{"id", work_id + "_offer"}, {"name", work_id}, {"source", "original"},
+                                    {"genre", "fixture"}, {"scale", "short"}, {"contract_budget", 0}, {"ip_id", nullptr}};
+    const Json& offer = work.offer.is_object() && !work.offer.empty() ? work.offer : fixture_offer;
     const std::int64_t budget = offer.value("contract_budget", static_cast<std::int64_t>(0));
     const std::string genre = offer.value("genre", std::string{});
     const int qf = quality_factor(raw_score);
@@ -1367,6 +1904,7 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     const std::int64_t profit = budget + company_revenue - investment_paid - total_costs;
 
     Json record = Json{{"id", work_id},
+                       {"ip_id", work.ip_id ? Json(*work.ip_id) : Json(nullptr)},
                        {"offer_id", offer.value("id", std::string{})},
                        {"name", offer.value("name", std::string{})},
                        {"source", offer.value("source", std::string{})},
@@ -1406,6 +1944,23 @@ SettlementOutcome settle_project(GameState& state, Project& work, const std::str
     if (end_reason != "aborted") {
         if (!state.archive.contains("works") || !state.archive.at("works").is_array()) state.archive["works"] = Json::array();
         state.archive["works"].push_back(record);
+        if (work.ip_id) {
+            if (!state.archive.contains("series") || !state.archive.at("series").is_array()) state.archive["series"] = Json::array();
+            Json* series = nullptr;
+            for (auto& entry : state.archive.at("series")) {
+                if (entry.is_object() && entry.value("ip_id", std::string{}) == *work.ip_id) {
+                    series = &entry;
+                    break;
+                }
+            }
+            if (series == nullptr) {
+                state.archive["series"].push_back(Json{{"ip_id", *work.ip_id}, {"title", record.at("name")},
+                                                       {"works", Json::array({work_id})}, {"last_week", week}});
+            } else {
+                (*series)["works"].push_back(work_id);
+                (*series)["last_week"] = week;
+            }
+        }
     }
 
     outcome.report = Json{{"work_id", work_id},
@@ -2243,6 +2798,9 @@ std::string start_work(const std::string& input) {
         const Json* offer = find_offer(state, offer_id);
         if (offer == nullptr) return encode(error_body("NOT_FOUND", "企划不存在或已被消费"));
         const Json& snapshot = *offer;
+        if (snapshot.contains("ip_id") && !snapshot.at("ip_id").is_null() && !archive_text(snapshot.at("ip_id"))) {
+            return encode(error_body("INVALID_STATE", "企划 ip_id 必须是非空字符串或 null"));
+        }
         // DEC-PLAN-001 两级准入：普通企划看声望/履历；原创草稿只看草稿是否有效，
         // 草稿资格在 create_custom_offer 阶段检查，正式开工才检查全部应付款。
         const std::string origin = snapshot.value("origin", std::string("publisher"));
@@ -2373,6 +2931,9 @@ std::string start_work(const std::string& input) {
             });
         }
         work.offer = snapshot;
+        if (snapshot.contains("ip_id") && snapshot.at("ip_id").is_string()) {
+            work.ip_id = snapshot.at("ip_id").get<std::string>();
+        }
         work.mode = mode;
         work.channels.clear();
         for (const auto& channel : snapshot.at("channels_baseline")) {

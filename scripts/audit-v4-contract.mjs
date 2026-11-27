@@ -42,6 +42,16 @@ const assigned = unwrap('assign_staff', {
   staff_id: created.state.staff.find((person) => person.role === 'director').id,
   work_id: 'work_audit'
 })
+const vendorState = structuredClone(assigned.state)
+vendorState.suppliers = [{
+  id: 'supplier_audit', name: '审计协力商', specialties: ['planning'], capacity_per_week: 100,
+  quality: 70, speed: 60, price_per_unit: 40, reliability: 80, unlocked_week: 0
+}]
+vendorState.contracts = [{
+  id: 'contract_audit', supplier_id: 'supplier_audit', work_id: 'work_audit', episode_id: null,
+  item_id: 'work_audit.common.series_comp', ability: 'planning', mode: 'normal', work_total: 60,
+  work_done: 0, weekly_cap: 60, fee_total: 2400, fee_paid: 0, signed_week: 0, due_week: 26, status: 'active'
+}]
 let state = assigned.state
 // 形状审计要跑满"触发 → 查看 → 处理（带支出）"闭环，不能被周固定成本在第 9 周上下把现金烧穿；
 // 同时保持 INV-16 恒等式（balance = opening_funds + Σentries），所以期初与余额同额抬升。
@@ -230,6 +240,7 @@ function completeGates(state, workId) {
       for (const item of stage.items) {
         if (!item.is_gate) continue
         item.work_done = item.work_total
+        if (!item.contributors.includes(state.staff[0].id)) item.contributors.push(state.staff[0].id)
         for (const dim of Object.keys(item.quality)) item.quality[dim] = 80
       }
     }
@@ -257,6 +268,7 @@ let adoptReceipt
 let rejectReceipt
 
 const commerce = fundedInitialize()
+commerce.market.slots[0].ip_id = 'ip_audit'
 startReceipt = unwrap('start_work', {
   state: commerce,
   offer_id: 'offer_01',
@@ -272,6 +284,13 @@ deliveryReceipt = unwrap('deliver_work', { state: extensionReceipt.state, work_i
 collect(deliveryReceipt.state, 'state', observed)
 collect([deliveryReceipt.report], 'report.settlements', observed)
 const archived = deliveryReceipt.state.archive.works[0]
+if (Object.keys(archived).length !== shape.archive_contract.work_record_root_field_count) {
+  fail(`Archive WorkRecord 根字段数应为 ${shape.archive_contract.work_record_root_field_count}，实际 ${Object.keys(archived).length}`)
+}
+if (archived.ip_id !== 'ip_audit' || deliveryReceipt.state.archive.series[0]?.ip_id !== 'ip_audit'
+    || !archived.team.length) {
+  fail('Archive 未采集非空 team 或 IP -> WorkRecord -> series 来源链')
+}
 if (archived.channel_breakdown.reduce((sum, line) => sum + line.revenue, 0) !== archived.commercial_revenue) {
   fail('Archive channel_breakdown 的 Σrevenue 不等于 commercial_revenue（DA §7.6）')
 }
@@ -315,6 +334,7 @@ rejectReceipt = unwrap('reject_proposal', { state: proposalBase })
 collect(rejectReceipt.state, 'state', observed)
 
 collect(state, 'state', observed)
+collect(vendorState, 'state', observed)
 collect(pendingState, 'state', observed)
 collect(drawnReport, 'report', observed)
 const dynamic = new Set(shape.dynamic_key_maps)
@@ -350,6 +370,8 @@ const requiredProbes = {
   state: () => ({}),
   'state.company': (s) => delete s.company,
   'state.staff': (s) => delete s.staff,
+  'state.suppliers': (s) => delete s.suppliers,
+  'state.contracts': (s) => delete s.contracts,
   'state.works': (s) => delete s.works,
   'state.works[].supervisor_staff_id': (s) => delete s.works[0].supervisor_staff_id,
   'state.finance': (s) => delete s.finance,
@@ -365,6 +387,10 @@ const requiredProbes = {
   'state.staff[].morale': (s) => delete s.staff[0].morale,
   'state.staff[].departure_warning': (s) => delete s.staff[0].departure_warning,
   'state.staff[].assignment_work_id': (s) => delete s.staff[0].assignment_work_id,
+  'state.archive': (s) => delete s.archive,
+  'state.archive.works': (s) => delete s.archive.works,
+  'state.archive.series': (s) => delete s.archive.series,
+  'state.archive.company_result': (s) => delete s.archive.company_result,
   'state.events': (s) => delete s.events,
   'state.events.pending': (s) => delete s.events.pending,
   'state.events.pending[].viewed': (s) => delete s.events.pending[0].viewed
@@ -382,7 +408,9 @@ for (const path of shape.required_on_parse) {
     }
     continue
   }
-  const base = structuredClone(path.includes('pending') ? pendingState : state)
+  const base = structuredClone(path.startsWith('state.archive') ? deliveryReceipt.state
+    : path === 'state.suppliers' || path === 'state.contracts' ? vendorState
+      : path.includes('pending') ? pendingState : state)
   if (path.includes('pending[]') && !base.events.pending.length) {
     fail('探针需要含 pending 事件的样例状态，但本次运行没有')
     continue
@@ -529,6 +557,61 @@ expectInvalidState('reserved solvency.state=crisis', (probe) => { probe.finance.
 expectInvalidState('reserved solvency.since_week 非空', (probe) => { probe.finance.solvency.since_week = 1 }, 'INV-18')
 expectInvalidState('reserved solvency.deadline_week 非空', (probe) => { probe.finance.solvency.deadline_week = 2 }, 'INV-18')
 expectInvalidState('reserved solvency.gap 非零', (probe) => { probe.finance.solvency.gap = 1 }, 'INV-18')
+const archiveProbes = [
+  ['WorkRecord 根字段缺失', (archive) => { delete archive.works[0].team }],
+  ['WorkRecord 未知字段', (archive) => { archive.works[0].previous_work_id = null }],
+  ['频道收入对账', (archive) => { archive.works[0].commercial_revenue += 1 }],
+  ['项目利润公式', (archive) => { archive.works[0].finance_summary.profit -= 1 }],
+  ['系列悬空引用', (archive) => { archive.series[0].works.push('missing') }],
+  ['系列 IP 不匹配', (archive) => { archive.series[0].ip_id = 'ip_other' }],
+  ['系列最后周', (archive) => { archive.series[0].last_week += 1 }]
+]
+for (const [label, mutate] of archiveProbes) {
+  const probe = structuredClone(deliveryReceipt.state)
+  mutate(probe.archive)
+  const result = call('advance_week', { state: probe })
+  if (result.error?.code !== 'INVALID_STATE' || !result.error.message.includes('INV-22') || 'state' in result) {
+    fail(`${label} 应以 INV-22/INVALID_STATE 原子拒绝，实际 ${result.error ? `${result.error.code}: ${result.error.message}` : '成功返回'}`)
+  }
+}
+if (!shape.archive_contract.cost_categories_are_dynamic_subset
+    || shape.archive_contract.profit_formula !== 'contract_received + commercial_share + success_reward - investment_paid - total_costs'
+    || !shape.archive_contract.series_source.includes('OfferSnapshot.ip_id')) {
+  fail('Archive 动态成本子集、利润公式或系列来源链未冻结')
+}
+for (const path of ['state.suppliers[]', 'state.contracts[]']) {
+  if (!shape.paths[path] || JSON.stringify(shape.paths[path]) !== JSON.stringify(shape.contract_fields[path])) {
+    fail(`${path} 未同步登记到 paths 与 contract_fields`)
+  }
+}
+if (!shape.vendor_contract.status_validation_implemented || shape.vendor_contract.sign_outsourcing_implemented ||
+    shape.vendor_contract.weekly_delivery_implemented || shape.vendor_contract.fee_settlement_implemented ||
+    shape.vendor_contract.reliability_failure_implemented) {
+  fail('Vendor 当前仅实现状态校验，不得宣称签约、周交付、费用或可靠性失败已实现')
+}
+const vendorProbes = [
+  ['供应商 active 产能超卖', (probe) => { probe.contracts.push({ ...probe.contracts[0], id: 'contract_overflow', weekly_cap: 41 }) }, 'INV-19'],
+  ['合同工作项错引', (probe) => { probe.contracts[0].item_id = 'work_audit.missing' }, 'INV-20'],
+  ['合同公共项 episode 错引', (probe) => { probe.contracts[0].episode_id = 'ep01' }, 'INV-20'],
+  ['同项累计交付超限', (probe) => {
+    probe.contracts[0].work_done = 60
+    probe.contracts.push({ ...probe.contracts[0], id: 'contract_extra', weekly_cap: 40, work_done: 41 })
+  }, 'INV-20']
+]
+for (const [label, mutate, invariant] of vendorProbes) {
+  const probe = structuredClone(vendorState)
+  mutate(probe)
+  const result = call('advance_week', { state: probe })
+  if (result.error?.code !== 'INVALID_STATE' || !result.error.message.includes(invariant) || 'state' in result) {
+    fail(`${label} 应以 ${invariant}/INVALID_STATE 原子拒绝，实际 ${result.error ? `${result.error.code}: ${result.error.message}` : '成功返回'}`)
+  }
+}
+const vendorReordered = structuredClone(vendorState)
+vendorReordered.suppliers.reverse()
+vendorReordered.contracts.reverse()
+if (call('hash_state', { state: vendorState }).hash !== call('hash_state', { state: vendorReordered }).hash) {
+  fail('suppliers/contracts 数组顺序影响了规范化哈希')
+}
 expectInvalidState('正常状态负余额', (probe) => {
   probe.finance.opening_funds = 0
   probe.finance.balance = -1

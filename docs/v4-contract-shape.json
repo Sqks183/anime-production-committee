@@ -72,6 +72,11 @@
     }
   },
   "contract_fields": {
+    "state.archive": [
+      "company_result",
+      "series",
+      "works"
+    ],
     "state.staff[]": [
       "abilities",
       "assignment_work_id",
@@ -97,6 +102,34 @@
       "loans",
       "opening_funds",
       "solvency"
+    ],
+    "state.suppliers[]": [
+      "capacity_per_week",
+      "id",
+      "name",
+      "price_per_unit",
+      "quality",
+      "reliability",
+      "speed",
+      "specialties",
+      "unlocked_week"
+    ],
+    "state.contracts[]": [
+      "ability",
+      "due_week",
+      "episode_id",
+      "fee_paid",
+      "fee_total",
+      "id",
+      "item_id",
+      "mode",
+      "signed_week",
+      "status",
+      "supplier_id",
+      "weekly_cap",
+      "work_done",
+      "work_id",
+      "work_total"
     ]
   },
   "reserved_fields": [
@@ -191,6 +224,7 @@
     ]
   },
   "dynamic_key_maps": [
+    "state.archive.works[].finance_summary.costs",
     "state.events.per_work",
     "state.events.per_work.*.cooldowns"
   ],
@@ -416,7 +450,10 @@
       "INV-12",
       "INV-16",
       "INV-18",
+      "INV-19",
+      "INV-20",
       "INV-21",
+      "INV-22",
       "INV-23",
       "INV-25",
       "INV-27",
@@ -515,6 +552,12 @@
       "total_projects",
       "weeks"
     ],
+    "state.archive.series[]": [
+      "ip_id",
+      "last_week",
+      "title",
+      "works"
+    ],
     "state.archive.works[]": [
       "bd_gross",
       "bd_revenue",
@@ -532,6 +575,7 @@
       "id",
       "investment_percent",
       "investor_share",
+      "ip_id",
       "mode",
       "name",
       "offer_id",
@@ -563,6 +607,11 @@
     "state.archive.works[].episodes[].quality.dims": [
       "animation", "art", "direction", "drawing", "sound", "story"
     ],
+    "state.archive.works[].team[]": [
+      "id",
+      "name",
+      "role"
+    ],
     "state.archive.works[].finance_summary": [
       "bd_revenue",
       "commercial_share",
@@ -574,7 +623,6 @@
       "success_reward",
       "total_costs"
     ],
-    "state.archive.works[].finance_summary.costs": ["distribution", "production"],
     "state.archive.works[].quality": ["dims", "mean"],
     "state.archive.works[].quality.dims": [
       "animation", "art", "direction", "drawing", "sound", "story"
@@ -639,6 +687,7 @@
       "episode_count",
       "genre",
       "id",
+      "ip_id",
       "min_reputation",
       "name",
       "origin",
@@ -871,6 +920,23 @@
       "overseas",
       "tv"
     ],
+    "state.contracts[]": [
+      "ability",
+      "due_week",
+      "episode_id",
+      "fee_paid",
+      "fee_total",
+      "id",
+      "item_id",
+      "mode",
+      "signed_week",
+      "status",
+      "supplier_id",
+      "weekly_cap",
+      "work_done",
+      "work_id",
+      "work_total"
+    ],
     "state.partners[]": [
       "channels",
       "history",
@@ -931,6 +997,17 @@
       "management",
       "planning",
       "postproduction"
+    ],
+    "state.suppliers[]": [
+      "capacity_per_week",
+      "id",
+      "name",
+      "price_per_unit",
+      "quality",
+      "reliability",
+      "speed",
+      "specialties",
+      "unlocked_week"
     ],
     "state.works[]": [
       "channels",
@@ -1034,8 +1111,14 @@
   },
   "required_on_parse": [
     "state",
+    "state.archive",
+    "state.archive.works",
+    "state.archive.series",
+    "state.archive.company_result",
     "state.company",
     "state.staff",
+    "state.suppliers",
+    "state.contracts",
     "state.works",
     "state.works[].supervisor_staff_id",
     "state.finance",
@@ -1072,6 +1155,35 @@
     "nondefault_solvency_fields_allowed": false,
     "future_ledger_categories_allowed": false,
     "arrange_financing_export_allowed": false
+  },
+  "vendor_contract": {
+    "status_validation_implemented": true,
+    "sign_outsourcing_implemented": false,
+    "weekly_delivery_implemented": false,
+    "fee_settlement_implemented": false,
+    "reliability_failure_implemented": false,
+    "capacity_invariant": "sum(active weekly_cap by supplier_id) <= capacity_per_week",
+    "delivery_invariant": "sum(work_done by item_id across contracts) <= work_item.work_total"
+  },
+  "archive_contract": {
+    "work_record_root_field_count": 28,
+    "work_record_shape": "state.archive.works[]",
+    "series_source": "OfferSnapshot.ip_id -> Project.ip_id -> WorkRecord.ip_id -> Archive.series",
+    "series_write": "completed/deadline/company_closed 交付结算与 WorkRecord 同次原子提交；aborted 不归档",
+    "series_title": "首次交付冻结；同 IP 续作只追加 works 并更新 last_week",
+    "profit_formula": "contract_received + commercial_share + success_reward - investment_paid - total_costs",
+    "cost_categories_are_dynamic_subset": true,
+    "allowed_cost_categories": [
+      "salary",
+      "production",
+      "temporary",
+      "outsourcing",
+      "events",
+      "extension",
+      "distribution",
+      "penalty",
+      "development"
+    ]
   },
   "schema_version": 1,
   "source": "docs/DATA_DICTIONARY_V4.md"
